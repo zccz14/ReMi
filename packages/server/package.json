@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./middleware/auth": "./src/middleware/auth.ts",
-    "./middleware/role": "./src/middleware/role.ts"
+    "./middleware/role": "./src/middleware/role.ts",
+    "./app": "./src/app.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",

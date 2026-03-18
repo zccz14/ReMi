@@ -1,1 +1,25 @@
-// @remi/server
+import { serve } from "@hono/node-server";
+import { createApp } from "./app.js";
+import { createEmbeddingClient } from "./embedding/client.js";
+
+const DATA_DIR = process.env.DATA_DIR ?? "./data";
+const PORT = Number(process.env.PORT ?? 3000);
+const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 1536);
+
+const embeddingClient = process.env.EMBEDDING_API_KEY
+  ? createEmbeddingClient({
+      apiBase: process.env.EMBEDDING_API_BASE ?? "https://api.openai.com/v1",
+      apiKey: process.env.EMBEDDING_API_KEY,
+      model: process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
+    })
+  : null;
+
+const { app } = createApp({
+  dataDir: DATA_DIR,
+  embeddingDimensions: EMBEDDING_DIMENSIONS,
+  embeddingClient,
+});
+
+serve({ fetch: app.fetch, port: PORT }, (info) => {
+  console.log(`ReMi server listening on http://localhost:${info.port}`);
+});
