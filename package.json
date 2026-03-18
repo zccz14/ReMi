@@ -1,0 +1,13 @@
+{
+  "name": "remi",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

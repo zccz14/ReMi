@@ -1,0 +1,15 @@
+{
+  "name": "@remi/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./middleware/auth": "./src/middleware/auth.ts",
+    "./middleware/role": "./src/middleware/role.ts"
+  },
+  "dependencies": {
+    "@remi/crypto": "*"
+  }
+}
