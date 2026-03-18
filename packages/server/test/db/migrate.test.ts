@@ -16,7 +16,11 @@ describe("initializeDatabase", () => {
 
   afterEach(() => {
     for (const f of tmpFiles) {
-      try { fs.unlinkSync(f); } catch {}
+      try {
+        fs.unlinkSync(f);
+      } catch {
+        // cleanup best-effort
+      }
     }
     tmpFiles.length = 0;
   });
@@ -25,9 +29,9 @@ describe("initializeDatabase", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
     initializeDatabase(db, 1536);
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).all() as { name: string }[];
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[];
     const names = tables.map((t) => t.name);
     expect(names).toContain("soul_anchors");
     expect(names).toContain("memories");
@@ -38,9 +42,9 @@ describe("initializeDatabase", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
     initializeDatabase(db, 1536);
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).all() as { name: string }[];
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[];
     const names = tables.map((t) => t.name);
     expect(names).toContain("soul_anchors_vec");
     expect(names).toContain("memories_vec");

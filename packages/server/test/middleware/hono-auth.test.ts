@@ -14,12 +14,7 @@ describe("hono-auth middleware", () => {
     return app;
   }
 
-  async function signedRequest(
-    app: Hono,
-    method: string,
-    path: string,
-    body?: string
-  ) {
+  async function signedRequest(app: Hono, method: string, path: string, body?: string) {
     const privKey = generateKeyPair();
     const pubKey = getPublicKey(privKey);
     const timestamp = String(Date.now());

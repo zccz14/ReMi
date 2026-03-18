@@ -20,10 +20,7 @@ export function getPublicKey(privateKeyBase58: string): string {
   return base58Encode(publicKey);
 }
 
-export async function sign(
-  message: Uint8Array,
-  privateKeyBase58: string
-): Promise<string> {
+export async function sign(message: Uint8Array, privateKeyBase58: string): Promise<string> {
   const privateKey = base58Decode(privateKeyBase58);
   const signature = await ed.signAsync(message, privateKey);
   return base58Encode(signature);
@@ -32,7 +29,7 @@ export async function sign(
 export async function verify(
   message: Uint8Array,
   signatureBase58: string,
-  publicKeyBase58: string
+  publicKeyBase58: string,
 ): Promise<boolean> {
   const signature = base58Decode(signatureBase58);
   const publicKey = base58Decode(publicKeyBase58);

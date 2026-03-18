@@ -24,7 +24,7 @@ describe("buildStringToSign", () => {
       "POST",
       "/souls/abc/anchors?page=1",
       "1710000000000",
-      new TextEncoder().encode('{"q":"hello"}')
+      new TextEncoder().encode('{"q":"hello"}'),
     );
     const lines = result.split("\n");
     expect(lines).toHaveLength(4);
@@ -35,19 +35,14 @@ describe("buildStringToSign", () => {
   });
 
   it("handles GET with no body", async () => {
-    const result = await buildStringToSign(
-      "GET",
-      "/health",
-      "1710000000000",
-      undefined
-    );
+    const result = await buildStringToSign("GET", "/health", "1710000000000", undefined);
     const lines = result.split("\n");
     expect(lines[0]).toBe("GET");
     expect(lines[3]).toBe(
       await (async () => {
         const { hashBody } = await import("../src/signing.js");
         return hashBody(undefined);
-      })()
+      })(),
     );
   });
 });

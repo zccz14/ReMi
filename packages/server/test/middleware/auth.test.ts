@@ -1,16 +1,13 @@
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  buildStringToSign,
-} from "@remi/crypto";
+import { generateKeyPair, getPublicKey, sign, buildStringToSign } from "@remi/crypto";
 import { verifyRequest } from "../../src/middleware/auth.js";
 
 describe("verifyRequest", () => {
-  async function makeSignedRequest(opts: {
-    timestampOverride?: string;
-  } = {}) {
+  async function makeSignedRequest(
+    opts: {
+      timestampOverride?: string;
+    } = {},
+  ) {
     const privateKey = generateKeyPair();
     const publicKey = getPublicKey(privateKey);
     const method = "POST";

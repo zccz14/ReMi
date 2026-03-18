@@ -25,9 +25,7 @@ export function createEmbeddingClient(config: EmbeddingClientConfig): EmbeddingC
 
       if (!response.ok) {
         const body = await response.text();
-        throw new Error(
-          `Embedding API error ${response.status}: ${body}`
-        );
+        throw new Error(`Embedding API error ${response.status}: ${body}`);
       }
 
       const json = (await response.json()) as {
@@ -35,9 +33,7 @@ export function createEmbeddingClient(config: EmbeddingClientConfig): EmbeddingC
       };
 
       // Sort by index to ensure consistent ordering
-      return json.data
-        .sort((a, b) => a.index - b.index)
-        .map((d) => d.embedding);
+      return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
     },
   };
 }

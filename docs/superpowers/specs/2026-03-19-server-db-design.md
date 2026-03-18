@@ -6,14 +6,14 @@
 
 ## 设计决策
 
-| 决策 | 选择 | 理由 |
-|------|------|------|
-| HTTP 框架 | Hono | 轻量、TypeScript-first、中间件模型干净 |
-| 数据库 | better-sqlite3 | 同步 API 简单直接；sqlite-vec 扩展支持成熟 |
-| 向量检索 | sqlite-vec | SQLite 虚拟表扩展，向量与业务数据同库同事务 |
-| ORM | Drizzle ORM | 常规 CRUD 类型安全；向量查询用 raw SQL |
-| Embedding | OpenAI-compatible API | 与 README 技术选型一致，调用外部 embedding 服务 |
-| 包结构 | 全部放 @remi/server | MVP 阶段不过度拆分，DB 逻辑和 HTTP 逻辑共处一个包 |
+| 决策      | 选择                  | 理由                                              |
+| --------- | --------------------- | ------------------------------------------------- |
+| HTTP 框架 | Hono                  | 轻量、TypeScript-first、中间件模型干净            |
+| 数据库    | better-sqlite3        | 同步 API 简单直接；sqlite-vec 扩展支持成熟        |
+| 向量检索  | sqlite-vec            | SQLite 虚拟表扩展，向量与业务数据同库同事务       |
+| ORM       | Drizzle ORM           | 常规 CRUD 类型安全；向量查询用 raw SQL            |
+| Embedding | OpenAI-compatible API | 与 README 技术选型一致，调用外部 embedding 服务   |
+| 包结构    | 全部放 @remi/server   | MVP 阶段不过度拆分，DB 逻辑和 HTTP 逻辑共处一个包 |
 
 ## Server 包结构
 
@@ -58,14 +58,14 @@ packages/server/
 
 灵魂锚点是问答对，锚定灵魂本质的核心问题与答案。
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | TEXT | PK | UUID v4 |
-| question | TEXT | NOT NULL | 锚点问题 |
-| answer | TEXT | - | 锚点答案（NULL = 未探索） |
-| source | TEXT | NOT NULL | 来源：`'interview'` / `'manual'` |
-| created_at | INTEGER | NOT NULL | 创建时间（Unix timestamp ms） |
-| updated_at | INTEGER | NOT NULL | 更新时间（Unix timestamp ms） |
+| 列名       | 类型    | 约束     | 说明                             |
+| ---------- | ------- | -------- | -------------------------------- |
+| id         | TEXT    | PK       | UUID v4                          |
+| question   | TEXT    | NOT NULL | 锚点问题                         |
+| answer     | TEXT    | -        | 锚点答案（NULL = 未探索）        |
+| source     | TEXT    | NOT NULL | 来源：`'interview'` / `'manual'` |
+| created_at | INTEGER | NOT NULL | 创建时间（Unix timestamp ms）    |
+| updated_at | INTEGER | NOT NULL | 更新时间（Unix timestamp ms）    |
 
 对应的 sqlite-vec 虚拟表 `soul_anchors_vec`，通过 `id` 与 `soul_anchors` 关联（详见下方"向量检索"章节）。
 
@@ -73,14 +73,14 @@ packages/server/
 
 memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的写入将由访谈引擎在服务端内部完成，不需要客户端直接操作。记忆是不可变的（一旦写入不修改），因此没有 `updated_at` 列。
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | TEXT | PK | UUID v4 |
-| content | TEXT | NOT NULL | 记忆内容（陈述句） |
+| 列名        | 类型    | 约束     | 说明                                |
+| ----------- | ------- | -------- | ----------------------------------- |
+| id          | TEXT    | PK       | UUID v4                             |
+| content     | TEXT    | NOT NULL | 记忆内容（陈述句）                  |
 | occurred_at | INTEGER | NOT NULL | 记忆发生的时间（Unix timestamp ms） |
-| source | TEXT | NOT NULL | 来源：`'interview'` / `'manual'` |
-| metadata | TEXT | - | JSON 格式的元数据（预留扩展） |
-| created_at | INTEGER | NOT NULL | 创建时间（Unix timestamp ms） |
+| source      | TEXT    | NOT NULL | 来源：`'interview'` / `'manual'`    |
+| metadata    | TEXT    | -        | JSON 格式的元数据（预留扩展）       |
+| created_at  | INTEGER | NOT NULL | 创建时间（Unix timestamp ms）       |
 
 对应的 sqlite-vec 虚拟表 `memories_vec`，通过 `id` 与 `memories` 关联。
 
@@ -180,17 +180,17 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 
 ### 路由表
 
-| 方法 | 路径 | 认证 | 角色 | 说明 |
-|------|------|------|------|------|
-| GET | `/api/health` | 无 | - | 健康检查 |
-| DELETE | `/api/:pubKey` | 需要 | owner | 删除整个 Soul (GDPR) |
-| POST | `/api/:pubKey/copy` | 需要 | owner | 复制 Soul 到新 pubKey |
-| GET | `/api/:pubKey/anchors` | 需要 | owner | 列出所有锚点 |
-| POST | `/api/:pubKey/anchors` | 需要 | owner | 创建锚点 |
-| DELETE | `/api/:pubKey/anchors` | 需要 | owner | 清空所有锚点 |
-| GET | `/api/:pubKey/anchors/:id` | 需要 | owner | 获取单个锚点 |
-| PUT | `/api/:pubKey/anchors/:id` | 需要 | owner | 更新锚点 |
-| DELETE | `/api/:pubKey/anchors/:id` | 需要 | owner | 删除锚点 |
+| 方法   | 路径                       | 认证 | 角色  | 说明                  |
+| ------ | -------------------------- | ---- | ----- | --------------------- |
+| GET    | `/api/health`              | 无   | -     | 健康检查              |
+| DELETE | `/api/:pubKey`             | 需要 | owner | 删除整个 Soul (GDPR)  |
+| POST   | `/api/:pubKey/copy`        | 需要 | owner | 复制 Soul 到新 pubKey |
+| GET    | `/api/:pubKey/anchors`     | 需要 | owner | 列出所有锚点          |
+| POST   | `/api/:pubKey/anchors`     | 需要 | owner | 创建锚点              |
+| DELETE | `/api/:pubKey/anchors`     | 需要 | owner | 清空所有锚点          |
+| GET    | `/api/:pubKey/anchors/:id` | 需要 | owner | 获取单个锚点          |
+| PUT    | `/api/:pubKey/anchors/:id` | 需要 | owner | 更新锚点              |
+| DELETE | `/api/:pubKey/anchors/:id` | 需要 | owner | 删除锚点              |
 
 ### 鉴权流程
 
@@ -208,28 +208,30 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 ### 请求/响应格式
 
 **成功响应：**
+
 ```json
 { "data": "<T>" }
 ```
 
 **错误响应：**
+
 ```json
 { "error": "<ERROR_CODE>", "message": "<human readable>" }
 ```
 
 **错误码：**
 
-| 错误码 | HTTP 状态码 | 说明 |
-|--------|-----------|------|
-| MISSING_AUTH_HEADER | 401 | 缺少认证 headers |
-| TIMESTAMP_EXPIRED | 401 | 时间戳过期（30s 窗口） |
-| INVALID_SIGNATURE | 401 | 签名验证失败 |
-| FORBIDDEN | 403 | 角色不足（visitor 试图访问 owner 接口） |
-| SOUL_NOT_FOUND | 404 | Soul 不存在（visitor 请求未创建的 Soul） |
-| ANCHOR_NOT_FOUND | 404 | 锚点不存在 |
-| COPY_TARGET_EXISTS | 409 | 复制目标 pubKey 已有 Soul |
-| VALIDATION_ERROR | 422 | 请求体校验失败 |
-| INTERNAL_ERROR | 500 | 服务器内部错误（DB 损坏、文件操作失败等） |
+| 错误码              | HTTP 状态码 | 说明                                      |
+| ------------------- | ----------- | ----------------------------------------- |
+| MISSING_AUTH_HEADER | 401         | 缺少认证 headers                          |
+| TIMESTAMP_EXPIRED   | 401         | 时间戳过期（30s 窗口）                    |
+| INVALID_SIGNATURE   | 401         | 签名验证失败                              |
+| FORBIDDEN           | 403         | 角色不足（visitor 试图访问 owner 接口）   |
+| SOUL_NOT_FOUND      | 404         | Soul 不存在（visitor 请求未创建的 Soul）  |
+| ANCHOR_NOT_FOUND    | 404         | 锚点不存在                                |
+| COPY_TARGET_EXISTS  | 409         | 复制目标 pubKey 已有 Soul                 |
+| VALIDATION_ERROR    | 422         | 请求体校验失败                            |
+| INTERNAL_ERROR      | 500         | 服务器内部错误（DB 损坏、文件操作失败等） |
 
 **幂等性说明：** `DELETE /api/:pubKey` 和 `DELETE /api/:pubKey/anchors/:id` 是幂等的——对已删除的资源重复 DELETE 返回 204（而非 404）。
 
@@ -242,11 +244,13 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 迁移密钥的完整流程是 **copy + delete 两步操作**：先 copy 到新 key，用新 key 验证可用后，再 delete 旧 key。任何一步失败都不会丢数据。
 
 **请求体：**
+
 ```json
 { "targetPubKey": "<base58 encoded public key>" }
 ```
 
 **行为：**
+
 1. 验证请求者是 owner
 2. 验证 targetPubKey 格式有效（base58 decode 成功）
 3. 检查 targetPubKey 对应的 Soul 是否已存在 → 存在则返回 409 COPY_TARGET_EXISTS
@@ -262,6 +266,7 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 删除整个 Soul（GDPR 被遗忘权）。
 
 **行为：**
+
 1. 验证请求者是 owner
 2. 关闭 DB 连接（从 LRU cache 移除）
 3. 删除文件 `data/{pubKey}.sqlite`
@@ -272,6 +277,7 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 清空所有锚点但保留 Soul。
 
 **行为：**
+
 1. 验证请求者是 owner
 2. DELETE FROM soul_anchors
 3. 返回 204 No Content
@@ -281,12 +287,14 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 列出所有锚点，支持分页。
 
 **查询参数：**
+
 - `limit`: 每页条数（默认 50，最大 200）
 - `offset`: 偏移量（默认 0）
 
 **排序：** 按 `created_at DESC`（最新创建的在前）。排序固定，不支持自定义。
 
 **响应：**
+
 ```json
 {
   "data": {
@@ -303,6 +311,7 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 创建锚点。
 
 **请求体：**
+
 ```json
 {
   "question": "你对 AI 的看法是什么？",
@@ -320,6 +329,7 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 更新锚点（主要场景：填充 answer）。
 
 **请求体：** 部分更新，只传需要修改的字段
+
 ```json
 {
   "answer": "经过深思熟虑，我认为..."
@@ -333,6 +343,7 @@ deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): voi
 ## Soul 隐式创建
 
 当 owner 首次请求任何需要认证的端点时：
+
 1. 检查 `data/{pubKey}.sqlite` 是否存在
 2. 不存在 → 自动创建 DB 文件，初始化 schema（建表）
 3. 继续处理请求

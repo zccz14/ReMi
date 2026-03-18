@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  buildStringToSign,
-} from "@remi/crypto";
+import { generateKeyPair, getPublicKey, sign, buildStringToSign } from "@remi/crypto";
 import { verifyRequest } from "@remi/server/middleware/auth";
 
 describe("end-to-end auth flow", () => {
@@ -19,8 +14,12 @@ describe("end-to-end auth flow", () => {
     const signature = await sign(new TextEncoder().encode(sts), privateKey);
 
     const result = await verifyRequest({
-      method, path, timestamp, body,
-      publicKey, signature,
+      method,
+      path,
+      timestamp,
+      body,
+      publicKey,
+      signature,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -40,9 +39,12 @@ describe("end-to-end auth flow", () => {
 
     const tampered = new TextEncoder().encode('{"question":"篡改"}');
     const result = await verifyRequest({
-      method, path, timestamp,
+      method,
+      path,
+      timestamp,
       body: tampered,
-      publicKey, signature,
+      publicKey,
+      signature,
     });
     expect(result.ok).toBe(false);
   });

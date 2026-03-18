@@ -61,6 +61,7 @@ test/
 ### Task 1: Monorepo 脚手架
 
 **Files:**
+
 - Create: `package.json`
 - Create: `tsconfig.base.json`
 - Create: `packages/crypto/package.json`
@@ -110,6 +111,7 @@ test/
 - [ ] **Step 3: 创建三个包的 package.json 和 tsconfig.json**
 
 `packages/crypto/package.json`:
+
 ```json
 {
   "name": "@remi/crypto",
@@ -125,6 +127,7 @@ test/
 ```
 
 `packages/crypto/tsconfig.json`:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -134,6 +137,7 @@ test/
 ```
 
 `packages/server/package.json`:
+
 ```json
 {
   "name": "@remi/server",
@@ -153,6 +157,7 @@ test/
 ```
 
 `packages/server/tsconfig.json`:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -162,6 +167,7 @@ test/
 ```
 
 `packages/client/package.json`:
+
 ```json
 {
   "name": "@remi/client",
@@ -176,6 +182,7 @@ test/
 ```
 
 `packages/client/tsconfig.json`:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -194,10 +201,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: [
-      "packages/*/test/**/*.test.ts",
-      "test/**/*.test.ts",
-    ],
+    include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"],
   },
 });
 ```
@@ -216,6 +220,7 @@ git add -A && git commit -m "chore: init monorepo with crypto/server/client pack
 ### Task 2: base58 编解码
 
 **Files:**
+
 - Create: `packages/crypto/src/base58.ts`
 - Create: `packages/crypto/test/base58.test.ts`
 
@@ -286,6 +291,7 @@ git add -A && git commit -m "feat(crypto): add base58 encode/decode"
 ### Task 3: ED25519 密钥操作
 
 **Files:**
+
 - Create: `packages/crypto/src/ed25519.ts`
 - Create: `packages/crypto/test/ed25519.test.ts`
 
@@ -294,12 +300,7 @@ git add -A && git commit -m "feat(crypto): add base58 encode/decode"
 ```typescript
 // packages/crypto/test/ed25519.test.ts
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  verify,
-} from "../src/ed25519.js";
+import { generateKeyPair, getPublicKey, sign, verify } from "../src/ed25519.js";
 
 describe("ed25519", () => {
   it("generates a private key as base58 string", () => {
@@ -366,10 +367,7 @@ export function getPublicKey(privateKeyBase58: string): string {
   return base58Encode(publicKey);
 }
 
-export async function sign(
-  message: Uint8Array,
-  privateKeyBase58: string
-): Promise<string> {
+export async function sign(message: Uint8Array, privateKeyBase58: string): Promise<string> {
   const privateKey = base58Decode(privateKeyBase58);
   const signature = await ed.signAsync(message, privateKey);
   return base58Encode(signature);
@@ -378,7 +376,7 @@ export async function sign(
 export async function verify(
   message: Uint8Array,
   signatureBase58: string,
-  publicKeyBase58: string
+  publicKeyBase58: string,
 ): Promise<boolean> {
   const signature = base58Decode(signatureBase58);
   const publicKey = base58Decode(publicKeyBase58);
@@ -402,6 +400,7 @@ git add -A && git commit -m "feat(crypto): add ed25519 key generation, sign, ver
 ### Task 4: 签名构造（StringToSign + body hash）
 
 **Files:**
+
 - Create: `packages/crypto/src/signing.ts`
 - Create: `packages/crypto/test/signing.test.ts`
 
@@ -435,7 +434,7 @@ describe("buildStringToSign", () => {
       "POST",
       "/souls/abc/anchors?page=1",
       "1710000000000",
-      new TextEncoder().encode('{"q":"hello"}')
+      new TextEncoder().encode('{"q":"hello"}'),
     );
     const lines = result.split("\n");
     expect(lines).toHaveLength(4);
@@ -446,19 +445,14 @@ describe("buildStringToSign", () => {
   });
 
   it("handles GET with no body", async () => {
-    const result = await buildStringToSign(
-      "GET",
-      "/health",
-      "1710000000000",
-      undefined
-    );
+    const result = await buildStringToSign("GET", "/health", "1710000000000", undefined);
     const lines = result.split("\n");
     expect(lines[0]).toBe("GET");
     expect(lines[3]).toBe(
       await (async () => {
         const { hashBody } = await import("../src/signing.js");
         return hashBody(undefined);
-      })()
+      })(),
     );
   });
 });
@@ -475,11 +469,8 @@ Expected: FAIL
 // packages/crypto/src/signing.ts
 import { base58Encode } from "./base58.js";
 
-export async function hashBody(
-  body: Uint8Array | undefined | null
-): Promise<string> {
-  const data =
-    body && body.length > 0 ? body : new Uint8Array(0);
+export async function hashBody(body: Uint8Array | undefined | null): Promise<string> {
+  const data = body && body.length > 0 ? body : new Uint8Array(0);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return base58Encode(new Uint8Array(hash));
 }
@@ -488,7 +479,7 @@ export async function buildStringToSign(
   method: string,
   path: string,
   timestamp: string,
-  body: Uint8Array | undefined | null
+  body: Uint8Array | undefined | null,
 ): Promise<string> {
   const bodyHash = await hashBody(body);
   return `${method}\n${path}\n${timestamp}\n${bodyHash}`;
@@ -520,6 +511,7 @@ git add -A && git commit -m "feat(crypto): add signing protocol (StringToSign + 
 ### Task 5: 签名验证中间件
 
 **Files:**
+
 - Create: `packages/server/src/middleware/auth.ts`
 - Create: `packages/server/test/middleware/auth.test.ts`
 
@@ -530,18 +522,15 @@ git add -A && git commit -m "feat(crypto): add signing protocol (StringToSign + 
 ```typescript
 // packages/server/test/middleware/auth.test.ts
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  buildStringToSign,
-} from "@remi/crypto";
+import { generateKeyPair, getPublicKey, sign, buildStringToSign } from "@remi/crypto";
 import { verifyRequest, AuthError } from "../src/middleware/auth.js";
 
 describe("verifyRequest", () => {
-  async function makeSignedRequest(opts: {
-    timestampOverride?: string;
-  } = {}) {
+  async function makeSignedRequest(
+    opts: {
+      timestampOverride?: string;
+    } = {},
+  ) {
     const privateKey = generateKeyPair();
     const publicKey = getPublicKey(privateKey);
     const method = "POST";
@@ -595,10 +584,7 @@ Expected: FAIL
 // packages/server/src/middleware/auth.ts
 import { verify, buildStringToSign } from "@remi/crypto";
 
-export type AuthError =
-  | "MISSING_AUTH_HEADER"
-  | "TIMESTAMP_EXPIRED"
-  | "INVALID_SIGNATURE";
+export type AuthError = "MISSING_AUTH_HEADER" | "TIMESTAMP_EXPIRED" | "INVALID_SIGNATURE";
 
 type AuthResult =
   | { ok: true; publicKey: string }
@@ -633,14 +619,8 @@ export async function verifyRequest(req: RequestInfo): Promise<AuthResult> {
     };
   }
 
-  const sts = await buildStringToSign(
-    req.method, req.path, req.timestamp, req.body
-  );
-  const valid = await verify(
-    new TextEncoder().encode(sts),
-    req.signature,
-    req.publicKey
-  );
+  const sts = await buildStringToSign(req.method, req.path, req.timestamp, req.body);
+  const valid = await verify(new TextEncoder().encode(sts), req.signature, req.publicKey);
   if (!valid) {
     return {
       ok: false,
@@ -667,6 +647,7 @@ git add -A && git commit -m "feat(server): add auth signature verification middl
 ### Task 5b: 角色判定
 
 **Files:**
+
 - Create: `packages/server/src/middleware/role.ts`
 - Create: `packages/server/test/middleware/role.test.ts`
 
@@ -700,10 +681,7 @@ Expected: FAIL
 // packages/server/src/middleware/role.ts
 export type Role = "owner" | "visitor";
 
-export function determineRole(
-  signerPublicKey: string,
-  targetPublicKey: string
-): Role {
+export function determineRole(signerPublicKey: string, targetPublicKey: string): Role {
   return signerPublicKey === targetPublicKey ? "owner" : "visitor";
 }
 ```
@@ -724,6 +702,7 @@ git add -A && git commit -m "feat(server): add role determination (owner vs visi
 ### Task 6: KeyStore 模块
 
 **Files:**
+
 - Create: `packages/client/src/keystore.ts`
 - Create: `packages/client/test/keystore.test.ts`
 
@@ -773,8 +752,7 @@ describe("KeyStore", () => {
   });
 
   it("rejects invalid private key on import", async () => {
-    await expect(ks.importPrivateKey("not-a-valid-key!!!"))
-      .rejects.toThrow();
+    await expect(ks.importPrivateKey("not-a-valid-key!!!")).rejects.toThrow();
   });
 
   it("produces valid signature for auth protocol", async () => {
@@ -919,6 +897,7 @@ git add -A && git commit -m "feat(client): add KeyStore module with IndexedDB/ep
 ### Task 7: 端到端集成测试
 
 **Files:**
+
 - Create: `test/integration.test.ts`（仓库根目录）
 
 - [ ] **Step 1: 写集成测试**
@@ -928,12 +907,7 @@ git add -A && git commit -m "feat(client): add KeyStore module with IndexedDB/ep
 ```typescript
 // test/integration.test.ts
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  buildStringToSign,
-} from "@remi/crypto";
+import { generateKeyPair, getPublicKey, sign, buildStringToSign } from "@remi/crypto";
 import { verifyRequest } from "@remi/server/middleware/auth";
 
 describe("end-to-end auth flow", () => {
@@ -948,8 +922,12 @@ describe("end-to-end auth flow", () => {
     const signature = await sign(new TextEncoder().encode(sts), privateKey);
 
     const result = await verifyRequest({
-      method, path, timestamp, body,
-      publicKey, signature,
+      method,
+      path,
+      timestamp,
+      body,
+      publicKey,
+      signature,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -970,9 +948,12 @@ describe("end-to-end auth flow", () => {
     // 篡改 body
     const tampered = new TextEncoder().encode('{"question":"篡改"}');
     const result = await verifyRequest({
-      method, path, timestamp,
+      method,
+      path,
+      timestamp,
       body: tampered,
-      publicKey, signature,
+      publicKey,
+      signature,
     });
     expect(result.ok).toBe(false);
   });

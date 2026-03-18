@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  generateKeyPair,
-  getPublicKey,
-  sign,
-  verify,
-} from "../src/ed25519.js";
+import { generateKeyPair, getPublicKey, sign, verify } from "../src/ed25519.js";
 
 describe("ed25519", () => {
   it("generates a private key as base58 string", () => {

@@ -26,7 +26,11 @@ export class ConnectionManager {
     this.cache = new LRUCache<string, CachedConnection>({
       max: options.maxSize ?? 100,
       dispose: (value) => {
-        try { value.raw.close(); } catch {}
+        try {
+          value.raw.close();
+        } catch {
+          // ignore close errors on eviction
+        }
       },
     });
   }
@@ -56,7 +60,11 @@ export class ConnectionManager {
   removeConnection(pubKey: string): void {
     const cached = this.cache.get(pubKey);
     if (cached) {
-      try { cached.raw.close(); } catch {}
+      try {
+        cached.raw.close();
+      } catch {
+        // ignore close errors on removal
+      }
       this.cache.delete(pubKey);
     }
   }

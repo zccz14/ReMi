@@ -38,8 +38,7 @@ describe("KeyStore", () => {
   });
 
   it("rejects invalid private key on import", async () => {
-    await expect(ks.importPrivateKey("not-a-valid-key!!!"))
-      .rejects.toThrow();
+    await expect(ks.importPrivateKey("not-a-valid-key!!!")).rejects.toThrow();
   });
 
   it("produces valid signature for auth protocol", async () => {

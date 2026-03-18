@@ -39,7 +39,11 @@ describe("soul routes", () => {
 
   afterEach(() => {
     connMgr.closeAll();
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // cleanup best-effort
+    }
   });
 
   it("DELETE /api/:pubKey → 204 deletes soul file", async () => {

@@ -20,7 +20,11 @@ describe("vector index operations", () => {
 
   afterEach(() => {
     for (const f of tmpFiles) {
-      try { fs.unlinkSync(f); } catch {}
+      try {
+        fs.unlinkSync(f);
+      } catch {
+        // cleanup best-effort
+      }
     }
     tmpFiles.length = 0;
   });

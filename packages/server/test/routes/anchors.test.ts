@@ -35,7 +35,11 @@ describe("anchor routes", () => {
 
   afterEach(() => {
     connMgr.closeAll();
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // cleanup best-effort
+    }
   });
 
   it("POST /api/:pubKey/anchors → 201 creates anchor", async () => {

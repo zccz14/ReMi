@@ -16,7 +16,11 @@ describe("ConnectionManager", () => {
 
   afterEach(() => {
     for (const dir of tmpDirs) {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // cleanup best-effort
+      }
     }
     tmpDirs.length = 0;
   });

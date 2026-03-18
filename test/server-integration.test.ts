@@ -13,11 +13,7 @@ describe("server integration", () => {
   let privKey: string;
   let pubKey: string;
 
-  async function signedRequest(
-    method: string,
-    urlPath: string,
-    body?: string
-  ) {
+  async function signedRequest(method: string, urlPath: string, body?: string) {
     const timestamp = String(Date.now());
     const bodyBytes = body ? new TextEncoder().encode(body) : undefined;
     const sts = await buildStringToSign(method, urlPath, timestamp, bodyBytes);
@@ -45,7 +41,11 @@ describe("server integration", () => {
 
   afterEach(() => {
     cleanup();
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
   });
 
   it("health check works without auth", async () => {
@@ -58,7 +58,7 @@ describe("server integration", () => {
     const createRes = await signedRequest(
       "POST",
       `/api/${pubKey}/anchors`,
-      JSON.stringify({ question: "最重要的事？", source: "manual" })
+      JSON.stringify({ question: "最重要的事？", source: "manual" }),
     );
     expect(createRes.status).toBe(201);
     const { data: anchor } = await createRes.json();
@@ -73,17 +73,14 @@ describe("server integration", () => {
     const updateRes = await signedRequest(
       "PUT",
       `/api/${pubKey}/anchors/${anchor.id}`,
-      JSON.stringify({ answer: "保持好奇心" })
+      JSON.stringify({ answer: "保持好奇心" }),
     );
     expect(updateRes.status).toBe(200);
     const { data: updated } = await updateRes.json();
     expect(updated.answer).toBe("保持好奇心");
 
     // Delete single
-    const delRes = await signedRequest(
-      "DELETE",
-      `/api/${pubKey}/anchors/${anchor.id}`
-    );
+    const delRes = await signedRequest("DELETE", `/api/${pubKey}/anchors/${anchor.id}`);
     expect(delRes.status).toBe(204);
   });
 
@@ -92,7 +89,7 @@ describe("server integration", () => {
     await signedRequest(
       "POST",
       `/api/${pubKey}/anchors`,
-      JSON.stringify({ question: "Q1", source: "manual" })
+      JSON.stringify({ question: "Q1", source: "manual" }),
     );
 
     // Copy
@@ -101,7 +98,7 @@ describe("server integration", () => {
     const copyRes = await signedRequest(
       "POST",
       `/api/${pubKey}/copy`,
-      JSON.stringify({ targetPubKey: newPubKey })
+      JSON.stringify({ targetPubKey: newPubKey }),
     );
     expect(copyRes.status).toBe(201);
 

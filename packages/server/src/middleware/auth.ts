@@ -1,9 +1,6 @@
 import { verify, buildStringToSign } from "@remi/crypto";
 
-export type AuthError =
-  | "MISSING_AUTH_HEADER"
-  | "TIMESTAMP_EXPIRED"
-  | "INVALID_SIGNATURE";
+export type AuthError = "MISSING_AUTH_HEADER" | "TIMESTAMP_EXPIRED" | "INVALID_SIGNATURE";
 
 type AuthResult =
   | { ok: true; publicKey: string }
@@ -38,17 +35,11 @@ export async function verifyRequest(req: RequestInfo): Promise<AuthResult> {
     };
   }
 
-  const sts = await buildStringToSign(
-    req.method, req.path, req.timestamp, req.body
-  );
+  const sts = await buildStringToSign(req.method, req.path, req.timestamp, req.body);
 
   let valid: boolean;
   try {
-    valid = await verify(
-      new TextEncoder().encode(sts),
-      req.signature,
-      req.publicKey
-    );
+    valid = await verify(new TextEncoder().encode(sts), req.signature, req.publicKey);
   } catch {
     valid = false;
   }

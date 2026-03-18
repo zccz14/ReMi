@@ -5,7 +5,6 @@ import { base58Decode } from "@remi/crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ConnectionManager } from "../db/connection.js";
-import type { Role } from "../middleware/role.js";
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -14,9 +13,20 @@ declare module "hono" {
 }
 
 const copySchema = z.object({
-  targetPubKey: z.string().min(1).refine((val) => {
-    try { base58Decode(val); return true; } catch { return false; }
-  }, { message: "Invalid base58 public key" }),
+  targetPubKey: z
+    .string()
+    .min(1)
+    .refine(
+      (val) => {
+        try {
+          base58Decode(val);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: "Invalid base58 public key" },
+    ),
 });
 
 export const soulRoutes = new Hono();
@@ -31,7 +41,11 @@ soulRoutes.delete("/:pubKey", (c) => {
 
   connMgr.removeConnection(pubKey);
   const dbPath = path.join(connMgr.dataDir, `${pubKey}.sqlite`);
-  try { fs.unlinkSync(dbPath); } catch {}
+  try {
+    fs.unlinkSync(dbPath);
+  } catch {
+    // ignore if file already removed
+  }
 
   return c.body(null, 204);
 });
@@ -53,10 +67,7 @@ soulRoutes.post(
     const connMgr = c.get("connMgr");
 
     if (connMgr.soulExists(targetPubKey)) {
-      return c.json(
-        { error: "COPY_TARGET_EXISTS", message: "Target soul already exists" },
-        409
-      );
+      return c.json({ error: "COPY_TARGET_EXISTS", message: "Target soul already exists" }, 409);
     }
 
     const srcPath = path.join(connMgr.dataDir, `${pubKey}.sqlite`);
@@ -64,5 +75,5 @@ soulRoutes.post(
     fs.copyFileSync(srcPath, dstPath);
 
     return c.json({ data: { targetPubKey } }, 201);
-  }
+  },
 );

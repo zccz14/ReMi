@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EmbeddingClient, createEmbeddingClient } from "../../src/embedding/client.js";
+import { createEmbeddingClient } from "../../src/embedding/client.js";
 
 // Mock fetch for testing without real API calls
 const mockFetch = vi.fn();
