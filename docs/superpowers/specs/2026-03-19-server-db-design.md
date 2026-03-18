@@ -118,20 +118,20 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 每个 per-user SQLite 数据库在初始化时加载 sqlite-vec 扩展，并创建两个虚拟表：
 
 ```sql
--- 灵魂锚点向量表
+-- 灵魂锚点向量表（维度由配置决定）
 CREATE VIRTUAL TABLE soul_anchors_vec USING vec0(
   id TEXT PRIMARY KEY,
-  embedding FLOAT[1536]
+  embedding FLOAT[${EMBEDDING_DIMENSIONS}]
 );
 
 -- 记忆向量表
 CREATE VIRTUAL TABLE memories_vec USING vec0(
   id TEXT PRIMARY KEY,
-  embedding FLOAT[1536]
+  embedding FLOAT[${EMBEDDING_DIMENSIONS}]
 );
 ```
 
-虚拟表的 `id` 与对应业务表的 `id` 一一对应。向量维度固定为 1536（OpenAI text-embedding-3-small 默认输出）。
+虚拟表的 `id` 与对应业务表的 `id` 一一对应。向量维度通过环境变量 `EMBEDDING_DIMENSIONS` 配置（默认 1536，对应 OpenAI text-embedding-3-small）。维度在数据库创建时确定，后续不可更改——更换 embedding 模型需要重建向量表并重新生成所有向量。
 
 ### Embedding 客户端
 
@@ -144,8 +144,8 @@ interface EmbeddingClient {
 ```
 
 - 支持批量请求，减少 API 调用次数
-- 通过环境变量配置：`EMBEDDING_API_BASE`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`
-- 默认模型：`text-embedding-3-small`（1536 维）
+- 通过环境变量配置：`EMBEDDING_API_BASE`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`
+- 默认模型：`text-embedding-3-small`，默认维度：1536
 
 ### 向量索引操作
 
@@ -381,4 +381,4 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 - copy 不验证 targetPubKey 所有权
 - copy 后新旧 Soul 数据独立，后续修改不会同步
 - embedding 生成失败不阻塞主操作，可能存在向量缺失的记录
-- 向量维度固定 1536，更换 embedding 模型需要重新生成所有向量
+- 向量维度在数据库创建时确定，更换 embedding 模型需要重建向量表并重新生成所有向量
