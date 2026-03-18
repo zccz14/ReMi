@@ -118,7 +118,7 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 |------|------|------|------|------|
 | GET | `/api/health` | 无 | - | 健康检查 |
 | DELETE | `/api/:pubKey` | 需要 | owner | 删除整个 Soul (GDPR) |
-| POST | `/api/:pubKey/transfer` | 需要 | owner | 迁移 Soul 到新 pubKey |
+| POST | `/api/:pubKey/copy` | 需要 | owner | 复制 Soul 到新 pubKey |
 | GET | `/api/:pubKey/anchors` | 需要 | owner | 列出所有锚点 |
 | POST | `/api/:pubKey/anchors` | 需要 | owner | 创建锚点 |
 | DELETE | `/api/:pubKey/anchors` | 需要 | owner | 清空所有锚点 |
@@ -161,7 +161,7 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 | FORBIDDEN | 403 | 角色不足（visitor 试图访问 owner 接口） |
 | SOUL_NOT_FOUND | 404 | Soul 不存在（visitor 请求未创建的 Soul） |
 | ANCHOR_NOT_FOUND | 404 | 锚点不存在 |
-| TRANSFER_TARGET_EXISTS | 409 | 迁移目标 pubKey 已有 Soul |
+| COPY_TARGET_EXISTS | 409 | 复制目标 pubKey 已有 Soul |
 | VALIDATION_ERROR | 422 | 请求体校验失败 |
 | INTERNAL_ERROR | 500 | 服务器内部错误（DB 损坏、文件操作失败等） |
 
@@ -169,9 +169,11 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 
 ### 关键端点详细设计
 
-#### POST /api/:pubKey/transfer
+#### POST /api/:pubKey/copy
 
-迁移 Soul 到新 pubKey。用于用户更换密钥。
+复制 Soul 到新 pubKey。用于密钥迁移的第一步。
+
+迁移密钥的完整流程是 **copy + delete 两步操作**：先 copy 到新 key，用新 key 验证可用后，再 delete 旧 key。任何一步失败都不会丢数据。
 
 **请求体：**
 ```json
@@ -181,14 +183,13 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 **行为：**
 1. 验证请求者是 owner
 2. 验证 targetPubKey 格式有效（base58 decode 成功）
-3. 检查 targetPubKey 对应的 Soul 是否已存在 → 存在则返回 409 TRANSFER_TARGET_EXISTS
-4. 关闭当前 DB 连接（从 LRU cache 移除）
-5. 重命名文件 `data/{pubKey}.sqlite` → `data/{targetPubKey}.sqlite`
-6. 返回 200 `{ data: { newPubKey: targetPubKey } }`
+3. 检查 targetPubKey 对应的 Soul 是否已存在 → 存在则返回 409 COPY_TARGET_EXISTS
+4. 复制文件 `{DATA_DIR}/{pubKey}.sqlite` → `{DATA_DIR}/{targetPubKey}.sqlite`
+5. 返回 201 `{ data: { targetPubKey: targetPubKey } }`
 
-**安全考量：** 只验证旧 owner 的签名权限。新 pubKey 的所有权不在此请求中验证——owner 自行决定迁移到哪个 key。
+复制完成后，新旧两个 Soul 同时存在且数据一致。用户用新 key 签名验证可用后，再调用 `DELETE /api/:pubKey` 删除旧 Soul。
 
-**并发安全：** 步骤 4-5 之间存在竞态窗口（cache 移除后、文件重命名前，并发请求可能重新打开旧 DB 文件）。MVP 阶段接受此限制——transfer 是低频操作，单机部署下实际风险极低。后续可通过 per-pubKey 互斥锁解决。
+**安全考量：** 只验证旧 owner 的签名权限。新 pubKey 的所有权不在此请求中验证——owner 自行决定复制到哪个 key。
 
 #### DELETE /api/:pubKey
 
@@ -300,7 +301,7 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 - **DB 层单元测试**：使用临时文件测试 schema 初始化、CRUD 操作
 - **中间件单元测试**：测试 Hono auth 中间件的 header 提取和错误处理
 - **路由集成测试**：使用 Hono 的 `app.request()` 测试 API 端点（不启动真实 HTTP 服务器）
-- **Soul 生命周期测试**：测试隐式创建、GDPR 删除、密钥迁移
+- **Soul 生命周期测试**：测试隐式创建、GDPR 删除、copy + delete 密钥迁移
 - 临时测试目录用 `os.tmpdir()` + 随机后缀，测试后清理
 
 ## 已知限制（MVP 接受）
@@ -309,4 +310,5 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 - 无请求体大小限制：Hono 默认限制足够
 - 无缓存策略：每次请求都查 DB
 - LRU cache 没有过期时间：只按容量淘汰
-- transfer 不验证 targetPubKey 所有权
+- copy 不验证 targetPubKey 所有权
+- copy 后新旧 Soul 数据独立，后续修改不会同步
