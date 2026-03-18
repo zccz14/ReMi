@@ -2,15 +2,17 @@
 
 ## 概述
 
-为 ReMi 搭建 HTTP 服务器基础设施和 per-user SQLite 数据库层。这是访谈引擎和推理引擎的基础依赖，提供 API 路由、认证中间件绑定、灵魂锚点 CRUD、以及 GDPR 全量删除和密钥迁移能力。
+为 ReMi 搭建 HTTP 服务器基础设施和 per-user SQLite 数据库层（含向量检索）。这是访谈引擎和推理引擎的基础依赖，提供 API 路由、认证中间件绑定、灵魂锚点 CRUD、embedding 向量存储与检索、以及 GDPR 全量删除和密钥迁移能力。
 
 ## 设计决策
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
 | HTTP 框架 | Hono | 轻量、TypeScript-first、中间件模型干净 |
-| 数据库 | better-sqlite3 | 同步 API 简单直接；sqlite-vec 扩展支持成熟，后续可做向量检索 |
-| ORM | Drizzle ORM | 常规 CRUD 类型安全；向量检索时可用 raw SQL 绕过 |
+| 数据库 | better-sqlite3 | 同步 API 简单直接；sqlite-vec 扩展支持成熟 |
+| 向量检索 | sqlite-vec | SQLite 虚拟表扩展，向量与业务数据同库同事务 |
+| ORM | Drizzle ORM | 常规 CRUD 类型安全；向量查询用 raw SQL |
+| Embedding | OpenAI-compatible API | 与 README 技术选型一致，调用外部 embedding 服务 |
 | 包结构 | 全部放 @remi/server | MVP 阶段不过度拆分，DB 逻辑和 HTTP 逻辑共处一个包 |
 
 ## Server 包结构
@@ -27,7 +29,10 @@ packages/server/
     db/
       schema.ts             # Drizzle schema 定义
       connection.ts         # per-user DB 连接管理
-      migrate.ts            # Schema 初始化（建表）
+      migrate.ts            # Schema 初始化（建表 + sqlite-vec 扩展加载）
+    embedding/
+      client.ts             # OpenAI-compatible embedding API 客户端
+      index.ts              # 向量索引操作（插入/查询/删除）
     routes/
       anchors.ts            # 灵魂锚点 CRUD 路由
       soul.ts               # Soul 级操作（删除、迁移）
@@ -62,6 +67,8 @@ packages/server/
 | created_at | INTEGER | NOT NULL | 创建时间（Unix timestamp ms） |
 | updated_at | INTEGER | NOT NULL | 更新时间（Unix timestamp ms） |
 
+对应的 sqlite-vec 虚拟表 `soul_anchors_vec`，通过 `id` 与 `soul_anchors` 关联（详见下方"向量检索"章节）。
+
 #### memories（记忆）— Schema 预留，本次不实现 API
 
 memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的写入将由访谈引擎在服务端内部完成，不需要客户端直接操作。记忆是不可变的（一旦写入不修改），因此没有 `updated_at` 列。
@@ -75,6 +82,8 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 | metadata | TEXT | - | JSON 格式的元数据（预留扩展） |
 | created_at | INTEGER | NOT NULL | 创建时间（Unix timestamp ms） |
 
+对应的 sqlite-vec 虚拟表 `memories_vec`，通过 `id` 与 `memories` 关联。
+
 ### 设计要点
 
 - **无 user_id 列**：per-user DB 天然隔离，不需要租户过滤
@@ -82,7 +91,7 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 - **source 字段**：区分访谈产出和手动输入
 - **metadata 预留**：JSON 字符串，后续可存关联的对话 ID 等
 - **时间戳用毫秒级整数**：Unix timestamp，SQLite 原生排序友好
-- **向量字段后续加**：等引入 sqlite-vec 时再加 embedding 列
+- **向量存储独立虚拟表**：embedding 向量通过 sqlite-vec 虚拟表存储，与业务表通过 id 关联
 
 ### 连接管理
 
@@ -101,6 +110,63 @@ memories 表在本次建表时一并创建，但不提供 HTTP API。记忆的�
 4. 存在 → 调用连接管理器获取连接（create = false）
 
 连接管理器的接口：`getConnection(pubKey, options?: { create?: boolean })`。`create = true` 时创建文件并初始化 schema；`create = false` 时文件不存在则抛异常。
+
+## 向量检索
+
+### sqlite-vec 集成
+
+每个 per-user SQLite 数据库在初始化时加载 sqlite-vec 扩展，并创建两个虚拟表：
+
+```sql
+-- 灵魂锚点向量表
+CREATE VIRTUAL TABLE soul_anchors_vec USING vec0(
+  id TEXT PRIMARY KEY,
+  embedding FLOAT[1536]
+);
+
+-- 记忆向量表
+CREATE VIRTUAL TABLE memories_vec USING vec0(
+  id TEXT PRIMARY KEY,
+  embedding FLOAT[1536]
+);
+```
+
+虚拟表的 `id` 与对应业务表的 `id` 一一对应。向量维度固定为 1536（OpenAI text-embedding-3-small 默认输出）。
+
+### Embedding 客户端
+
+`embedding/client.ts` 封装 OpenAI-compatible embedding API 调用：
+
+```typescript
+interface EmbeddingClient {
+  embed(texts: string[]): Promise<number[][]>;
+}
+```
+
+- 支持批量请求，减少 API 调用次数
+- 通过环境变量配置：`EMBEDDING_API_BASE`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`
+- 默认模型：`text-embedding-3-small`（1536 维）
+
+### 向量索引操作
+
+`embedding/index.ts` 提供向量的插入、查询、删除操作：
+
+```typescript
+// 插入或更新向量
+upsertEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string, embedding: number[]): void
+
+// 语义检索：返回最相似的 top-k 条记录 id 和距离
+searchSimilar(db, table: 'soul_anchors_vec' | 'memories_vec', query: number[], topK: number): { id: string, distance: number }[]
+
+// 删除向量
+deleteEmbedding(db, table: 'soul_anchors_vec' | 'memories_vec', id: string): void
+```
+
+### Embedding 时机
+
+- **soul_anchors**：创建或更新锚点时，异步生成 embedding 并写入 `soul_anchors_vec`。Embedding 的输入文本为 `question + "\n" + (answer ?? "")`。
+- **memories**：创建记忆时（服务端内部），异步生成 embedding 并写入 `memories_vec`。Embedding 的输入文本为 `content`。
+- Embedding 生成失败不阻塞主操作——记录错误日志，后续可通过重试任务补充。
 
 ## API 设计
 
@@ -283,6 +349,7 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 - `@hono/node-server`: Hono 的 Node.js 适配器
 - `better-sqlite3`: SQLite 驱动
 - `drizzle-orm`: ORM
+- `sqlite-vec`: SQLite 向量检索扩展
 - `lru-cache`: LRU 缓存（DB 连接池）
 - `zod`: 请求体校验（配合 `@hono/zod-validator`）
 - `@hono/zod-validator`: Hono 的 Zod 校验中间件
@@ -298,7 +365,8 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 
 ## 测试策略
 
-- **DB 层单元测试**：使用临时文件测试 schema 初始化、CRUD 操作
+- **DB 层单元测试**：使用临时文件测试 schema 初始化、CRUD 操作、sqlite-vec 扩展加载
+- **向量检索测试**：测试 embedding 插入、相似度查询、删除，验证 sqlite-vec 虚拟表行为
 - **中间件单元测试**：测试 Hono auth 中间件的 header 提取和错误处理
 - **路由集成测试**：使用 Hono 的 `app.request()` 测试 API 端点（不启动真实 HTTP 服务器）
 - **Soul 生命周期测试**：测试隐式创建、GDPR 删除、copy + delete 密钥迁移
@@ -312,3 +380,5 @@ Visitor 请求不存在的 Soul → 返回 404 SOUL_NOT_FOUND。
 - LRU cache 没有过期时间：只按容量淘汰
 - copy 不验证 targetPubKey 所有权
 - copy 后新旧 Soul 数据独立，后续修改不会同步
+- embedding 生成失败不阻塞主操作，可能存在向量缺失的记录
+- 向量维度固定 1536，更换 embedding 模型需要重新生成所有向量
