@@ -43,3 +43,12 @@ export interface SoulAnchor {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface ReasoningMessage {
+  id: number;
+  visitor_key: string;
+  role: "user" | "assistant";
+  content: string;
+  recalled_anchors: string[] | null;
+  created_at: number;
+}
