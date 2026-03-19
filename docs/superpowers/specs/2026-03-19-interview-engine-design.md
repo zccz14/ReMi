@@ -80,9 +80,9 @@ Agentic Recall 循环是访谈和推理共享的基础能力。区别仅在于"�
 
 ```typescript
 interface RecallOptions {
-  db: DrizzleInstance;
-  embeddingClient: EmbeddingClient;
   chatClient: ChatClient;
+  embeddingClient: EmbeddingClient;
+  searchAnchors: (embedding: number[]) => Promise<SoulAnchor[]>; // 依赖倒置，解耦 DB 细节
   context: string; // 对话上下文摘要
   goal: string; // 当前目标（访谈 vs 推理的区别点）
   maxRounds?: number; // 默认 5
@@ -94,6 +94,7 @@ interface RecallResult {
   anchors: SoulAnchor[]; // 最终召回的充分锚点集合
   narratives: string[]; // 所有思考叙述（按顺序）
   rounds: number; // 实际循环轮数
+  sufficient: boolean; // 是否达到最小充分
 }
 
 function agenticRecall(options: RecallOptions): Promise<RecallResult>;
