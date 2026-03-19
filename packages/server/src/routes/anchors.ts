@@ -5,6 +5,7 @@ import { eq, sql, desc } from "drizzle-orm";
 import { soulAnchors } from "../db/schema.js";
 import { upsertEmbedding, deleteEmbedding } from "../embedding/index.js";
 import type { EmbeddingClient } from "../embedding/client.js";
+import type { ChatClient } from "../llm/client.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { Role } from "../middleware/role.js";
 import type { Context } from "hono";
@@ -15,6 +16,7 @@ declare module "hono" {
     role: Role;
     connMgr: ConnectionManager;
     embeddingClient: EmbeddingClient | null;
+    chatClient: ChatClient | null;
   }
 }
 

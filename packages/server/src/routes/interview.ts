@@ -1,0 +1,262 @@
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { sql, desc, inArray } from "drizzle-orm";
+import { messages, soulAnchors } from "../db/schema.js";
+import { InterviewEngine, type SSEEmitter } from "../interview/engine.js";
+import type { ConnectionManager } from "../db/connection.js";
+import type { ChatClient } from "../llm/client.js";
+import type { EmbeddingClient } from "../embedding/client.js";
+import { searchSimilar, upsertEmbedding } from "../embedding/index.js";
+import type { SoulAnchor } from "../types.js";
+import type { Context } from "hono";
+
+function requireOwner(c: Context): Response | null {
+  if (c.get("role") !== "owner") {
+    return c.json({ error: "FORBIDDEN", message: "Owner access required" }, 403);
+  }
+  return null;
+}
+
+function createEngine(
+  conn: {
+    raw: ReturnType<ConnectionManager["getConnection"]>["raw"];
+    drizzle: ReturnType<ConnectionManager["getConnection"]>["drizzle"];
+  },
+  chatClient: ChatClient,
+  embeddingClient: EmbeddingClient,
+): InterviewEngine {
+  const deps = {
+    chatClient,
+    embeddingClient,
+
+    async getMessages(limit: number) {
+      const rows = conn.drizzle
+        .select()
+        .from(messages)
+        .orderBy(desc(messages.id))
+        .limit(limit)
+        .all();
+      return rows.reverse().map((r) => ({
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        created_at: r.createdAt,
+      }));
+    },
+
+    async saveMessage(role: "user" | "assistant", content: string): Promise<number> {
+      const now = Date.now();
+      const result = conn.drizzle.insert(messages).values({ role, content, createdAt: now }).run();
+      return Number(result.lastInsertRowid);
+    },
+
+    async getAnchors(limit: number): Promise<SoulAnchor[]> {
+      return conn.drizzle.select().from(soulAnchors).limit(limit).all() as SoulAnchor[];
+    },
+
+    async saveAnchors(anchors: { question: string; answer: string }[]): Promise<void> {
+      for (const anchor of anchors) {
+        const id = crypto.randomUUID();
+        const now = Date.now();
+        conn.drizzle
+          .insert(soulAnchors)
+          .values({
+            id,
+            question: anchor.question,
+            answer: anchor.answer,
+            source: "interview",
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run();
+
+        // Fire-and-forget embedding
+        const text = anchor.question + "\n" + anchor.answer;
+        embeddingClient
+          .embed([text])
+          .then((vectors) => {
+            upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
+          })
+          .catch((err) => {
+            console.error(`Failed to generate embedding for anchor ${id}:`, err);
+          });
+      }
+    },
+
+    async searchAnchors(embedding: number[]): Promise<SoulAnchor[]> {
+      const results = searchSimilar(conn.raw, "soul_anchors_vec", embedding, 10);
+      if (results.length === 0) return [];
+      const ids = results.map((r) => r.id);
+      return conn.drizzle
+        .select()
+        .from(soulAnchors)
+        .where(inArray(soulAnchors.id, ids))
+        .all() as SoulAnchor[];
+    },
+
+    async getAnchorCount(): Promise<number> {
+      const [{ count }] = conn.drizzle
+        .select({ count: sql<number>`count(*)` })
+        .from(soulAnchors)
+        .all();
+      return count;
+    },
+  };
+
+  return new InterviewEngine(deps);
+}
+
+function createSSEEmitter(stream: {
+  writeSSE: (message: { event: string; data: string }) => Promise<void>;
+}): SSEEmitter {
+  return {
+    emitThinking(narrative: string) {
+      stream.writeSSE({ event: "thinking", data: narrative });
+    },
+    emitToken(content: string) {
+      stream.writeSSE({ event: "token", data: content });
+    },
+    emitDone(data: { messageId: number; anchorsExtracted: number }) {
+      stream.writeSSE({ event: "done", data: JSON.stringify(data) });
+    },
+    emitError(code: string, message: string) {
+      stream.writeSSE({ event: "error", data: JSON.stringify({ code, message }) });
+    },
+  };
+}
+
+export const interviewRoutes = new Hono();
+
+// GET /:pubKey/interview/status
+interviewRoutes.get("/:pubKey/interview/status", (c) => {
+  const forbidden = requireOwner(c);
+  if (forbidden) return forbidden;
+
+  const pubKey = c.req.param("pubKey");
+  const conn = c.get("connMgr").getConnection(pubKey);
+
+  const [{ anchorCount }] = conn.drizzle
+    .select({ anchorCount: sql<number>`count(*)` })
+    .from(soulAnchors)
+    .all();
+
+  const [{ messageCount }] = conn.drizzle
+    .select({ messageCount: sql<number>`count(*)` })
+    .from(messages)
+    .all();
+
+  const lastMessage = conn.drizzle
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .orderBy(desc(messages.createdAt))
+    .limit(1)
+    .get();
+
+  return c.json({
+    data: {
+      totalAnchors: anchorCount,
+      totalMessages: messageCount,
+      lastActiveAt: lastMessage?.createdAt ?? null,
+    },
+  });
+});
+
+// GET /:pubKey/interview/messages
+interviewRoutes.get("/:pubKey/interview/messages", (c) => {
+  const forbidden = requireOwner(c);
+  if (forbidden) return forbidden;
+
+  const pubKey = c.req.param("pubKey");
+  const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);
+  const before = c.req.query("before") ? Number(c.req.query("before")) : undefined;
+
+  const conn = c.get("connMgr").getConnection(pubKey);
+
+  let query = conn.drizzle
+    .select()
+    .from(messages)
+    .orderBy(desc(messages.id))
+    .limit(limit + 1);
+
+  if (before !== undefined) {
+    query = conn.drizzle
+      .select()
+      .from(messages)
+      .where(sql`${messages.id} < ${before}`)
+      .orderBy(desc(messages.id))
+      .limit(limit + 1) as typeof query;
+  }
+
+  const rows = query.all();
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit).reverse();
+
+  return c.json({
+    data: {
+      items,
+      hasMore,
+    },
+  });
+});
+
+const messageSchema = z.object({
+  content: z.string().min(1),
+});
+
+// POST /:pubKey/interview/start
+interviewRoutes.post("/:pubKey/interview/start", (c) => {
+  const forbidden = requireOwner(c);
+  if (forbidden) return forbidden;
+
+  const pubKey = c.req.param("pubKey");
+  const chatClient = c.get("chatClient");
+  const embeddingClient = c.get("embeddingClient");
+
+  if (!chatClient || !embeddingClient) {
+    return c.json({ error: "LLM_ERROR", message: "Chat or embedding client not configured" }, 500);
+  }
+
+  const conn = c.get("connMgr").getConnection(pubKey);
+  const engine = createEngine(conn, chatClient, embeddingClient);
+
+  return streamSSE(c, async (stream) => {
+    const emitter = createSSEEmitter(stream);
+    await engine.start(emitter);
+  });
+});
+
+// POST /:pubKey/interview/message
+interviewRoutes.post(
+  "/:pubKey/interview/message",
+  zValidator("json", messageSchema, (result, c) => {
+    if (!result.success) {
+      return c.json({ error: "VALIDATION_ERROR", message: result.error.message }, 422);
+    }
+  }),
+  (c) => {
+    const forbidden = requireOwner(c);
+    if (forbidden) return forbidden;
+
+    const pubKey = c.req.param("pubKey");
+    const { content } = c.req.valid("json");
+    const chatClient = c.get("chatClient");
+    const embeddingClient = c.get("embeddingClient");
+
+    if (!chatClient || !embeddingClient) {
+      return c.json(
+        { error: "LLM_ERROR", message: "Chat or embedding client not configured" },
+        500,
+      );
+    }
+
+    const conn = c.get("connMgr").getConnection(pubKey);
+    const engine = createEngine(conn, chatClient, embeddingClient);
+
+    return streamSSE(c, async (stream) => {
+      const emitter = createSSEEmitter(stream);
+      await engine.handleMessage(content, emitter);
+    });
+  },
+);
