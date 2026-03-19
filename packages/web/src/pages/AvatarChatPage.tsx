@@ -32,6 +32,8 @@ export function AvatarChatPage() {
       messages={chat.messages}
       streaming={chat.streaming}
       thinking={chat.thinking}
+      phase={chat.phase}
+      thinkingItems={chat.thinkingItems}
       hasMore={chat.hasMore}
       onSend={chat.send}
       onLoadMore={chat.loadMore}

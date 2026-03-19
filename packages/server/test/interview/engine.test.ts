@@ -1,121 +1,315 @@
-import { describe, it, expect, vi } from "vitest";
-import { InterviewEngine } from "../../src/interview/engine.js";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { InterviewEngine, type EngineDeps, type SSEEmitter } from "../../src/interview/engine.js";
 import type { ChatClient } from "../../src/llm/client.js";
+import { extractAnchors } from "../../src/interview/extractor.js";
+import { agenticRecall } from "../../src/interview/recall.js";
+import { detectContradictions } from "../../src/interview/contradiction.js";
 
-function createMockDeps() {
+vi.mock("../../src/interview/extractor.js", () => ({
+  extractAnchors: vi.fn(),
+}));
+
+vi.mock("../../src/interview/recall.js", () => ({
+  agenticRecall: vi.fn(),
+}));
+
+vi.mock("../../src/interview/contradiction.js", () => ({
+  detectContradictions: vi.fn(),
+}));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitUntil(predicate: () => boolean, maxTicks = 20): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error("Condition not met within expected ticks");
+}
+
+function createMockDeps(overrides: Partial<EngineDeps> = {}) {
   const chatClient: ChatClient = {
-    chat: vi.fn().mockResolvedValue({
-      content: `<judgment><sufficient>true</sufficient><next_query></next_query><reason>ok</reason><narrative>thinking...</narrative></judgment>`,
-      finishReason: "stop",
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    }),
+    chat: vi.fn(),
     chatStream: vi.fn().mockReturnValue(
       (async function* () {
-        yield "回复";
-        yield "内容";
+        yield "回";
+        yield "复";
       })(),
     ),
   };
-  const embeddingClient = {
-    embed: vi.fn().mockResolvedValue([[0.1, 0.2]]),
+
+  const deps: EngineDeps = {
+    chatClient,
+    embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    getMessages: vi
+      .fn()
+      .mockResolvedValue([{ id: 1, role: "assistant", content: "你好", created_at: Date.now() }]),
+    saveMessage: vi.fn().mockResolvedValue(2),
+    getAnchors: vi.fn().mockResolvedValue([]),
+    saveAnchors: vi.fn().mockResolvedValue(undefined),
+    searchAnchors: vi.fn().mockResolvedValue([]),
+    getAnchorCount: vi.fn().mockResolvedValue(0),
+    ...overrides,
   };
-  return { chatClient, embeddingClient };
+
+  return deps;
 }
 
+function createRecorderEmitter() {
+  const events: { type: string; data?: unknown }[] = [];
+  const emitter: SSEEmitter = {
+    emitThinking: (n) => {
+      events.push({ type: "thinking", data: n });
+    },
+    emitToken: (c) => {
+      events.push({ type: "token", data: c });
+    },
+    emitDone: (d) => {
+      events.push({ type: "done", data: d });
+    },
+    emitError: (code, message) => {
+      events.push({ type: "error", data: { code, message } });
+    },
+    emitPhase: (data) => {
+      events.push({ type: "phase", data });
+    },
+  };
+  return { events, emitter };
+}
+
+function assertProtocolInvariants(events: { type: string; data?: unknown }[]) {
+  expect(events.length).toBeGreaterThan(0);
+  expect(["phase", "thinking", "token"]).toContain(events[0].type);
+
+  const doneIndex = events.findIndex((e) => e.type === "done");
+  const errorIndex = events.findIndex((e) => e.type === "error");
+
+  expect(doneIndex >= 0 || errorIndex >= 0).toBe(true);
+  expect(doneIndex >= 0 && errorIndex >= 0).toBe(false);
+
+  const terminalIndex = doneIndex >= 0 ? doneIndex : errorIndex;
+  expect(terminalIndex).toBe(events.length - 1);
+  expect(events.slice(terminalIndex + 1).some((e) => e.type === "token")).toBe(false);
+}
+
+const mockExtractAnchors = vi.mocked(extractAnchors);
+const mockAgenticRecall = vi.mocked(agenticRecall);
+const mockDetectContradictions = vi.mocked(detectContradictions);
+
 describe("InterviewEngine", () => {
-  it("should run start flow (cold start)", async () => {
-    const { chatClient, embeddingClient } = createMockDeps();
-    const engine = new InterviewEngine({
-      chatClient,
-      embeddingClient,
-      getMessages: async () => [],
+  const env = { ...process.env };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env = { ...env };
+    delete process.env.REMI_CONVERSATION_FLOW_V2;
+    delete process.env.REMI_INJECT_INTERVIEW_FAILURE;
+    delete process.env.NODE_ENV;
+
+    mockExtractAnchors.mockResolvedValue([{ question: "价值观", answer: "诚实" }]);
+    mockAgenticRecall.mockResolvedValue({
+      anchors: [],
+      narratives: ["想好了"],
+      rounds: 1,
+      sufficient: true,
+    });
+    mockDetectContradictions.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+  });
+
+  it("start flow still emits legacy events and now includes phase", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const deps = createMockDeps({
+      getMessages: vi.fn().mockResolvedValue([]),
       saveMessage: vi.fn().mockResolvedValue(1),
-      getAnchors: async () => [],
-      saveAnchors: vi.fn(),
-      searchAnchors: async () => [],
-      getAnchorCount: async () => 0,
     });
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
 
-    const events: { type: string; data: unknown }[] = [];
-    await engine.start({
-      emitThinking: (n) => {
-        events.push({ type: "thinking", data: n });
-      },
-      emitToken: (c) => {
-        events.push({ type: "token", data: c });
-      },
-      emitDone: (d) => {
-        events.push({ type: "done", data: d });
-      },
-      emitError: (code, msg) => {
-        events.push({ type: "error", data: { code, msg } });
-      },
-    });
+    await engine.start(emitter);
 
+    expect(events.some((e) => e.type === "phase")).toBe(true);
     expect(events.some((e) => e.type === "token")).toBe(true);
     expect(events.some((e) => e.type === "done")).toBe(true);
   });
 
-  it("should run message flow with extraction", async () => {
-    const { chatClient, embeddingClient } = createMockDeps();
-    // Override chat mock for sequential calls:
-    // 1st: extraction response
-    // 2nd: recall judgment
-    // 3rd: contradiction detection
-    (chatClient.chat as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        content: `<anchor><question>价值观</question><answer>诚实</answer></anchor>`,
-        finishReason: "stop",
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      })
-      .mockResolvedValueOnce({
-        content: `<judgment><sufficient>true</sufficient><next_query></next_query><reason>ok</reason><narrative>想好了</narrative></judgment>`,
-        finishReason: "stop",
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      })
-      .mockResolvedValueOnce({
-        content: `没有发现矛盾。`,
-        finishReason: "stop",
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      });
-
-    // Need to re-mock chatStream for this test since the generator can only be consumed once
-    (chatClient.chatStream as ReturnType<typeof vi.fn>).mockReturnValue(
-      (async function* () {
-        yield "回复";
-        yield "内容";
-      })(),
-    );
-
-    const savedAnchors: unknown[] = [];
-    const engine = new InterviewEngine({
-      chatClient,
-      embeddingClient,
-      getMessages: async () => [
-        { id: 1, role: "assistant" as const, content: "你好", created_at: Date.now() },
-      ],
-      saveMessage: vi.fn().mockResolvedValue(2),
-      getAnchors: async () => [],
-      saveAnchors: vi.fn().mockImplementation((a) => savedAnchors.push(...a)),
-      searchAnchors: async () => [],
-      getAnchorCount: async () => 0,
+  it("mode=off keeps sequential behavior and emits no phase", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "off";
+    const steps: string[] = [];
+    mockExtractAnchors.mockImplementation(async () => {
+      steps.push("extract");
+      return [{ question: "q", answer: "a" }];
+    });
+    mockAgenticRecall.mockImplementation(async () => {
+      steps.push("recall");
+      return { anchors: [], narratives: [], rounds: 1, sufficient: true };
     });
 
-    const events: { type: string; data: unknown }[] = [];
-    await engine.handleMessage("我觉得诚实很重要", {
-      emitThinking: (n) => {
-        events.push({ type: "thinking", data: n });
-      },
-      emitToken: (c) => {
-        events.push({ type: "token", data: c });
-      },
-      emitDone: (d) => {
-        events.push({ type: "done", data: d });
-      },
-      emitError: () => {},
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(steps).toEqual(["extract", "recall"]);
+    expect(events.some((e) => e.type === "phase")).toBe(false);
+    assertProtocolInvariants(events);
+  });
+
+  it("mode=observability-only emits phase and stays sequential", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "observability-only";
+    const steps: string[] = [];
+    mockExtractAnchors.mockImplementation(async () => {
+      steps.push("extract");
+      return [{ question: "q", answer: "a" }];
+    });
+    mockAgenticRecall.mockImplementation(async () => {
+      steps.push("recall");
+      return { anchors: [], narratives: [], rounds: 1, sufficient: true };
     });
 
-    expect(savedAnchors.length).toBeGreaterThanOrEqual(1);
-    expect(events.some((e) => e.type === "thinking")).toBe(true);
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(steps).toEqual(["extract", "recall"]);
+    expect(events.some((e) => e.type === "phase")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("mode=full starts extract and recall concurrently", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const started: string[] = [];
+    const extractDfd = deferred<{ question: string; answer: string }[]>();
+    const recallDfd = deferred<{ anchors: []; narratives: []; rounds: number; sufficient: true }>();
+
+    mockExtractAnchors.mockImplementation(() => {
+      started.push("extract");
+      return extractDfd.promise;
+    });
+    mockAgenticRecall.mockImplementation(() => {
+      started.push("recall");
+      return recallDfd.promise;
+    });
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    const run = engine.handleMessage("hello", emitter);
+    await waitUntil(() => started.length === 2);
+    expect(started).toEqual(["extract", "recall"]);
+
+    extractDfd.resolve([{ question: "q", answer: "a" }]);
+    recallDfd.resolve({ anchors: [], narratives: [], rounds: 1, sufficient: true });
+    await run;
+
+    expect(events.some((e) => e.type === "phase")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("extract failure falls back to [] and still completes", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "observability-only";
+    mockExtractAnchors.mockRejectedValue(new Error("extract failed"));
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(deps.saveAnchors).not.toHaveBeenCalled();
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("detect failure falls back to [] and still completes", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "observability-only";
+    mockDetectContradictions.mockRejectedValue(new Error("detect failed"));
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("recall failure emits error and stops", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    mockAgenticRecall.mockRejectedValue(new Error("recall failed"));
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(events.some((e) => e.type === "error")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    assertProtocolInvariants(events);
+  });
+
+  it("inject failure=extract works in non-production", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    process.env.REMI_INJECT_INTERVIEW_FAILURE = "extract";
+    process.env.NODE_ENV = "test";
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(mockExtractAnchors).not.toHaveBeenCalled();
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("inject failure=detect works in non-production", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "observability-only";
+    process.env.REMI_INJECT_INTERVIEW_FAILURE = "detect";
+    process.env.NODE_ENV = "test";
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(mockDetectContradictions).not.toHaveBeenCalled();
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("injection is ignored in production", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    process.env.REMI_INJECT_INTERVIEW_FAILURE = "extract";
+    process.env.NODE_ENV = "production";
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(mockExtractAnchors).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
   });
 });

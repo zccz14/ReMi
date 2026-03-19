@@ -103,6 +103,37 @@ describe("ChatClient", () => {
       expect(body.temperature).toBe(0);
       expect(body.response_format).toBeUndefined();
     });
+
+    it("should not use reasoning_content as final chat content", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                reasoning_content: "internal reasoning",
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      const result = await client.chat({
+        messages: [{ role: "user", content: "Hi" }],
+      });
+
+      expect(result.content).toBe("");
+    });
   });
 
   describe("chatStream", () => {
@@ -195,6 +226,42 @@ describe("ChatClient", () => {
       }
 
       expect(tokens).toEqual(["chunk"]);
+    });
+
+    it("should ignore reasoning_content chunks in streaming output", async () => {
+      const sseData = [
+        'data: {"choices":[{"delta":{"reasoning_content":"think 1"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"final answer"}}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join("");
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sseData));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      const tokens: string[] = [];
+      for await (const token of client.chatStream({
+        messages: [{ role: "user", content: "Hi" }],
+      })) {
+        tokens.push(token);
+      }
+
+      expect(tokens).toEqual(["final answer"]);
     });
   });
 });

@@ -22,6 +22,14 @@ function requireOwner(c: Context): Response | null {
   return null;
 }
 
+function parsePositiveInt(value: string | undefined): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function createEngine(
   conn: {
     raw: ReturnType<ConnectionManager["getConnection"]>["raw"];
@@ -127,6 +135,9 @@ function createSSEEmitter(stream: {
     async emitError(code: string, message: string) {
       await stream.writeSSE({ event: "error", data: JSON.stringify({ code, message }) });
     },
+    async emitPhase(data: { phase: string; label?: string }) {
+      await stream.writeSSE({ event: "phase", data: JSON.stringify(data) });
+    },
   };
 }
 
@@ -172,8 +183,21 @@ interviewRoutes.get("/:pubKey/interview/messages", (c) => {
   if (forbidden) return forbidden;
 
   const pubKey = c.req.param("pubKey");
-  const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);
-  const before = c.req.query("before") ? Number(c.req.query("before")) : undefined;
+  const limitQuery = c.req.query("limit");
+  const beforeQuery = c.req.query("before");
+
+  const parsedLimit = parsePositiveInt(limitQuery);
+  if (parsedLimit === null) {
+    return c.json({ error: "VALIDATION_ERROR", message: "limit must be a positive integer" }, 422);
+  }
+
+  const parsedBefore = parsePositiveInt(beforeQuery);
+  if (parsedBefore === null) {
+    return c.json({ error: "VALIDATION_ERROR", message: "before must be a positive integer" }, 422);
+  }
+
+  const limit = Math.min(parsedLimit ?? 50, 200);
+  const before = parsedBefore;
 
   const conn = c.get("connMgr").getConnection(pubKey);
 

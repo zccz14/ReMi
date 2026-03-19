@@ -6,6 +6,7 @@ import { agenticRecall } from "./recall.js";
 import { detectContradictions } from "./contradiction.js";
 import { buildInterviewerSystemPrompt } from "./prompts.js";
 import { logger } from "../logger.js";
+import { getConversationFlowMode } from "../config/feature-flags.js";
 
 const log = logger.child({ module: "interview" });
 
@@ -14,6 +15,7 @@ export interface SSEEmitter {
   emitToken(content: string): void | Promise<void>;
   emitDone(data: { messageId: number; anchorsExtracted: number }): void | Promise<void>;
   emitError(code: string, message: string): void | Promise<void>;
+  emitPhase(data: { phase: string; label?: string }): void | Promise<void>;
 }
 
 export interface EngineDeps {
@@ -32,20 +34,34 @@ export interface EngineDeps {
 }
 
 const WINDOW_SIZE = 20;
+type ConversationPhase = "bootstrapping" | "extracting" | "recalling" | "detecting" | "generating";
+
+function shouldInjectInterviewFailure(stage: "extract" | "detect"): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return process.env.REMI_INJECT_INTERVIEW_FAILURE === stage;
+}
 
 export class InterviewEngine {
   constructor(private deps: EngineDeps) {}
 
   async start(emitter: SSEEmitter): Promise<void> {
     const startTime = Date.now();
+    const mode = getConversationFlowMode();
+    const phaseEnabled = mode !== "off";
+    const emitPhase = async (phase: ConversationPhase, label?: string): Promise<void> => {
+      if (!phaseEnabled) return;
+      await emitter.emitPhase({ phase, label });
+    };
     log.info("Interview start flow initiated");
 
     try {
+      await emitPhase("bootstrapping");
       const messages = await this.deps.getMessages(WINDOW_SIZE);
       const anchorCount = await this.deps.getAnchorCount();
       log.debug({ messageCount: messages.length, anchorCount }, "Interview context loaded");
 
       // Agentic Recall
+      await emitPhase("recalling");
       const recall = await agenticRecall({
         chatClient: this.deps.chatClient,
         embeddingClient: this.deps.embeddingClient,
@@ -58,8 +74,10 @@ export class InterviewEngine {
         goal: "理解本体已有的认知框架，准备发起/恢复访谈",
         onNarrative: (n) => emitter.emitThinking(n),
       });
+      await emitPhase("recalling", `${recall.anchors.length}`);
 
       // 生成回复
+      await emitPhase("generating");
       const systemPrompt = buildInterviewerSystemPrompt(recall.anchors, [], anchorCount);
       const chatMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
@@ -85,6 +103,7 @@ export class InterviewEngine {
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
+      await emitPhase("generating", "done");
       const ms = Date.now() - startTime;
       log.info({ messageId, ms }, "Interview start flow completed");
       await emitter.emitDone({ messageId, anchorsExtracted: 0 });
@@ -100,51 +119,136 @@ export class InterviewEngine {
 
   async handleMessage(content: string, emitter: SSEEmitter): Promise<void> {
     const startTime = Date.now();
+    const mode = getConversationFlowMode();
+    const phaseEnabled = mode !== "off";
+    const emitPhase = async (phase: ConversationPhase, label?: string): Promise<void> => {
+      if (!phaseEnabled) return;
+      await emitter.emitPhase({ phase, label });
+    };
+
+    let extractMs = 0;
+    let recallMs = 0;
+    let parallelWaitMs = 0;
+    let detectMs = 0;
+
     log.info("Interview message flow initiated");
 
     try {
+      await emitPhase("bootstrapping");
       // 保存用户消息
       await this.deps.saveMessage("user", content);
       const messages = await this.deps.getMessages(WINDOW_SIZE);
       const existingAnchors = await this.deps.getAnchors(200);
 
-      // Step 1: 锚点提取
-      const newAnchors = await extractAnchors({
-        chatClient: this.deps.chatClient,
-        userMessage: content,
-        recentMessages: messages.slice(-6).map((m) => ({ role: m.role, content: m.content })),
-        existingAnchors,
-      });
+      const runExtract = async (): Promise<{ question: string; answer: string }[]> => {
+        await emitPhase("extracting");
+        const startedAt = Date.now();
+        try {
+          if (shouldInjectInterviewFailure("extract")) {
+            throw new Error("Injected extract failure");
+          }
+
+          return await extractAnchors({
+            chatClient: this.deps.chatClient,
+            userMessage: content,
+            recentMessages: messages.slice(-6).map((m) => ({ role: m.role, content: m.content })),
+            existingAnchors,
+          });
+        } catch (error) {
+          log.warn({ err: error }, "Anchor extraction failed, continuing with empty anchors");
+          return [];
+        } finally {
+          extractMs = Date.now() - startedAt;
+          await emitPhase("extracting", `${extractMs}`);
+        }
+      };
+
+      const runRecall = async () => {
+        await emitPhase("recalling");
+        const startedAt = Date.now();
+        try {
+          return await agenticRecall({
+            chatClient: this.deps.chatClient,
+            embeddingClient: this.deps.embeddingClient,
+            searchAnchors: (emb) => this.deps.searchAnchors(emb),
+            context: messages
+              .map((m) => `${m.role}: ${m.content}`)
+              .join("\n")
+              .slice(-2000),
+            goal: "充分理解本体在当前话题的认知，问出好问题",
+            onNarrative: (n) => emitter.emitThinking(n),
+          });
+        } finally {
+          recallMs = Date.now() - startedAt;
+          await emitPhase("recalling", `${recallMs}`);
+        }
+      };
+
+      const runDetect = async (
+        newAnchors: { question: string; answer: string }[],
+        recalledAnchors: SoulAnchor[],
+      ) => {
+        await emitPhase("detecting");
+        const startedAt = Date.now();
+        try {
+          if (shouldInjectInterviewFailure("detect")) {
+            throw new Error("Injected detect failure");
+          }
+
+          return await detectContradictions({
+            chatClient: this.deps.chatClient,
+            newAnchors,
+            existingAnchors: recalledAnchors,
+          });
+        } catch (error) {
+          log.warn({ err: error }, "Contradiction detection failed, continuing with none");
+          return [];
+        } finally {
+          detectMs = Date.now() - startedAt;
+          await emitPhase("detecting", `${detectMs}`);
+        }
+      };
+
+      let newAnchors: { question: string; answer: string }[] = [];
+      let recalledAnchors: SoulAnchor[] = [];
+
+      if (mode === "full") {
+        const startedAt = Date.now();
+        const [extractResult, recallResult] = await Promise.allSettled([runExtract(), runRecall()]);
+        parallelWaitMs = Date.now() - startedAt;
+
+        newAnchors = extractResult.status === "fulfilled" ? extractResult.value : [];
+        if (extractResult.status === "rejected") {
+          log.warn(
+            { err: extractResult.reason },
+            "Anchor extraction failed, continuing with empty anchors",
+          );
+        }
+
+        if (recallResult.status === "rejected") {
+          throw recallResult.reason;
+        }
+
+        recalledAnchors = recallResult.value.anchors;
+      } else {
+        newAnchors = await runExtract();
+        const recall = await runRecall();
+        recalledAnchors = recall.anchors;
+      }
 
       if (newAnchors.length > 0) {
         await this.deps.saveAnchors(newAnchors);
         log.info({ count: newAnchors.length }, "New anchors saved from interview message");
       }
 
-      // Step 2: Agentic Recall
-      const recall = await agenticRecall({
-        chatClient: this.deps.chatClient,
-        embeddingClient: this.deps.embeddingClient,
-        searchAnchors: (emb) => this.deps.searchAnchors(emb),
-        context: messages
-          .map((m) => `${m.role}: ${m.content}`)
-          .join("\n")
-          .slice(-2000),
-        goal: "充分理解本体在当前话题的认知，问出好问题",
-        onNarrative: (n) => emitter.emitThinking(n),
-      });
-
       // Step 3: 矛盾检测
-      const contradictions = await detectContradictions({
-        chatClient: this.deps.chatClient,
-        newAnchors,
-        existingAnchors: recall.anchors,
-      });
+      const contradictions = await runDetect(newAnchors, recalledAnchors);
 
       // Step 4: 生成回复
+      await emitPhase("generating");
       const anchorCount = await this.deps.getAnchorCount();
       const systemPrompt = buildInterviewerSystemPrompt(
-        recall.anchors,
+        recalledAnchors,
         contradictions,
         anchorCount,
       );
@@ -160,12 +264,17 @@ export class InterviewEngine {
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
+      await emitPhase("generating", "done");
       const ms = Date.now() - startTime;
       log.info(
         {
           messageId,
           anchorsExtracted: newAnchors.length,
           contradictions: contradictions.length,
+          extractMs,
+          recallMs,
+          parallelWaitMs,
+          detectMs,
           ms,
         },
         "Interview message flow completed",

@@ -1,23 +1,44 @@
 import { useRef, useEffect } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { ProcessPanel } from "./ProcessPanel";
 import { Button } from "@/components/ui/button";
-import type { ChatMessage } from "../../hooks/use-chat";
+import type { ChatMessage, ChatPhase } from "../../hooks/use-chat";
 
 interface MessageListProps {
   messages: ChatMessage[];
   thinking?: string | null;
+  phase?: ChatPhase;
+  thinkingItems?: string[];
   hasMore?: boolean;
   onLoadMore?: () => void;
 }
 
-export function MessageList({ messages, thinking, hasMore, onLoadMore }: MessageListProps) {
+export function MessageList({
+  messages,
+  thinking,
+  phase = "idle",
+  thinkingItems = [],
+  hasMore,
+  onLoadMore,
+}: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastMessageIdRef = useRef<number | null>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, thinking]);
+    const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    if (lastMessageId !== lastMessageIdRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+    lastMessageIdRef.current = lastMessageId;
+  }, [messages]);
+
+  useEffect(() => {
+    if (thinking || phase !== "idle" || thinkingItems.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [thinking, phase, thinkingItems.length]);
 
   const handleScroll = () => {
     if (!containerRef.current || !hasMore || !onLoadMore) return;
@@ -41,7 +62,8 @@ export function MessageList({ messages, thinking, hasMore, onLoadMore }: Message
       {messages.map((msg) => (
         <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
       ))}
-      {thinking && <ThinkingBlock narrative={thinking} />}
+      <ProcessPanel phase={phase} thinkingItems={thinkingItems} />
+      {thinking && thinkingItems.length === 0 && <ThinkingBlock narrative={thinking} />}
       <div ref={bottomRef} />
     </div>
   );

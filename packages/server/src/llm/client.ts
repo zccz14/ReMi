@@ -89,9 +89,9 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     }
 
     const choice = json.choices[0];
-    const msg = choice.message as { content?: string; reasoning_content?: string };
+    const msg = choice.message as { content?: string };
     const result: ChatResponse = {
-      content: msg.content || msg.reasoning_content || "",
+      content: msg.content || "",
       finishReason: choice.finish_reason,
       usage: {
         promptTokens: json.usage?.prompt_tokens ?? 0,
@@ -180,7 +180,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           };
 
           const delta = parsed.choices[0]?.delta;
-          const content = delta?.content || delta?.reasoning_content;
+          const content = delta?.content;
           if (content) {
             tokenCount++;
             yield content;

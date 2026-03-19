@@ -1,6 +1,7 @@
 export interface SSEHandlers {
   onThinking?: (narrative: string) => void;
   onToken?: (content: string) => void;
+  onPhase?: (data: { phase: string; label?: string }) => void;
   onDone?: (data: Record<string, unknown>) => void;
   onError?: (error: { code: string; message: string }) => void;
 }
@@ -35,6 +36,19 @@ function dispatchEvent(eventStr: string, handlers: SSEHandlers): void {
         // ignore malformed JSON
       }
       break;
+    case "phase":
+      try {
+        const parsed = JSON.parse(data) as { phase?: unknown; label?: unknown };
+        if (typeof parsed.phase === "string") {
+          handlers.onPhase?.({
+            phase: parsed.phase,
+            label: typeof parsed.label === "string" ? parsed.label : undefined,
+          });
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+      break;
     case "error":
       try {
         handlers.onError?.(JSON.parse(data));
@@ -46,7 +60,8 @@ function dispatchEvent(eventStr: string, handlers: SSEHandlers): void {
 }
 
 function processBuffer(buffer: string, handlers: SSEHandlers): string {
-  const events = buffer.split("\n\n");
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const events = normalized.split("\n\n");
   const remainder = events.pop() ?? "";
   for (const eventStr of events) {
     dispatchEvent(eventStr, handlers);
@@ -73,7 +88,11 @@ export async function parseSSEStream(
         break;
       }
       const { done, value } = readResult;
-      if (done) break;
+      if (done) {
+        buffer += decoder.decode();
+        processBuffer(buffer + "\n\n", handlers);
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       buffer = processBuffer(buffer, handlers);

@@ -44,6 +44,28 @@ describe("parseSSEStream", () => {
     expect(onError).toHaveBeenCalledWith({ code: "LLM_ERROR", message: "fail" });
   });
 
+  it("should parse phase event as JSON", async () => {
+    const data = JSON.stringify({ phase: "extracting", label: "12" });
+    const stream = createMockStream([`event: phase\ndata: ${data}\n\n`]);
+    const onPhase = vi.fn();
+    await parseSSEStream(stream, { onPhase });
+    expect(onPhase).toHaveBeenCalledWith({ phase: "extracting", label: "12" });
+  });
+
+  it("should ignore malformed phase event payload", async () => {
+    const stream = createMockStream(["event: phase\ndata: {bad json}\n\n"]);
+    const onPhase = vi.fn();
+    await expect(parseSSEStream(stream, { onPhase })).resolves.toBeUndefined();
+    expect(onPhase).not.toHaveBeenCalled();
+  });
+
+  it("should ignore unknown events without crashing", async () => {
+    const stream = createMockStream(["event: weird\ndata: ???\n\n"]);
+    const onToken = vi.fn();
+    await expect(parseSSEStream(stream, { onToken })).resolves.toBeUndefined();
+    expect(onToken).not.toHaveBeenCalled();
+  });
+
   it("should handle chunked data across multiple reads", async () => {
     const stream = createMockStream(["event: tok", "en\ndata: Hi\n\n"]);
     const onToken = vi.fn();
@@ -73,6 +95,20 @@ describe("parseSSEStream", () => {
     const onToken = vi.fn();
     await parseSSEStream(stream, { onToken });
     expect(onToken).toHaveBeenCalledWith("line1\nline2");
+  });
+
+  it("should parse CRLF separated events", async () => {
+    const stream = createMockStream(["event: token\r\ndata: A\r\n\r\n"]);
+    const onToken = vi.fn();
+    await parseSSEStream(stream, { onToken });
+    expect(onToken).toHaveBeenCalledWith("A");
+  });
+
+  it("should flush final buffered event on stream close", async () => {
+    const stream = createMockStream(['event: done\ndata: {"messageId":7}']);
+    const onDone = vi.fn();
+    await parseSSEStream(stream, { onDone });
+    expect(onDone).toHaveBeenCalledWith({ messageId: 7 });
   });
 
   it("should resolve cleanly when stream aborts", async () => {

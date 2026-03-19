@@ -43,6 +43,7 @@ export function InterviewPage() {
         },
       )
       .catch((err: Error) => {
+        coldStartRef.current = false;
         toast.error(err.message ?? "Failed to start interview");
       });
   }, [chat.loaded, chat.messages.length]);
@@ -52,6 +53,8 @@ export function InterviewPage() {
       messages={chat.messages}
       streaming={chat.streaming}
       thinking={chat.thinking}
+      phase={chat.phase}
+      thinkingItems={chat.thinkingItems}
       hasMore={chat.hasMore}
       onSend={chat.send}
       onLoadMore={chat.loadMore}
