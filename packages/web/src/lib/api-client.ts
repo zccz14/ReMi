@@ -1,4 +1,5 @@
 import { buildStringToSign } from "./signing";
+import type { SSEHandlers } from "./sse-client";
 
 interface KeyStoreLike {
   getPublicKey(): string;
@@ -48,6 +49,46 @@ export class ApiClient {
 
   async del(path: string): Promise<void> {
     await this.request<void>("DELETE", path);
+  }
+
+  async streamPost(path: string, body: unknown, handlers: SSEHandlers): Promise<void> {
+    const timestamp = String(Date.now());
+    const bodyStr = JSON.stringify(body);
+    const bodyBytes = new TextEncoder().encode(bodyStr);
+
+    const url = new URL(path, "http://placeholder");
+    const pathname = url.pathname;
+
+    const stringToSign = await buildStringToSign("POST", pathname, timestamp, bodyBytes);
+    const signature = await this.keyStore.sign(new TextEncoder().encode(stringToSign));
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Public-Key": this.keyStore.getPublicKey(),
+        "X-Timestamp": timestamp,
+        "X-Signature": signature,
+      },
+      body: bodyStr,
+    });
+
+    if (!response.ok || !response.body) {
+      let errorBody: { error?: string; message?: string } = {};
+      try {
+        errorBody = await response.json();
+      } catch {
+        // ignore
+      }
+      throw new ApiError(
+        response.status,
+        errorBody.error ?? "UNKNOWN",
+        errorBody.message ?? `HTTP ${response.status}`,
+      );
+    }
+
+    const { parseSSEStream } = await import("./sse-client");
+    await parseSSEStream(response.body, handlers);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
