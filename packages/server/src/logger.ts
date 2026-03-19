@@ -2,11 +2,11 @@ import pino from "pino";
 
 const level = process.env.LOG_LEVEL ?? "info";
 
-const isDev = process.env.NODE_ENV !== "production";
+const isTTY = process.stdout.isTTY === true;
 
 export const logger = pino({
   level,
-  ...(isDev
+  ...(isTTY
     ? {
         transport: {
           target: "pino-pretty",
