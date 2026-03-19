@@ -1,3 +1,7 @@
+import { logger } from "../logger.js";
+
+const log = logger.child({ module: "llm" });
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -31,6 +35,9 @@ export interface ChatClient {
 
 export function createChatClient(config: ChatClientConfig): ChatClient {
   async function chat(options: ChatOptions): Promise<ChatResponse> {
+    const start = Date.now();
+    const msgCount = options.messages.length;
+
     const body: Record<string, unknown> = {
       model: config.model,
       messages: options.messages,
@@ -40,6 +47,9 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (options.temperature !== undefined) {
       body.temperature = options.temperature;
     }
+
+    log.debug({ model: config.model, msgCount }, "LLM chat request");
+
     const response = await fetch(`${config.apiBase}/chat/completions`, {
       method: "POST",
       headers: {
@@ -51,6 +61,8 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
     if (!response.ok) {
       const text = await response.text();
+      const ms = Date.now() - start;
+      log.error({ model: config.model, status: response.status, ms }, "LLM chat API error");
       throw new Error(`Chat API error ${response.status}: ${text}`);
     }
 
@@ -71,12 +83,14 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       const detail = json.error
         ? `${json.error.type}: ${json.error.message}`
         : JSON.stringify(json);
+      const ms = Date.now() - start;
+      log.error({ model: config.model, ms, detail }, "LLM chat returned no choices");
       throw new Error(`Chat API returned no choices: ${detail}`);
     }
 
     const choice = json.choices[0];
     const msg = choice.message as { content?: string; reasoning_content?: string };
-    return {
+    const result: ChatResponse = {
       content: msg.content || msg.reasoning_content || "",
       finishReason: choice.finish_reason,
       usage: {
@@ -85,9 +99,27 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         totalTokens: json.usage?.total_tokens ?? 0,
       },
     };
+
+    const ms = Date.now() - start;
+    log.info(
+      {
+        model: config.model,
+        ms,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        totalTokens: result.usage.totalTokens,
+        finishReason: result.finishReason,
+      },
+      "LLM chat completed",
+    );
+
+    return result;
   }
 
   async function* chatStream(options: ChatOptions): AsyncGenerator<string, void, unknown> {
+    const start = Date.now();
+    const msgCount = options.messages.length;
+
     const body: Record<string, unknown> = {
       model: config.model,
       messages: options.messages,
@@ -97,6 +129,9 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (options.temperature !== undefined) {
       body.temperature = options.temperature;
     }
+
+    log.debug({ model: config.model, msgCount }, "LLM stream request");
+
     const response = await fetch(`${config.apiBase}/chat/completions`, {
       method: "POST",
       headers: {
@@ -108,12 +143,15 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
     if (!response.ok) {
       const text = await response.text();
+      const ms = Date.now() - start;
+      log.error({ model: config.model, status: response.status, ms }, "LLM stream API error");
       throw new Error(`Chat API error ${response.status}: ${text}`);
     }
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let tokenCount = 0;
 
     try {
       while (true) {
@@ -131,7 +169,11 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           if (!trimmed || !trimmed.startsWith("data: ")) continue;
 
           const data = trimmed.slice(6);
-          if (data === "[DONE]") return;
+          if (data === "[DONE]") {
+            const ms = Date.now() - start;
+            log.info({ model: config.model, ms, streamTokens: tokenCount }, "LLM stream completed");
+            return;
+          }
 
           const parsed = JSON.parse(data) as {
             choices: { delta: { content?: string; reasoning_content?: string } }[];
@@ -140,10 +182,14 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           const delta = parsed.choices[0]?.delta;
           const content = delta?.content || delta?.reasoning_content;
           if (content) {
+            tokenCount++;
             yield content;
           }
         }
       }
+
+      const ms = Date.now() - start;
+      log.info({ model: config.model, ms, streamTokens: tokenCount }, "LLM stream completed");
     } finally {
       reader.releaseLock();
     }

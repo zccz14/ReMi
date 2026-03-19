@@ -10,6 +10,9 @@ import type { ChatClient } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { searchSimilar } from "../embedding/index.js";
 import type { SoulAnchor } from "../types.js";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "route:reasoning" });
 
 function createEngine(
   conn: {
@@ -214,6 +217,11 @@ reasoningRoutes.post(
         500,
       );
     }
+
+    log.info(
+      { soul: shortKey(pubKey), visitor: shortKey(visitorKey) },
+      "Reasoning message received",
+    );
 
     const conn = c.get("connMgr").getConnection(pubKey);
     const engine = createEngine(conn, chatClient, embeddingClient);

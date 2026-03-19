@@ -3,6 +3,9 @@ import type { SoulAnchor } from "../types.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { buildBatchRecallJudgmentPrompt } from "./prompts.js";
 import { extractTag } from "../llm/xml-parser.js";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "batch-recall" });
 
 export interface BatchRecallOptions {
   chatClient: ChatClient;
@@ -44,6 +47,16 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
   let query = context;
   let rounds = 0;
 
+  log.info(
+    {
+      goalCount: goals.length,
+      cachedAnchors: cachedAnchors.length,
+      visitor: shortKey(visitorKey),
+      maxRounds,
+    },
+    "Batch recall started",
+  );
+
   while (rounds < maxRounds) {
     rounds++;
 
@@ -52,6 +65,11 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
     for (const anchor of found) {
       allAnchors.set(anchor.id, anchor);
     }
+
+    log.debug(
+      { round: rounds, foundThisRound: found.length, totalAnchors: allAnchors.size },
+      "Batch recall round completed",
+    );
 
     const messages = buildBatchRecallJudgmentPrompt(
       goals,
@@ -67,6 +85,7 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
     const content = response.content;
     const judgmentBlock = extractTag(content, "judgment");
     if (!judgmentBlock) {
+      log.warn({ round: rounds }, "Batch recall judgment block missing, stopping");
       break;
     }
 
@@ -80,6 +99,10 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
     }
 
     if (sufficient) {
+      log.info(
+        { rounds, totalAnchors: allAnchors.size, sufficient: true },
+        "Batch recall finished",
+      );
       return {
         anchors: Array.from(allAnchors.values()),
         narratives,
@@ -91,9 +114,12 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
     if (nextQuery) {
       query = nextQuery;
     } else {
+      log.debug({ round: rounds }, "No next query, stopping batch recall");
       break;
     }
   }
+
+  log.info({ rounds, totalAnchors: allAnchors.size, sufficient: false }, "Batch recall finished");
 
   return {
     anchors: Array.from(allAnchors.values()),

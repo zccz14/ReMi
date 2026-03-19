@@ -9,6 +9,9 @@ import type { ChatClient } from "../llm/client.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { Role } from "../middleware/role.js";
 import type { Context } from "hono";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "anchors" });
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -101,6 +104,8 @@ anchorRoutes.post(
 
     const anchor = conn.drizzle.select().from(soulAnchors).where(eq(soulAnchors.id, id)).get();
 
+    log.info({ soul: shortKey(pubKey), anchorId: id, source: body.source }, "Anchor created");
+
     // Async embedding generation (fire-and-forget, non-blocking)
     const embeddingClient = c.get("embeddingClient");
     if (embeddingClient) {
@@ -111,7 +116,7 @@ anchorRoutes.post(
           upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
         })
         .catch((err) => {
-          console.error(`Failed to generate embedding for anchor ${id}:`, err);
+          log.error({ err, anchorId: id }, "Failed to generate embedding for anchor");
         });
     }
 
@@ -167,6 +172,8 @@ anchorRoutes.put(
 
     const updated = conn.drizzle.select().from(soulAnchors).where(eq(soulAnchors.id, id)).get();
 
+    log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor updated");
+
     // Async embedding update (fire-and-forget)
     if (updated) {
       const embeddingClient = c.get("embeddingClient");
@@ -178,7 +185,7 @@ anchorRoutes.put(
             upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
           })
           .catch((err) => {
-            console.error(`Failed to update embedding for anchor ${id}:`, err);
+            log.error({ err, anchorId: id }, "Failed to update embedding for anchor");
           });
       }
     }
@@ -197,6 +204,8 @@ anchorRoutes.delete("/:pubKey/anchors/:id", (c) => {
   const conn = c.get("connMgr").getConnection(pubKey);
   conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, id)).run();
   deleteEmbedding(conn.raw, "soul_anchors_vec", id);
+
+  log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor deleted");
   return c.body(null, 204);
 });
 
@@ -210,5 +219,7 @@ anchorRoutes.delete("/:pubKey/anchors", (c) => {
   conn.drizzle.delete(soulAnchors).run();
   // Clear vector table
   conn.raw.exec("DELETE FROM soul_anchors_vec");
+
+  log.warn({ soul: shortKey(pubKey) }, "All anchors cleared");
   return c.body(null, 204);
 });

@@ -3,6 +3,9 @@ import type { SoulAnchor } from "../types.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { buildRecallJudgmentPrompt } from "./prompts.js";
 import { extractTag } from "../llm/xml-parser.js";
+import { logger } from "../logger.js";
+
+const log = logger.child({ module: "recall" });
 
 export interface RecallOptions {
   chatClient: ChatClient;
@@ -38,6 +41,8 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
   let query = context;
   let rounds = 0;
 
+  log.info({ goal, maxRounds }, "Agentic recall started");
+
   while (rounds < maxRounds) {
     rounds++;
 
@@ -47,6 +52,11 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
     for (const anchor of found) {
       allAnchors.set(anchor.id, anchor);
     }
+
+    log.debug(
+      { round: rounds, foundThisRound: found.length, totalAnchors: allAnchors.size },
+      "Recall round completed",
+    );
 
     // LLM 判断充分性
     const messages = buildRecallJudgmentPrompt(Array.from(allAnchors.values()), context, goal);
@@ -58,6 +68,7 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
     const content = response.content;
     const judgmentBlock = extractTag(content, "judgment");
     if (!judgmentBlock) {
+      log.warn({ round: rounds }, "Recall judgment block missing, stopping");
       break;
     }
 
@@ -71,6 +82,10 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
     }
 
     if (sufficient) {
+      log.info(
+        { rounds, totalAnchors: allAnchors.size, sufficient: true },
+        "Agentic recall finished",
+      );
       return {
         anchors: Array.from(allAnchors.values()),
         narratives,
@@ -82,9 +97,12 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
     if (nextQuery) {
       query = nextQuery;
     } else {
+      log.debug({ round: rounds }, "No next query, stopping recall");
       break;
     }
   }
+
+  log.info({ rounds, totalAnchors: allAnchors.size, sufficient: false }, "Agentic recall finished");
 
   return {
     anchors: Array.from(allAnchors.values()),

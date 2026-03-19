@@ -10,6 +10,7 @@ import { soulRoutes } from "./routes/soul.js";
 import { interviewRoutes } from "./routes/interview.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { type ChatClient } from "./llm/client.js";
+import { logger, shortKey } from "./logger.js";
 
 interface AppConfig {
   dataDir: string;
@@ -40,6 +41,36 @@ export function createApp(config: AppConfig) {
     );
   }
 
+  // Request logging middleware
+  app.use("/*", async (c: Context, next: Next) => {
+    const start = Date.now();
+    await next();
+    const ms = Date.now() - start;
+    const status = c.res.status;
+    const method = c.req.method;
+    const path = new URL(c.req.url).pathname;
+
+    const logData: Record<string, unknown> = { method, path, status, ms };
+
+    const pubKey = c.req.param("pubKey");
+    if (pubKey) {
+      logData.soul = shortKey(pubKey);
+    }
+
+    const role = c.get("role") as string | undefined;
+    if (role) {
+      logData.role = role;
+    }
+
+    if (status >= 500) {
+      logger.error(logData, `${method} ${path} ${status}`);
+    } else if (status >= 400) {
+      logger.warn(logData, `${method} ${path} ${status}`);
+    } else {
+      logger.info(logData, `${method} ${path} ${status}`);
+    }
+  });
+
   // Health check (no auth required)
   app.route("/api", healthRoutes);
 
@@ -52,8 +83,8 @@ export function createApp(config: AppConfig) {
 
   // Inject role + connMgr + embeddingClient + chatClient
   const injectContext = async (c: Context, next: Next) => {
-    const signerPubKey = c.get("signerPubKey");
-    const targetPubKey = c.req.param("pubKey");
+    const signerPubKey = c.get("signerPubKey") as string;
+    const targetPubKey = c.req.param("pubKey") as string;
     const role = determineRole(signerPubKey, targetPubKey);
 
     c.set("role", role);
@@ -64,6 +95,7 @@ export function createApp(config: AppConfig) {
     // Soul implicit creation
     if (role === "owner" && !connMgr.soulExists(targetPubKey)) {
       connMgr.getConnection(targetPubKey, { create: true });
+      logger.info({ soul: shortKey(targetPubKey) }, "Soul implicitly created");
     } else if (role === "visitor" && !connMgr.soulExists(targetPubKey)) {
       return c.json({ error: "SOUL_NOT_FOUND", message: "Soul does not exist" }, 404);
     }

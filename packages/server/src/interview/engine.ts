@@ -5,6 +5,9 @@ import { extractAnchors } from "./extractor.js";
 import { agenticRecall } from "./recall.js";
 import { detectContradictions } from "./contradiction.js";
 import { buildInterviewerSystemPrompt } from "./prompts.js";
+import { logger } from "../logger.js";
+
+const log = logger.child({ module: "interview" });
 
 export interface SSEEmitter {
   emitThinking(narrative: string): void | Promise<void>;
@@ -34,9 +37,13 @@ export class InterviewEngine {
   constructor(private deps: EngineDeps) {}
 
   async start(emitter: SSEEmitter): Promise<void> {
+    const startTime = Date.now();
+    log.info("Interview start flow initiated");
+
     try {
       const messages = await this.deps.getMessages(WINDOW_SIZE);
       const anchorCount = await this.deps.getAnchorCount();
+      log.debug({ messageCount: messages.length, anchorCount }, "Interview context loaded");
 
       // Agentic Recall
       const recall = await agenticRecall({
@@ -78,8 +85,12 @@ export class InterviewEngine {
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
+      const ms = Date.now() - startTime;
+      log.info({ messageId, ms }, "Interview start flow completed");
       await emitter.emitDone({ messageId, anchorsExtracted: 0 });
     } catch (error) {
+      const ms = Date.now() - startTime;
+      log.error({ err: error, ms }, "Interview start flow failed");
       await emitter.emitError(
         "LLM_ERROR",
         error instanceof Error ? error.message : "Unknown error",
@@ -88,6 +99,9 @@ export class InterviewEngine {
   }
 
   async handleMessage(content: string, emitter: SSEEmitter): Promise<void> {
+    const startTime = Date.now();
+    log.info("Interview message flow initiated");
+
     try {
       // 保存用户消息
       await this.deps.saveMessage("user", content);
@@ -104,6 +118,7 @@ export class InterviewEngine {
 
       if (newAnchors.length > 0) {
         await this.deps.saveAnchors(newAnchors);
+        log.info({ count: newAnchors.length }, "New anchors saved from interview message");
       }
 
       // Step 2: Agentic Recall
@@ -145,8 +160,20 @@ export class InterviewEngine {
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
+      const ms = Date.now() - startTime;
+      log.info(
+        {
+          messageId,
+          anchorsExtracted: newAnchors.length,
+          contradictions: contradictions.length,
+          ms,
+        },
+        "Interview message flow completed",
+      );
       await emitter.emitDone({ messageId, anchorsExtracted: newAnchors.length });
     } catch (error) {
+      const ms = Date.now() - startTime;
+      log.error({ err: error, ms }, "Interview message flow failed");
       await emitter.emitError(
         "LLM_ERROR",
         error instanceof Error ? error.message : "Unknown error",

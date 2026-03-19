@@ -11,6 +11,9 @@ import type { EmbeddingClient } from "../embedding/client.js";
 import { searchSimilar, upsertEmbedding } from "../embedding/index.js";
 import type { SoulAnchor } from "../types.js";
 import type { Context } from "hono";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "route:interview" });
 
 function requireOwner(c: Context): Response | null {
   if (c.get("role") !== "owner") {
@@ -80,7 +83,7 @@ function createEngine(
             upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
           })
           .catch((err) => {
-            console.error(`Failed to generate embedding for anchor ${id}:`, err);
+            log.error({ err, anchorId: id }, "Failed to generate embedding for interview anchor");
           });
       }
     },
@@ -218,6 +221,8 @@ interviewRoutes.post("/:pubKey/interview/start", (c) => {
     return c.json({ error: "LLM_ERROR", message: "Chat or embedding client not configured" }, 500);
   }
 
+  log.info({ soul: shortKey(pubKey) }, "Interview start requested");
+
   const conn = c.get("connMgr").getConnection(pubKey);
   const engine = createEngine(conn, chatClient, embeddingClient);
 
@@ -250,6 +255,8 @@ interviewRoutes.post(
         500,
       );
     }
+
+    log.info({ soul: shortKey(pubKey) }, "Interview message received");
 
     const conn = c.get("connMgr").getConnection(pubKey);
     const engine = createEngine(conn, chatClient, embeddingClient);

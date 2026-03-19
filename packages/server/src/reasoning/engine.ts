@@ -3,6 +3,9 @@ import type { EmbeddingClient } from "../embedding/client.js";
 import type { SoulAnchor } from "../types.js";
 import { batchRecall } from "./batch-recall.js";
 import { buildAvatarSystemPrompt } from "./prompts.js";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "reasoning" });
 
 export interface ReasoningSSEEmitter {
   emitThinking(narrative: string): void | Promise<void>;
@@ -45,12 +48,20 @@ export class ReasoningEngine {
     visitorKey: string,
     emitter: ReasoningSSEEmitter,
   ): Promise<void> {
+    const startTime = Date.now();
+    log.info({ visitor: shortKey(visitorKey) }, "Reasoning message flow initiated");
+
     try {
       await this.deps.saveMessage(visitorKey, "user", content);
       const messages = await this.deps.getMessages(visitorKey, WINDOW_SIZE);
 
       const cachedIds = await this.deps.getCachedAnchorIds(visitorKey);
       const cachedAnchors = cachedIds.length > 0 ? await this.deps.getAnchorsByIds(cachedIds) : [];
+
+      log.debug(
+        { messageCount: messages.length, cachedAnchors: cachedAnchors.length },
+        "Reasoning context loaded",
+      );
 
       const contextStr = messages
         .map((m) => `${m.role}: ${m.content}`)
@@ -93,11 +104,19 @@ export class ReasoningEngine {
         anchorIds,
       );
 
+      const ms = Date.now() - startTime;
+      log.info(
+        { messageId, recalledAnchors: anchorIds.length, ms },
+        "Reasoning message flow completed",
+      );
+
       await emitter.emitDone({
         messageId,
         recalledAnchors: anchorIds,
       });
     } catch (error) {
+      const ms = Date.now() - startTime;
+      log.error({ err: error, ms }, "Reasoning message flow failed");
       await emitter.emitError(
         "LLM_ERROR",
         error instanceof Error ? error.message : "Unknown error",

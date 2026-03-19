@@ -2,6 +2,9 @@ import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { SoulAnchor } from "../types.js";
 import { buildExtractionPrompt } from "./prompts.js";
 import { parseAllTagObjects } from "../llm/xml-parser.js";
+import { logger } from "../logger.js";
+
+const log = logger.child({ module: "extractor" });
 
 export interface ExtractOptions {
   chatClient: ChatClient;
@@ -25,15 +28,18 @@ export async function extractAnchors(
     });
 
     const parsed = parseAllTagObjects(response.content, "anchor", ["question", "answer"]);
-    return parsed.filter(
+    const anchors = parsed.filter(
       (item): item is { question: string; answer: string } =>
         typeof item.question === "string" &&
         item.question.length > 0 &&
         typeof item.answer === "string" &&
         item.answer.length > 0,
     );
+
+    log.info({ extracted: anchors.length }, "Anchors extracted from message");
+    return anchors;
   } catch (err) {
-    console.warn("extractAnchors failed:", err);
+    log.error({ err }, "extractAnchors failed");
     return [];
   }
 }

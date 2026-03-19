@@ -5,6 +5,9 @@ import { base58Decode } from "@remi/crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ConnectionManager } from "../db/connection.js";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "soul" });
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -47,6 +50,7 @@ soulRoutes.delete("/:pubKey", (c) => {
     // ignore if file already removed
   }
 
+  log.warn({ soul: shortKey(pubKey) }, "Soul deleted");
   return c.body(null, 204);
 });
 
@@ -73,6 +77,8 @@ soulRoutes.post(
     const srcPath = path.join(connMgr.dataDir, `${pubKey}.sqlite`);
     const dstPath = path.join(connMgr.dataDir, `${targetPubKey}.sqlite`);
     fs.copyFileSync(srcPath, dstPath);
+
+    log.info({ sourceSoul: shortKey(pubKey), targetSoul: shortKey(targetPubKey) }, "Soul copied");
 
     return c.json({ data: { targetPubKey } }, 201);
   },

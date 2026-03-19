@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { createEmbeddingClient } from "./embedding/client.js";
 import { createChatClient } from "./llm/client.js";
+import { logger } from "./logger.js";
 
 const DATA_DIR = process.env.DATA_DIR ?? "./data";
 const PORT = Number(process.env.PORT ?? 3000);
@@ -32,6 +33,17 @@ const { app } = createApp({
   chatClient,
 });
 
+logger.info(
+  {
+    dataDir: DATA_DIR,
+    embeddingDimensions: EMBEDDING_DIMENSIONS,
+    embeddingConfigured: !!embeddingClient,
+    llmConfigured: !!chatClient,
+    llmModel: llmModel ?? null,
+  },
+  "Starting ReMi server",
+);
+
 serve({ fetch: app.fetch, port: PORT }, (info) => {
-  console.log(`ReMi server listening on http://localhost:${info.port}`);
+  logger.info({ port: info.port }, `ReMi server listening on http://localhost:${info.port}`);
 });

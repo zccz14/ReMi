@@ -1,5 +1,8 @@
 import { createMiddleware } from "hono/factory";
 import { verifyRequest } from "./auth.js";
+import { logger, shortKey } from "../logger.js";
+
+const log = logger.child({ module: "auth" });
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -28,6 +31,14 @@ export function authMiddleware() {
     });
 
     if (!result.ok) {
+      log.warn(
+        {
+          error: result.error,
+          signer: publicKey ? shortKey(publicKey) : "missing",
+          path: new URL(c.req.url).pathname,
+        },
+        "Auth failed",
+      );
       return c.json({ error: result.error, message: result.message }, 401);
     }
 
