@@ -314,3 +314,4 @@ routes/reasoning.ts
 - 无并发控制：同一 visitor 同时发多条消息可能竞态
 - Prompt 模板硬编码
 - 滑动窗口大小固定，不根据 token 数动态调整
+- `recalled_anchors` 会随对话轮数累积，长对话可能导致 cachedAnchors 过多。MVP 不做裁剪，后续根据实际数据决定淘汰策略（按时间、按相关性、或设上限）
