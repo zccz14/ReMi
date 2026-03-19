@@ -29,6 +29,15 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS reasoning_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitor_key TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      recalled_anchors TEXT,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   db.exec(`
