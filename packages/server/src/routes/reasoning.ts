@@ -165,7 +165,15 @@ reasoningRoutes.get("/:pubKey/reasoning/messages", (c) => {
     .reverse()
     .map((r) => ({
       ...r,
-      recalled_anchors: r.recalledAnchors ? JSON.parse(r.recalledAnchors) : null,
+      recalled_anchors: r.recalledAnchors
+        ? (() => {
+            try {
+              return JSON.parse(r.recalledAnchors);
+            } catch {
+              return null;
+            }
+          })()
+        : null,
       recalledAnchors: undefined,
       visitor_key: r.visitorKey,
       visitorKey: undefined,

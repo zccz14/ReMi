@@ -12,7 +12,6 @@ export interface BatchRecallOptions {
   visitorKey: string;
   cachedAnchors?: SoulAnchor[];
   maxRounds?: number;
-  topK?: number;
   onNarrative?: (text: string) => void;
 }
 

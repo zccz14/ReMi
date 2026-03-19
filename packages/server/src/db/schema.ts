@@ -6,6 +6,7 @@ export const soulAnchors = sqliteTable("soul_anchors", {
   answer: text("answer"),
   source: text("source", { enum: ["interview", "manual"] }).notNull(),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });
 
 export const reasoningMessages = sqliteTable("reasoning_messages", {
