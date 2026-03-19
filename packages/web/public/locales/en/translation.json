@@ -1,0 +1,62 @@
+{
+  "nav": {
+    "dashboard": "Home",
+    "interview": "Interview",
+    "anchors": "Anchors",
+    "settings": "Settings"
+  },
+  "dashboard": {
+    "title": "ReMi",
+    "anchors": "Soul Anchors",
+    "messages": "Interview Messages",
+    "lastActive": "Last Interview",
+    "startInterview": "Start Interview",
+    "viewAnchors": "View Anchors",
+    "shareAvatar": "Share Avatar",
+    "never": "Never"
+  },
+  "chat": {
+    "placeholder": "Type a message...",
+    "interviewPlaceholder": "Share your thoughts...",
+    "loadMore": "Load more",
+    "thinking": "Thinking..."
+  },
+  "anchors": {
+    "title": "Soul Anchors",
+    "search": "Search anchors...",
+    "noAnswer": "No answer",
+    "add": "Add Anchor",
+    "question": "Question",
+    "answer": "Answer",
+    "save": "Save",
+    "delete": "Delete",
+    "confirmDelete": "Delete this anchor?",
+    "empty": "No anchors yet"
+  },
+  "settings": {
+    "title": "Settings",
+    "publicKey": "Public Key",
+    "copy": "Copy",
+    "copied": "Copied",
+    "exportKey": "Export Private Key",
+    "exportWarning": "Your private key is your sole identity credential. Keep it safe!",
+    "importKey": "Import Private Key",
+    "importPlaceholder": "Paste base58 private key...",
+    "importConfirm": "Importing will overwrite your current key. Continue?",
+    "import": "Import",
+    "language": "Language",
+    "about": "About"
+  },
+  "share": {
+    "title": "Share Avatar",
+    "description": "Scan QR code to chat with your avatar",
+    "copyLink": "Copy Link",
+    "copied": "Copied"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "error": "Something went wrong",
+    "ephemeralWarning": "Using temporary identity. Data will be lost when browser closes."
+  }
+}

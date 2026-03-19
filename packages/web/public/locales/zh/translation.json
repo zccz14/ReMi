@@ -1,0 +1,62 @@
+{
+  "nav": {
+    "dashboard": "首页",
+    "interview": "访谈",
+    "anchors": "锚点",
+    "settings": "设置"
+  },
+  "dashboard": {
+    "title": "鉴心",
+    "anchors": "灵魂锚点",
+    "messages": "访谈消息",
+    "lastActive": "最近访谈",
+    "startInterview": "开始访谈",
+    "viewAnchors": "查看锚点",
+    "shareAvatar": "分享分身",
+    "never": "暂无"
+  },
+  "chat": {
+    "placeholder": "输入消息...",
+    "interviewPlaceholder": "分享你的想法...",
+    "loadMore": "加载更多",
+    "thinking": "思考中..."
+  },
+  "anchors": {
+    "title": "灵魂锚点",
+    "search": "搜索锚点...",
+    "noAnswer": "未回答",
+    "add": "添加锚点",
+    "question": "问题",
+    "answer": "答案",
+    "save": "保存",
+    "delete": "删除",
+    "confirmDelete": "确定删除这个锚点？",
+    "empty": "暂无锚点"
+  },
+  "settings": {
+    "title": "设置",
+    "publicKey": "公钥",
+    "copy": "复制",
+    "copied": "已复制",
+    "exportKey": "导出私钥",
+    "exportWarning": "私钥是你的唯一身份凭证，请妥善保管！",
+    "importKey": "导入私钥",
+    "importPlaceholder": "粘贴 base58 格式私钥...",
+    "importConfirm": "导入将覆盖当前密钥，确定继续？",
+    "import": "导入",
+    "language": "语言",
+    "about": "关于"
+  },
+  "share": {
+    "title": "分享分身",
+    "description": "扫描二维码与你的分身对话",
+    "copyLink": "复制链接",
+    "copied": "已复制"
+  },
+  "common": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "error": "出错了",
+    "ephemeralWarning": "当前使用临时身份，关闭浏览器后数据将丢失"
+  }
+}
