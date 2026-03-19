@@ -192,10 +192,10 @@ function batchRecall(options: BatchRecallOptions): Promise<BatchRecallResult>;
 
 ```
 event: thinking
-data: {"narrative": "让我想想你之前说过什么..."}
+data: 让我想想你之前说过什么...
 
 event: token
-data: {"content": "根据"}
+data: 根据
 
 event: done
 data: {"messageId": 42, "recalledAnchors": ["id1", "id2"]}

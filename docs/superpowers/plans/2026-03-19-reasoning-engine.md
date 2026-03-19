@@ -321,6 +321,7 @@ describe("batchRecall", () => {
       searchAnchors: vi.fn().mockResolvedValue([]),
       goals: ["identity", "question"],
       context: "test context",
+      visitorKey: "test-visitor",
       onNarrative,
     });
 
@@ -368,6 +369,7 @@ describe("batchRecall", () => {
       searchAnchors: vi.fn().mockResolvedValue([anchor]),
       goals: ["identity", "question"],
       context: "test",
+      visitorKey: "test-visitor",
     });
 
     expect(result.sufficient).toBe(true);
@@ -392,6 +394,7 @@ describe("batchRecall", () => {
       searchAnchors: vi.fn().mockResolvedValue([]),
       goals: ["g"],
       context: "test",
+      visitorKey: "test-visitor",
       maxRounds: 3,
     });
 
@@ -425,6 +428,7 @@ describe("batchRecall", () => {
       searchAnchors: vi.fn().mockResolvedValue([]),
       goals: ["g"],
       context: "test",
+      visitorKey: "test-visitor",
       cachedAnchors: [cached],
     });
 
@@ -454,6 +458,7 @@ export interface BatchRecallOptions {
   searchAnchors: (embedding: number[]) => Promise<SoulAnchor[]>;
   goals: string[];
   context: string;
+  visitorKey: string;
   cachedAnchors?: SoulAnchor[];
   maxRounds?: number;
   topK?: number;
@@ -474,6 +479,7 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
     searchAnchors,
     goals,
     context,
+    visitorKey,
     cachedAnchors = [],
     maxRounds = 5,
     onNarrative,
@@ -502,7 +508,7 @@ export async function batchRecall(options: BatchRecallOptions): Promise<BatchRec
       goals,
       Array.from(allAnchors.values()),
       context,
-      "",
+      visitorKey,
     );
     const response = await chatClient.chat({
       messages: messages as ChatMessage[],
@@ -747,6 +753,7 @@ export class ReasoningEngine {
         searchAnchors: (emb) => this.deps.searchAnchors(emb),
         goals: DEFAULT_GOALS,
         context: contextStr,
+        visitorKey,
         cachedAnchors,
         onNarrative: (n) => emitter.emitThinking(n),
       });
