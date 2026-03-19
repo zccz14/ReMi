@@ -112,17 +112,17 @@ function createSSEEmitter(stream: {
   writeSSE: (message: { event: string; data: string }) => Promise<void>;
 }): SSEEmitter {
   return {
-    emitThinking(narrative: string) {
-      stream.writeSSE({ event: "thinking", data: narrative });
+    async emitThinking(narrative: string) {
+      await stream.writeSSE({ event: "thinking", data: narrative });
     },
-    emitToken(content: string) {
-      stream.writeSSE({ event: "token", data: content });
+    async emitToken(content: string) {
+      await stream.writeSSE({ event: "token", data: content });
     },
-    emitDone(data: { messageId: number; anchorsExtracted: number }) {
-      stream.writeSSE({ event: "done", data: JSON.stringify(data) });
+    async emitDone(data: { messageId: number; anchorsExtracted: number }) {
+      await stream.writeSSE({ event: "done", data: JSON.stringify(data) });
     },
-    emitError(code: string, message: string) {
-      stream.writeSSE({ event: "error", data: JSON.stringify({ code, message }) });
+    async emitError(code: string, message: string) {
+      await stream.writeSSE({ event: "error", data: JSON.stringify({ code, message }) });
     },
   };
 }

@@ -38,10 +38,18 @@ describe("InterviewEngine", () => {
 
     const events: { type: string; data: unknown }[] = [];
     await engine.start({
-      emitThinking: (n) => events.push({ type: "thinking", data: n }),
-      emitToken: (c) => events.push({ type: "token", data: c }),
-      emitDone: (d) => events.push({ type: "done", data: d }),
-      emitError: (code, msg) => events.push({ type: "error", data: { code, msg } }),
+      emitThinking: (n) => {
+        events.push({ type: "thinking", data: n });
+      },
+      emitToken: (c) => {
+        events.push({ type: "token", data: c });
+      },
+      emitDone: (d) => {
+        events.push({ type: "done", data: d });
+      },
+      emitError: (code, msg) => {
+        events.push({ type: "error", data: { code, msg } });
+      },
     });
 
     expect(events.some((e) => e.type === "token")).toBe(true);
@@ -95,9 +103,15 @@ describe("InterviewEngine", () => {
 
     const events: { type: string; data: unknown }[] = [];
     await engine.handleMessage("我觉得诚实很重要", {
-      emitThinking: (n) => events.push({ type: "thinking", data: n }),
-      emitToken: (c) => events.push({ type: "token", data: c }),
-      emitDone: (d) => events.push({ type: "done", data: d }),
+      emitThinking: (n) => {
+        events.push({ type: "thinking", data: n });
+      },
+      emitToken: (c) => {
+        events.push({ type: "token", data: c });
+      },
+      emitDone: (d) => {
+        events.push({ type: "done", data: d });
+      },
       emitError: () => {},
     });
 

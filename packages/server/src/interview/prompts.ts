@@ -47,20 +47,24 @@ export function buildRecallJudgmentPrompt(
       role: "system",
       content: `你是一个认知充分性评估专家。判断当前召回的锚点是否足以完成目标。
 
-当前目标：${goal}
-
-已召回锚点：
-${anchorList || "(暂无)"}
-
-对话上下文：
-${context}
-
 判断规则：
 1. 如果锚点足以支撑目标，返回 sufficient: true
 2. 如果不够，返回 sufficient: false 并给出新的检索 query
 3. 同时输出一段面向用户的思考叙述（narrative），展示你的思考过程
 
 输出 JSON：{"sufficient": boolean, "nextQuery": "...", "reason": "...", "narrative": "..."}`,
+    },
+    {
+      role: "user",
+      content: `请评估以下信息的充分性。
+
+当前目标：${goal}
+
+已召回锚点：
+${anchorList || "(暂无)"}
+
+对话上下文：
+${context}`,
     },
   ];
 }
@@ -75,17 +79,21 @@ export function buildContradictionPrompt(
       role: "system",
       content: `你是一个逻辑一致性检测专家。比较新提取的锚点与已有锚点，找出矛盾。
 
-新提取锚点：
-${JSON.stringify(newAnchors, null, 2)}
-
-已有锚点：
-${existingAnchors.map((a) => `Q: ${a.question}\nA: ${a.answer ?? "(未回答)"}`).join("\n\n")}
-
 规则：
 1. 只标记真正矛盾的内容，观点演变不算矛盾
 2. 如果没有矛盾，返回空数组
 
 输出 JSON：{"contradictions": [{"newAnchor": "...", "existingAnchor": "...", "description": "..."}]}`,
+    },
+    {
+      role: "user",
+      content: `请检测以下锚点间的矛盾。
+
+新提取锚点：
+${JSON.stringify(newAnchors, null, 2)}
+
+已有锚点：
+${existingAnchors.map((a) => `Q: ${a.question}\nA: ${a.answer ?? "(未回答)"}`).join("\n\n") || "(暂无)"}`,
     },
   ];
 }

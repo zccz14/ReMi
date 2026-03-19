@@ -7,10 +7,10 @@ import { detectContradictions } from "./contradiction.js";
 import { buildInterviewerSystemPrompt } from "./prompts.js";
 
 export interface SSEEmitter {
-  emitThinking(narrative: string): void;
-  emitToken(content: string): void;
-  emitDone(data: { messageId: number; anchorsExtracted: number }): void;
-  emitError(code: string, message: string): void;
+  emitThinking(narrative: string): void | Promise<void>;
+  emitToken(content: string): void | Promise<void>;
+  emitDone(data: { messageId: number; anchorsExtracted: number }): void | Promise<void>;
+  emitError(code: string, message: string): void | Promise<void>;
 }
 
 export interface EngineDeps {
@@ -61,26 +61,29 @@ export class InterviewEngine {
 
       if (messages.length === 0) {
         chatMessages.push({
-          role: "system",
+          role: "user",
           content: "这是第一次对话，请用冷启动协议开场：声明边界，给选择权，用轻量级问题。",
         });
       } else {
         chatMessages.push({
-          role: "system",
-          content: "用户回来继续对话，生成一条恢复衔接消息。",
+          role: "user",
+          content: "用户回来继续对话，请生成一条恢复衔接消息。",
         });
       }
 
       let fullContent = "";
       for await (const token of this.deps.chatClient.chatStream({ messages: chatMessages })) {
         fullContent += token;
-        emitter.emitToken(token);
+        await emitter.emitToken(token);
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
-      emitter.emitDone({ messageId, anchorsExtracted: 0 });
+      await emitter.emitDone({ messageId, anchorsExtracted: 0 });
     } catch (error) {
-      emitter.emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+      await emitter.emitError(
+        "LLM_ERROR",
+        error instanceof Error ? error.message : "Unknown error",
+      );
     }
   }
 
@@ -138,13 +141,16 @@ export class InterviewEngine {
       let fullContent = "";
       for await (const token of this.deps.chatClient.chatStream({ messages: chatMessages })) {
         fullContent += token;
-        emitter.emitToken(token);
+        await emitter.emitToken(token);
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);
-      emitter.emitDone({ messageId, anchorsExtracted: newAnchors.length });
+      await emitter.emitDone({ messageId, anchorsExtracted: newAnchors.length });
     } catch (error) {
-      emitter.emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+      await emitter.emitError(
+        "LLM_ERROR",
+        error instanceof Error ? error.message : "Unknown error",
+      );
     }
   }
 }

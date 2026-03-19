@@ -15,7 +15,7 @@ interface RequestInfo {
   body: Uint8Array | undefined | null;
 }
 
-const MAX_TIMESTAMP_DRIFT_MS = 30_000;
+const MAX_TIMESTAMP_DRIFT_MS = Number(process.env.AUTH_TIMESTAMP_WINDOW_MS ?? 30_000);
 
 export async function verifyRequest(req: RequestInfo): Promise<AuthResult> {
   if (!req.publicKey || !req.timestamp || !req.signature) {

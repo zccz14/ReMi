@@ -5,10 +5,10 @@ import { batchRecall } from "./batch-recall.js";
 import { buildAvatarSystemPrompt } from "./prompts.js";
 
 export interface ReasoningSSEEmitter {
-  emitThinking(narrative: string): void;
-  emitToken(content: string): void;
-  emitDone(data: { messageId: number; recalledAnchors: string[] }): void;
-  emitError(code: string, message: string): void;
+  emitThinking(narrative: string): void | Promise<void>;
+  emitToken(content: string): void | Promise<void>;
+  emitDone(data: { messageId: number; recalledAnchors: string[] }): void | Promise<void>;
+  emitError(code: string, message: string): void | Promise<void>;
 }
 
 export interface ReasoningEngineDeps {
@@ -82,7 +82,7 @@ export class ReasoningEngine {
         messages: chatMessages,
       })) {
         fullContent += token;
-        emitter.emitToken(token);
+        await emitter.emitToken(token);
       }
 
       const anchorIds = recall.anchors.map((a) => a.id);
@@ -93,12 +93,15 @@ export class ReasoningEngine {
         anchorIds,
       );
 
-      emitter.emitDone({
+      await emitter.emitDone({
         messageId,
         recalledAnchors: anchorIds,
       });
     } catch (error) {
-      emitter.emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+      await emitter.emitError(
+        "LLM_ERROR",
+        error instanceof Error ? error.message : "Unknown error",
+      );
     }
   }
 }

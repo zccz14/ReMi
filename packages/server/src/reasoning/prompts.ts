@@ -18,18 +18,6 @@ export function buildBatchRecallJudgmentPrompt(
       role: "system",
       content: `你是一个认知充分性评估专家。综合判断当前召回的锚点是否足以完成所有目标。
 
-## 目标列表
-${goalList}
-
-## 已召回锚点
-${anchorList || "(暂无)"}
-
-## 对话上下文
-${context}
-
-## 提问者公钥
-${visitorKey}
-
 ## 判断规则
 1. 对每个目标逐一判断是否充分
 2. sufficient 为 true 当且仅当所有目标都充分
@@ -44,6 +32,22 @@ ${visitorKey}
   "narrative": "...",
   "reason": "..."
 }`,
+    },
+    {
+      role: "user",
+      content: `请评估以下信息的充分性。
+
+## 目标列表
+${goalList}
+
+## 已召回锚点
+${anchorList || "(暂无)"}
+
+## 对话上下文
+${context}
+
+## 提问者公钥
+${visitorKey}`,
     },
   ];
 }

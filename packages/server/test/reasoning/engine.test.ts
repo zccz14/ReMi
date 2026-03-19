@@ -42,10 +42,18 @@ describe("ReasoningEngine", () => {
     });
 
     const emitter = {
-      emitThinking: (n: string) => events.push({ type: "thinking", data: n }),
-      emitToken: (t: string) => events.push({ type: "token", data: t }),
-      emitDone: (d: unknown) => events.push({ type: "done", data: d }),
-      emitError: (code: string, msg: string) => events.push({ type: "error", data: { code, msg } }),
+      emitThinking: (n: string) => {
+        events.push({ type: "thinking", data: n });
+      },
+      emitToken: (t: string) => {
+        events.push({ type: "token", data: t });
+      },
+      emitDone: (d: unknown) => {
+        events.push({ type: "done", data: d });
+      },
+      emitError: (code: string, msg: string) => {
+        events.push({ type: "error", data: { code, msg } });
+      },
     };
 
     await engine.handleMessage("你好", "visitor-pub-key", emitter);
@@ -78,7 +86,9 @@ describe("ReasoningEngine", () => {
       emitThinking: vi.fn(),
       emitToken: vi.fn(),
       emitDone: vi.fn(),
-      emitError: (code: string, msg: string) => events.push({ type: "error", data: { code, msg } }),
+      emitError: (code: string, msg: string) => {
+        events.push({ type: "error", data: { code, msg } });
+      },
     };
 
     await engine.handleMessage("test", "visitor-key", emitter);
