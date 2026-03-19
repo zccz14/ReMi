@@ -1,4 +1,5 @@
 import { Hono, type Context, type Next } from "hono";
+import { cors } from "hono/cors";
 import { authMiddleware } from "./middleware/hono-auth.js";
 import { determineRole } from "./middleware/role.js";
 import { ConnectionManager } from "./db/connection.js";
@@ -25,6 +26,19 @@ export function createApp(config: AppConfig) {
   });
 
   const app = new Hono();
+
+  // CORS for frontend
+  const corsOrigins = process.env.CORS_ORIGIN?.split(",").map((s) => s.trim()) ?? [];
+  if (corsOrigins.length > 0) {
+    app.use(
+      "/*",
+      cors({
+        origin: corsOrigins,
+        allowHeaders: ["Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
+        allowMethods: ["GET", "POST", "PUT", "DELETE"],
+      }),
+    );
+  }
 
   // Health check (no auth required)
   app.route("/api", healthRoutes);
