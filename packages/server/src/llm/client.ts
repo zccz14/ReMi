@@ -6,7 +6,6 @@ export interface ChatMessage {
 export interface ChatOptions {
   messages: ChatMessage[];
   temperature?: number;
-  responseFormat?: { type: string };
 }
 
 export interface ChatResponse {
@@ -41,10 +40,6 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (options.temperature !== undefined) {
       body.temperature = options.temperature;
     }
-    if (options.responseFormat !== undefined) {
-      body.response_format = options.responseFormat;
-    }
-
     const response = await fetch(`${config.apiBase}/chat/completions`, {
       method: "POST",
       headers: {
@@ -102,10 +97,6 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (options.temperature !== undefined) {
       body.temperature = options.temperature;
     }
-    if (options.responseFormat !== undefined) {
-      body.response_format = options.responseFormat;
-    }
-
     const response = await fetch(`${config.apiBase}/chat/completions`, {
       method: "POST",
       headers: {

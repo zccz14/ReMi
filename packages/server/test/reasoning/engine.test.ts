@@ -5,13 +5,7 @@ import type { ChatResponse } from "../../src/llm/client.js";
 function createMockDeps() {
   const chatClient = {
     chat: vi.fn().mockResolvedValue({
-      content: JSON.stringify({
-        sufficient: true,
-        goalStatus: [],
-        nextQuery: "",
-        narrative: "思考中...",
-        reason: "ok",
-      }),
+      content: `<judgment><sufficient>true</sufficient><next_query></next_query><narrative>思考中...</narrative><reason>ok</reason></judgment>`,
       finishReason: "stop",
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     } satisfies ChatResponse),

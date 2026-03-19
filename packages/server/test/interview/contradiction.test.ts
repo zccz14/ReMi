@@ -14,17 +14,14 @@ function mockChatClient(response: string): ChatClient {
 }
 
 describe("detectContradictions", () => {
-  it("should return contradictions from LLM", async () => {
+  it("should return contradictions from XML response", async () => {
     const client = mockChatClient(
-      JSON.stringify({
-        contradictions: [
-          {
-            newAnchor: "我喜欢独处",
-            existingAnchor: "我是外向的人",
-            description: "独处偏好与外向性格矛盾",
-          },
-        ],
-      }),
+      `检测到以下矛盾：
+<contradiction>
+<new_anchor>我喜欢独处</new_anchor>
+<existing_anchor>我是外向的人</existing_anchor>
+<description>独处偏好与外向性格矛盾</description>
+</contradiction>`,
     );
     const result = await detectContradictions({
       chatClient: client,
@@ -42,10 +39,12 @@ describe("detectContradictions", () => {
     });
     expect(result).toHaveLength(1);
     expect(result[0].description).toContain("矛盾");
+    expect(result[0].newAnchor).toBe("我喜欢独处");
+    expect(result[0].existingAnchor).toBe("我是外向的人");
   });
 
-  it("should return empty on no contradictions", async () => {
-    const client = mockChatClient(JSON.stringify({ contradictions: [] }));
+  it("should return empty when no contradiction tags found", async () => {
+    const client = mockChatClient("没有发现矛盾，新锚点与已有锚点一致。");
     const result = await detectContradictions({
       chatClient: client,
       newAnchors: [{ question: "q", answer: "a" }],
@@ -68,7 +67,7 @@ describe("detectContradictions", () => {
   });
 
   it("should skip if no new anchors", async () => {
-    const client = mockChatClient("{}");
+    const client = mockChatClient("no content");
     const result = await detectContradictions({
       chatClient: client,
       newAnchors: [],

@@ -1,6 +1,7 @@
 import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { SoulAnchor } from "../types.js";
 import { buildContradictionPrompt } from "./prompts.js";
+import { parseAllTagObjects } from "../llm/xml-parser.js";
 
 export interface Contradiction {
   newAnchor: string;
@@ -24,14 +25,23 @@ export async function detectContradictions(
     const response = await options.chatClient.chat({
       messages: messages as ChatMessage[],
       temperature: 0,
-      responseFormat: { type: "json_object" },
     });
-    const parsed = JSON.parse(response.content);
-    if (parsed.contradictions && Array.isArray(parsed.contradictions)) {
-      return parsed.contradictions;
-    }
-    return [];
-  } catch {
+
+    const parsed = parseAllTagObjects(response.content, "contradiction", [
+      "new_anchor",
+      "existing_anchor",
+      "description",
+    ]);
+
+    return parsed
+      .filter((item) => item.new_anchor && item.existing_anchor && item.description)
+      .map((item) => ({
+        newAnchor: item.new_anchor!,
+        existingAnchor: item.existing_anchor!,
+        description: item.description!,
+      }));
+  } catch (err) {
+    console.warn("detectContradictions failed:", err);
     return [];
   }
 }

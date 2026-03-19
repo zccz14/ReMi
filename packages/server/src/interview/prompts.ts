@@ -19,13 +19,13 @@ export function buildExtractionPrompt(
 1. 每个锚点包含一个 question（锚定问题）和 answer（用户的回答）
 2. question 应该是通用的、可复用的认知问题，不是对话中的原始提问
 3. 不要重复提取已有锚点中已覆盖的内容
-4. 如果没有新的可提取内容，返回空数组
-5. 返回 JSON 数组格式
+4. 如果没有新的可提取内容，不要输出任何 <anchor> 标签
 
 已有锚点：
 ${existingList || "(暂无)"}
 
-输出格式：{"anchors": [{"question": "...", "answer": "..."}]}`,
+输出格式（每个锚点一个 <anchor> 标签）：
+<anchor><question>锚定问题</question><answer>用户的回答</answer></anchor>`,
     },
     ...recentMessages.slice(-4),
     { role: "user", content: userMessage },
@@ -48,11 +48,17 @@ export function buildRecallJudgmentPrompt(
       content: `你是一个认知充分性评估专家。判断当前召回的锚点是否足以完成目标。
 
 判断规则：
-1. 如果锚点足以支撑目标，返回 sufficient: true
-2. 如果不够，返回 sufficient: false 并给出新的检索 query
+1. 如果锚点足以支撑目标，sufficient 为 true
+2. 如果不够，sufficient 为 false 并给出新的检索 query
 3. 同时输出一段面向用户的思考叙述（narrative），展示你的思考过程
 
-输出 JSON：{"sufficient": boolean, "nextQuery": "...", "reason": "...", "narrative": "..."}`,
+输出格式：
+<judgment>
+<sufficient>true 或 false</sufficient>
+<next_query>如果不充分，下一步检索的关键词</next_query>
+<reason>判断理由</reason>
+<narrative>面向用户的思考叙述</narrative>
+</judgment>`,
     },
     {
       role: "user",
@@ -74,6 +80,8 @@ export function buildContradictionPrompt(
   newAnchors: { question: string; answer: string }[],
   existingAnchors: SoulAnchor[],
 ): { role: string; content: string }[] {
+  const newList = newAnchors.map((a) => `Q: ${a.question}\nA: ${a.answer}`).join("\n\n");
+
   return [
     {
       role: "system",
@@ -81,16 +89,21 @@ export function buildContradictionPrompt(
 
 规则：
 1. 只标记真正矛盾的内容，观点演变不算矛盾
-2. 如果没有矛盾，返回空数组
+2. 如果没有矛盾，不要输出任何 <contradiction> 标签
 
-输出 JSON：{"contradictions": [{"newAnchor": "...", "existingAnchor": "...", "description": "..."}]}`,
+输出格式（每个矛盾一个 <contradiction> 标签）：
+<contradiction>
+<new_anchor>新锚点的内容摘要</new_anchor>
+<existing_anchor>已有锚点的内容摘要</existing_anchor>
+<description>矛盾描述</description>
+</contradiction>`,
     },
     {
       role: "user",
       content: `请检测以下锚点间的矛盾。
 
 新提取锚点：
-${JSON.stringify(newAnchors, null, 2)}
+${newList}
 
 已有锚点：
 ${existingAnchors.map((a) => `Q: ${a.question}\nA: ${a.answer ?? "(未回答)"}`).join("\n\n") || "(暂无)"}`,

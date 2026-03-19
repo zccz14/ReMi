@@ -74,7 +74,7 @@ describe("ChatClient", () => {
       );
     });
 
-    it("should pass optional parameters (temperature, responseFormat)", async () => {
+    it("should pass optional temperature parameter", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -97,12 +97,11 @@ describe("ChatClient", () => {
       await client.chat({
         messages: [{ role: "user", content: "What is the answer?" }],
         temperature: 0,
-        responseFormat: { type: "json_object" },
       });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.temperature).toBe(0);
-      expect(body.response_format).toEqual({ type: "json_object" });
+      expect(body.response_format).toBeUndefined();
     });
   });
 

@@ -4,6 +4,20 @@ import type { ChatClient, ChatResponse } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
 import type { SoulAnchor } from "../../src/types.js";
 
+function xmlJudgment(opts: {
+  sufficient: boolean;
+  nextQuery?: string;
+  narrative?: string;
+  reason: string;
+}): string {
+  return `<judgment>
+<sufficient>${opts.sufficient}</sufficient>
+<next_query>${opts.nextQuery ?? ""}</next_query>
+<narrative>${opts.narrative ?? ""}</narrative>
+<reason>${opts.reason}</reason>
+</judgment>`;
+}
+
 function mockChatClient(...responses: string[]): ChatClient {
   const chat = vi.fn();
   for (const r of responses) {
@@ -24,13 +38,8 @@ describe("batchRecall", () => {
   it("should return immediately if all goals sufficient on first round", async () => {
     const onNarrative = vi.fn();
     const client = mockChatClient(
-      JSON.stringify({
+      xmlJudgment({
         sufficient: true,
-        goalStatus: [
-          { goal: "identity", sufficient: true, reason: "found" },
-          { goal: "question", sufficient: true, reason: "found" },
-        ],
-        nextQuery: "",
         narrative: "我已经有足够的了解",
         reason: "all goals met",
       }),
@@ -62,23 +71,14 @@ describe("batchRecall", () => {
     };
 
     const client = mockChatClient(
-      JSON.stringify({
+      xmlJudgment({
         sufficient: false,
-        goalStatus: [
-          { goal: "identity", sufficient: false, reason: "need more" },
-          { goal: "question", sufficient: false, reason: "need more" },
-        ],
         nextQuery: "我的表达风格",
         narrative: "需要更多了解...",
         reason: "insufficient",
       }),
-      JSON.stringify({
+      xmlJudgment({
         sufficient: true,
-        goalStatus: [
-          { goal: "identity", sufficient: true, reason: "found" },
-          { goal: "question", sufficient: true, reason: "found" },
-        ],
-        nextQuery: "",
         narrative: "现在了解够了",
         reason: "all met",
       }),
@@ -99,15 +99,14 @@ describe("batchRecall", () => {
   });
 
   it("should stop at maxRounds", async () => {
-    const insufficientResponse = JSON.stringify({
+    const insufficientXml = xmlJudgment({
       sufficient: false,
-      goalStatus: [{ goal: "g", sufficient: false, reason: "not enough" }],
       nextQuery: "more",
       narrative: "thinking...",
       reason: "need more",
     });
 
-    const client = mockChatClient(insufficientResponse, insufficientResponse, insufficientResponse);
+    const client = mockChatClient(insufficientXml, insufficientXml, insufficientXml);
 
     const result = await batchRecall({
       chatClient: client,
@@ -133,15 +132,7 @@ describe("batchRecall", () => {
       updatedAt: Date.now(),
     };
 
-    const client = mockChatClient(
-      JSON.stringify({
-        sufficient: true,
-        goalStatus: [],
-        nextQuery: "",
-        narrative: "",
-        reason: "ok",
-      }),
-    );
+    const client = mockChatClient(xmlJudgment({ sufficient: true, reason: "ok" }));
 
     const result = await batchRecall({
       chatClient: client,

@@ -10,6 +10,7 @@
     "format": "prettier --write \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "prepare": "husky",
+    "dev": "bash dev.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },

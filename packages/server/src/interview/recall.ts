@@ -2,6 +2,7 @@ import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { SoulAnchor } from "../types.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { buildRecallJudgmentPrompt } from "./prompts.js";
+import { extractTag } from "../llm/xml-parser.js";
 
 export interface RecallOptions {
   chatClient: ChatClient;
@@ -52,27 +53,24 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
     const response = await chatClient.chat({
       messages: messages as ChatMessage[],
       temperature: 0,
-      responseFormat: { type: "json_object" },
     });
 
-    let judgment: {
-      sufficient: boolean;
-      nextQuery?: string;
-      reason: string;
-      narrative?: string;
-    };
-    try {
-      judgment = JSON.parse(response.content);
-    } catch {
+    const content = response.content;
+    const judgmentBlock = extractTag(content, "judgment");
+    if (!judgmentBlock) {
       break;
     }
 
-    if (judgment.narrative) {
-      narratives.push(judgment.narrative);
-      onNarrative?.(judgment.narrative);
+    const sufficient = extractTag(judgmentBlock, "sufficient")?.toLowerCase() === "true";
+    const nextQuery = extractTag(judgmentBlock, "next_query");
+    const narrative = extractTag(judgmentBlock, "narrative");
+
+    if (narrative) {
+      narratives.push(narrative);
+      onNarrative?.(narrative);
     }
 
-    if (judgment.sufficient) {
+    if (sufficient) {
       return {
         anchors: Array.from(allAnchors.values()),
         narratives,
@@ -81,8 +79,8 @@ export async function agenticRecall(options: RecallOptions): Promise<RecallResul
       };
     }
 
-    if (judgment.nextQuery) {
-      query = judgment.nextQuery;
+    if (nextQuery) {
+      query = nextQuery;
     } else {
       break;
     }

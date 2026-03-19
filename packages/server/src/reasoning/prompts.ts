@@ -24,14 +24,16 @@ export function buildBatchRecallJudgmentPrompt(
 3. 如果不够，给出下一个检索 query（可以跨目标）
 4. 同时输出面向用户的思考叙述（narrative）
 
-输出 JSON：
-{
-  "sufficient": boolean,
-  "goalStatus": [{"goal": "...", "sufficient": boolean, "reason": "..."}],
-  "nextQuery": "...",
-  "narrative": "...",
-  "reason": "..."
-}`,
+输出格式：
+<judgment>
+<sufficient>true 或 false</sufficient>
+<goal_status>
+<goal>目标描述</goal><sufficient>true 或 false</sufficient><reason>理由</reason>
+</goal_status>
+<next_query>如果不充分，下一步检索的关键词</next_query>
+<narrative>面向用户的思考叙述</narrative>
+<reason>总体判断理由</reason>
+</judgment>`,
     },
     {
       role: "user",

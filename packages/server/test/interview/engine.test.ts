@@ -5,7 +5,7 @@ import type { ChatClient } from "../../src/llm/client.js";
 function createMockDeps() {
   const chatClient: ChatClient = {
     chat: vi.fn().mockResolvedValue({
-      content: JSON.stringify({ sufficient: true, reason: "ok", narrative: "thinking..." }),
+      content: `<judgment><sufficient>true</sufficient><next_query></next_query><reason>ok</reason><narrative>thinking...</narrative></judgment>`,
       finishReason: "stop",
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     }),
@@ -64,17 +64,17 @@ describe("InterviewEngine", () => {
     // 3rd: contradiction detection
     (chatClient.chat as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
-        content: JSON.stringify({ anchors: [{ question: "价值观", answer: "诚实" }] }),
+        content: `<anchor><question>价值观</question><answer>诚实</answer></anchor>`,
         finishReason: "stop",
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       })
       .mockResolvedValueOnce({
-        content: JSON.stringify({ sufficient: true, reason: "ok", narrative: "想好了" }),
+        content: `<judgment><sufficient>true</sufficient><next_query></next_query><reason>ok</reason><narrative>想好了</narrative></judgment>`,
         finishReason: "stop",
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       })
       .mockResolvedValueOnce({
-        content: JSON.stringify({ contradictions: [] }),
+        content: `没有发现矛盾。`,
         finishReason: "stop",
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       });
