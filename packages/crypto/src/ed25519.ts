@@ -1,12 +1,12 @@
-import { createHash } from "node:crypto";
+import { sha512 } from "@noble/hashes/sha2.js";
 import * as ed from "@noble/ed25519";
 import { base58Encode, base58Decode } from "./base58.js";
 
-// Configure sha512Sync for @noble/ed25519 v2 sync APIs (e.g. getPublicKey)
+// Configure sha512Sync using @noble/hashes (pure JS, works in Node.js + browsers)
 ed.etc.sha512Sync = (...messages: Uint8Array[]): Uint8Array => {
-  const hash = createHash("sha512");
-  for (const m of messages) hash.update(m);
-  return new Uint8Array(hash.digest());
+  const h = sha512.create();
+  for (const m of messages) h.update(m);
+  return h.digest();
 };
 
 export function generateKeyPair(): string {
