@@ -7,6 +7,7 @@ import { healthRoutes } from "./routes/health.js";
 import { anchorRoutes } from "./routes/anchors.js";
 import { soulRoutes } from "./routes/soul.js";
 import { interviewRoutes } from "./routes/interview.js";
+import { reasoningRoutes } from "./routes/reasoning.js";
 import { type ChatClient } from "./llm/client.js";
 
 interface AppConfig {
@@ -63,6 +64,7 @@ export function createApp(config: AppConfig) {
   app.route("/api", soulRoutes);
   app.route("/api", anchorRoutes);
   app.route("/api", interviewRoutes);
+  app.route("/api", reasoningRoutes);
 
   return { app, connMgr };
 }
