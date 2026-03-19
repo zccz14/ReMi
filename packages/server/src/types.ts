@@ -7,7 +7,10 @@ export type ErrorCode =
   | "ANCHOR_NOT_FOUND"
   | "COPY_TARGET_EXISTS"
   | "VALIDATION_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "LLM_ERROR"
+  | "EXTRACTION_ERROR"
+  | "RECALL_ERROR";
 
 export interface ApiError {
   error: ErrorCode;
@@ -23,6 +26,13 @@ export interface PaginatedData<T> {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface Message {
+  id: number;
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: number;
 }
 
 export interface SoulAnchor {
