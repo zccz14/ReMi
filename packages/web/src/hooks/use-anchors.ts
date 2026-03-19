@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import type { ApiClient } from "../lib/api-client";
 
 interface Anchor {
@@ -16,12 +17,17 @@ export function useAnchors(apiClient: ApiClient) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const path = apiClient.ownerPath("/anchors?limit=200");
-    const res = await apiClient.get<{
-      data: { items: Anchor[]; total: number };
-    }>(path);
-    setAnchors(res.data.items);
-    setLoading(false);
+    try {
+      const path = apiClient.ownerPath("/anchors?limit=200");
+      const res = await apiClient.get<{
+        data: { items: Anchor[]; total: number };
+      }>(path);
+      setAnchors(res.data.items);
+    } catch {
+      toast.error("Operation failed");
+    } finally {
+      setLoading(false);
+    }
   }, [apiClient]);
 
   useEffect(() => {
@@ -29,21 +35,36 @@ export function useAnchors(apiClient: ApiClient) {
   }, [load]);
 
   const create = async (question: string, answer?: string) => {
-    const path = apiClient.ownerPath("/anchors");
-    await apiClient.post(path, { question, answer, source: "manual" });
-    await load();
+    try {
+      const path = apiClient.ownerPath("/anchors");
+      await apiClient.post(path, { question, answer, source: "manual" });
+      await load();
+      toast.success("Done");
+    } catch {
+      toast.error("Operation failed");
+    }
   };
 
   const update = async (id: string, data: { question?: string; answer?: string | null }) => {
-    const path = apiClient.ownerPath(`/anchors/${id}`);
-    await apiClient.put(path, data);
-    await load();
+    try {
+      const path = apiClient.ownerPath(`/anchors/${id}`);
+      await apiClient.put(path, data);
+      await load();
+      toast.success("Done");
+    } catch {
+      toast.error("Operation failed");
+    }
   };
 
   const remove = async (id: string) => {
-    const path = apiClient.ownerPath(`/anchors/${id}`);
-    await apiClient.del(path);
-    await load();
+    try {
+      const path = apiClient.ownerPath(`/anchors/${id}`);
+      await apiClient.del(path);
+      await load();
+      toast.success("Done");
+    } catch {
+      toast.error("Operation failed");
+    }
   };
 
   return { anchors, loading, create, update, remove, reload: load };

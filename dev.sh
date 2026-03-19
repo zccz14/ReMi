@@ -15,11 +15,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Start backend server
-npx tsx packages/server/src/index.ts &
+npx tsx packages/server/src/index.ts > server.log 2>&1 &
 SERVER_PID=$!
 
 # Start frontend dev server
-npm run dev --prefix packages/web &
+npm run dev --prefix packages/web > web.log 2>&1 &
 WEB_PID=$!
 
 echo "Backend:  http://localhost:${PORT:-3000}"

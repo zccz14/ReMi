@@ -9,7 +9,7 @@ export function ThinkingBlock({ narrative }: ThinkingBlockProps) {
 
   return (
     <div className="mb-3 ml-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-      <div className="text-xs text-gray-400 italic">
+      <div className="text-xs text-muted-foreground italic">
         {expanded ? narrative : `${narrative.slice(0, 60)}...`}
       </div>
     </div>

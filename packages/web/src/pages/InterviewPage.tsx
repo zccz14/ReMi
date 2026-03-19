@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { ChatView } from "../components/chat/ChatView";
 import { useChat, type ChatConfig, type ChatMessage } from "../hooks/use-chat";
 import { useAuth } from "../hooks/use-auth";
@@ -31,15 +32,19 @@ export function InterviewPage() {
     if (!chat.loaded || coldStartRef.current || chat.messages.length > 0 || chat.streaming) return;
     coldStartRef.current = true;
     const path = apiClient.ownerPath("/interview/start");
-    apiClient.streamPost(
-      path,
-      {},
-      {
-        onDone: () => {
-          chat.reload();
+    apiClient
+      .streamPost(
+        path,
+        {},
+        {
+          onDone: () => {
+            chat.reload();
+          },
         },
-      },
-    );
+      )
+      .catch((err: Error) => {
+        toast.error(err.message ?? "Failed to start interview");
+      });
   }, [chat.loaded, chat.messages.length]);
 
   return (

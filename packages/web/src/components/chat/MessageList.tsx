@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { Button } from "@/components/ui/button";
 import type { ChatMessage } from "../../hooks/use-chat";
 
 interface MessageListProps {
@@ -28,9 +29,14 @@ export function MessageList({ messages, thinking, hasMore, onLoadMore }: Message
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto p-4" onScroll={handleScroll}>
       {hasMore && (
-        <button className="w-full text-center text-sm text-gray-400 py-2" onClick={onLoadMore}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground"
+          onClick={onLoadMore}
+        >
           Load earlier messages
-        </button>
+        </Button>
       )}
       {messages.map((msg) => (
         <MessageBubble key={msg.id} role={msg.role} content={msg.content} />

@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { useAuth } from "../hooks/use-auth";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 interface Stats {
   totalAnchors: number;
@@ -13,12 +18,15 @@ export function DashboardPage() {
   const { t } = useTranslation();
   const { apiClient } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     apiClient
       .get<{ data: Stats }>(apiClient.ownerPath("/interview/status"))
-      .then((res) => setStats(res.data));
-  }, [apiClient]);
+      .then((res) => setStats(res.data))
+      .catch(() => toast.error(t("common.error")))
+      .finally(() => setLoading(false));
+  }, [apiClient, t]);
 
   const formatTime = (ts: number | null) => {
     if (!ts) return t("dashboard.never");
@@ -30,34 +38,59 @@ export function DashboardPage() {
       <h1 className="text-2xl font-bold">{t("dashboard.title")}</h1>
 
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-xl p-4 shadow-sm">
-          <div className="text-2xl font-bold">{stats?.totalAnchors ?? "-"}</div>
-          <div className="text-sm text-gray-500">{t("dashboard.anchors")}</div>
-        </div>
-        <div className="bg-white rounded-xl p-4 shadow-sm">
-          <div className="text-2xl font-bold">{stats?.totalMessages ?? "-"}</div>
-          <div className="text-sm text-gray-500">{t("dashboard.messages")}</div>
-        </div>
+        <Card>
+          <CardContent>
+            {loading ? (
+              <>
+                <Skeleton className="h-8 w-12 mb-1" />
+                <Skeleton className="h-4 w-20" />
+              </>
+            ) : (
+              <>
+                <div className={cn("text-2xl font-bold")}>{stats?.totalAnchors ?? "-"}</div>
+                <div className={cn("text-sm text-muted-foreground")}>{t("dashboard.anchors")}</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            {loading ? (
+              <>
+                <Skeleton className="h-8 w-12 mb-1" />
+                <Skeleton className="h-4 w-20" />
+              </>
+            ) : (
+              <>
+                <div className={cn("text-2xl font-bold")}>{stats?.totalMessages ?? "-"}</div>
+                <div className={cn("text-sm text-muted-foreground")}>{t("dashboard.messages")}</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="text-sm text-gray-500">
-        {t("dashboard.lastActive")}: {formatTime(stats?.lastActiveAt ?? null)}
+      <div className={cn("text-sm text-muted-foreground")}>
+        {loading ? (
+          <Skeleton className="h-4 w-48" />
+        ) : (
+          <>
+            {t("dashboard.lastActive")}: {formatTime(stats?.lastActiveAt ?? null)}
+          </>
+        )}
       </div>
 
       <div className="space-y-2">
-        <Link
-          to="/interview"
-          className="block w-full text-center bg-blue-600 text-white rounded-lg py-3 font-medium"
-        >
+        <Button render={<Link to="/interview" />} className="w-full py-3">
           {t("dashboard.startInterview")}
-        </Link>
+        </Button>
         <div className="grid grid-cols-2 gap-2">
-          <Link to="/anchors" className="text-center bg-gray-100 rounded-lg py-3 text-sm">
+          <Button variant="outline" render={<Link to="/anchors" />} className="py-3 text-sm">
             {t("dashboard.viewAnchors")}
-          </Link>
-          <Link to="/share" className="text-center bg-gray-100 rounded-lg py-3 text-sm">
+          </Button>
+          <Button variant="outline" render={<Link to="/share" />} className="py-3 text-sm">
             {t("dashboard.shareAvatar")}
-          </Link>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import { type SSEHandlers } from "../lib/sse-client";
 
 export interface ChatMessage {
@@ -90,12 +91,15 @@ export function useChat(config: ChatConfig) {
           },
           onError: (err) => {
             setError(err.message);
+            toast.error(err.message);
             setStreaming(false);
             setThinking(null);
           },
         })
         .catch((err: Error) => {
-          setError(err.message ?? "Unknown error");
+          const msg = err.message ?? "Unknown error";
+          setError(msg);
+          toast.error(msg);
           setStreaming(false);
         });
     },

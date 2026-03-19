@@ -1,4 +1,7 @@
 import { useState, type KeyboardEvent } from "react";
+import { SendHorizonal } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 
 interface ChatInputProps {
   onSend: (content: string) => void;
@@ -24,9 +27,9 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   };
 
   return (
-    <div className="flex gap-2 p-3 border-t bg-white">
-      <textarea
-        className="flex-1 resize-none rounded-lg border px-3 py-2 text-sm min-h-[40px] max-h-[120px]"
+    <div className="flex items-end gap-2 p-3 border-t bg-card">
+      <Textarea
+        className="flex-1 resize-none min-h-[40px] max-h-[120px]"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -34,13 +37,9 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         disabled={disabled}
         rows={1}
       />
-      <button
-        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
-        onClick={handleSend}
-        disabled={disabled || !value.trim()}
-      >
-        Send
-      </button>
+      <Button size="icon" onClick={handleSend} disabled={disabled || !value.trim()}>
+        <SendHorizonal className="size-5" />
+      </Button>
     </div>
   );
 }
