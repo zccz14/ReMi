@@ -138,14 +138,14 @@ function batchRecall(options: BatchRecallOptions): Promise<BatchRecallResult>;
 
 ### 新增 reasoning_messages 表
 
-| 列名             | 类型    | 约束             | 说明                                            |
-| ---------------- | ------- | ---------------- | ----------------------------------------------- |
-| id               | INTEGER | PK AUTOINCREMENT | 消息 ID                                         |
-| visitor_key      | TEXT    | NOT NULL         | 提问者公钥                                      |
-| role             | TEXT    | NOT NULL         | `'user'` / `'assistant'`                        |
-| content          | TEXT    | NOT NULL         | 消息内容                                        |
-| recalled_anchors | TEXT    | NULL             | JSON array of anchor IDs，仅 assistant 消息有值 |
-| created_at       | INTEGER | NOT NULL         | Unix timestamp ms                               |
+| 列名             | 类型    | 约束             | 说明                                                                                                           |
+| ---------------- | ------- | ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| id               | INTEGER | PK AUTOINCREMENT | 消息 ID                                                                                                        |
+| visitor_key      | TEXT    | NOT NULL         | 提问者公钥                                                                                                     |
+| role             | TEXT    | NOT NULL         | `'user'` / `'assistant'`                                                                                       |
+| content          | TEXT    | NOT NULL         | 消息内容                                                                                                       |
+| recalled_anchors | TEXT    | NULL             | JSON string `string[]`（anchor ID 数组），仅 assistant 消息有值。DB 存序列化 JSON，API 返回解析后的 `string[]` |
+| created_at       | INTEGER | NOT NULL         | Unix timestamp ms                                                                                              |
 
 会话由 `visitor_key` 唯一确定（每个分身有独立 SQLite 数据库，不需要 soul 维度）。
 
@@ -197,7 +197,7 @@ event: error
 data: {"code": "LLM_ERROR", "message": "..."}
 ```
 
-`done` 事件额外包含 `recalledAnchors`，方便前端展示和调试。
+`done` 事件额外包含 `recalledAnchors`（`string[]`，anchor ID 数组），方便前端展示和调试。与 DB 中 `recalled_anchors` 存储的内容一致（已解析）。
 
 ### GET /reasoning/messages
 
@@ -212,7 +212,7 @@ data: {"code": "LLM_ERROR", "message": "..."}
         "visitor_key": "...",
         "role": "assistant",
         "content": "...",
-        "recalled_anchors": "[...]",
+        "recalled_anchors": ["anchor-id-1", "anchor-id-2"],
         "created_at": 1710835200000
       }
     ],
