@@ -51,6 +51,23 @@ describe("initializeDatabase", () => {
     db.close();
   });
 
+  it("should create messages table", () => {
+    const dbPath = createTmpDb();
+    const db = new Database(dbPath);
+    initializeDatabase(db, 1536);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[];
+    const names = tables.map((t) => t.name);
+    expect(names).toContain("messages");
+    const info = db.prepare("PRAGMA table_info(messages)").all() as {
+      name: string;
+    }[];
+    const columns = info.map((c) => c.name);
+    expect(columns).toEqual(expect.arrayContaining(["id", "role", "content", "created_at"]));
+    db.close();
+  });
+
   it("should be idempotent (safe to call twice)", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);

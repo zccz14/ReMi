@@ -9,6 +9,15 @@ export const soulAnchors = sqliteTable("soul_anchors", {
   updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });
 
+export const messages = sqliteTable("messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  role: text("role", {
+    enum: ["user", "assistant", "system"],
+  }).notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at", { mode: "number" }).notNull(),
+});
+
 export const memories = sqliteTable("memories", {
   id: text("id").primaryKey(),
   content: text("content").notNull(),

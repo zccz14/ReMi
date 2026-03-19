@@ -22,6 +22,13 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       metadata TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   db.exec(`
