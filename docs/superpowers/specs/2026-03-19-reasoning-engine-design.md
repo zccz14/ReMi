@@ -14,12 +14,12 @@
 | 存储     | 新建 reasoning_messages 表         | 不污染访谈消息，职责清晰              |
 | 人格策略 | 纯锚点召回                         | 不预设 Profile，从锚点中涌现          |
 | 召回机制 | Batch Recall（多目标联合）         | 身份解析与问题回答联合推理            |
-| 锚点缓存 | 进程内内存，不持久化               | 保证锚点新鲜度                        |
+| 锚点缓存 | 复用 recalled_anchors 字段         | 已持久化的审计数据天然就是缓存        |
 | 输出     | SSE 流式                           | 复用 thinking/token/done 事件格式     |
 
 ## MVP 范围
 
-**包含：** 文字对话、Streaming 响应、多目标联合召回、锚点审计、会话级锚点缓存
+**包含：** 文字对话、Streaming 响应、多目标联合召回、锚点审计
 **不包含：** 语音/图片输入、对话摘要、主动推送
 
 ## 核心流程
@@ -153,12 +153,19 @@ function batchRecall(options: BatchRecallOptions): Promise<BatchRecallResult>;
 
 ### 锚点缓存
 
-进程内 LRU Map，key = `visitor_pubkey`，value = `SoulAnchor[]`。
+不需要独立的缓存机制。`recalled_anchors` 审计字段天然就是缓存：
 
-- 每次处理消息时查缓存，有则作为 `cachedAnchors` 传入 Batch Recall
-- Recall 结果去重后更新缓存
-- 不持久化：进程重启清空，第一轮 Recall 重新召回
-- 不持久化的理由：锚点库持续变化（访谈流不断产出新锚点），缓存过时锚点有害
+1. 收到新消息 → 从该 visitor 最近一条 assistant 消息的 `recalled_anchors` 中取出 anchor IDs
+2. 用 IDs 从锚点库查出完整 `SoulAnchor[]` 作为 `cachedAnchors` 传入 Batch Recall
+3. Batch Recall 在充分性判断时将 `cachedAnchors` 纳入已知锚点
+4. 新召回的锚点去重合并后，存入本次 assistant 消息的 `recalled_anchors`
+
+优势：
+
+- 无需进程内 LRU Map，多实例部署无问题
+- 自然持久化，进程重启不丢失上下文
+- 数据来源单一（DB），不存在内存与 DB 不一致的风险
+- 如果锚点已被删除（ID 查不到），自然淘汰过时缓存
 
 ### 滑动窗口
 
@@ -305,6 +312,5 @@ routes/reasoning.ts
 ## 已知限制（MVP 接受）
 
 - 无并发控制：同一 visitor 同时发多条消息可能竞态
-- 锚点缓存在进程内，多实例部署时不共享
 - Prompt 模板硬编码
 - 滑动窗口大小固定，不根据 token 数动态调整
