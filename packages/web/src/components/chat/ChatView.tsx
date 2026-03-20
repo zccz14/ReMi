@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import type { ChatMessage, ChatPhase } from "../../hooks/use-chat";
@@ -12,6 +13,8 @@ interface ChatViewProps {
   onSend: (content: string) => void;
   onLoadMore: () => void;
   placeholder?: string;
+  myAvatar?: ReactNode;
+  theirAvatar?: ReactNode;
 }
 
 export function ChatView({
@@ -24,6 +27,8 @@ export function ChatView({
   onSend,
   onLoadMore,
   placeholder,
+  myAvatar,
+  theirAvatar,
 }: ChatViewProps) {
   return (
     <div className="flex flex-col h-full">
@@ -34,6 +39,8 @@ export function ChatView({
         thinkingItems={thinkingItems}
         hasMore={hasMore}
         onLoadMore={onLoadMore}
+        myAvatar={myAvatar}
+        theirAvatar={theirAvatar}
       />
       <ChatInput onSend={onSend} disabled={streaming} placeholder={placeholder} />
     </div>

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useRef, useEffect } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -12,6 +13,8 @@ interface MessageListProps {
   thinkingItems?: string[];
   hasMore?: boolean;
   onLoadMore?: () => void;
+  myAvatar?: ReactNode;
+  theirAvatar?: ReactNode;
 }
 
 export function MessageList({
@@ -21,6 +24,8 @@ export function MessageList({
   thinkingItems = [],
   hasMore,
   onLoadMore,
+  myAvatar,
+  theirAvatar,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -60,7 +65,12 @@ export function MessageList({
         </Button>
       )}
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
+        <MessageBubble
+          key={msg.id}
+          role={msg.role}
+          content={msg.content}
+          avatar={msg.role === "user" ? myAvatar : theirAvatar}
+        />
       ))}
       <ProcessPanel phase={phase} thinkingItems={thinkingItems} />
       {thinking && thinkingItems.length === 0 && <ThinkingBlock narrative={thinking} />}

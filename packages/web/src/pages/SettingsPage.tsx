@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useAuth } from "../hooks/use-auth";
+import { FullScreenLayout } from "../components/layout/FullScreenLayout";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -41,71 +42,71 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="p-4 space-y-6">
-      <h1 className="text-xl font-bold">{t("settings.title")}</h1>
+    <FullScreenLayout title={t("settings.title")}>
+      <div className="p-4 space-y-6 overflow-y-auto h-full">
+        {/* Public Key */}
+        <Card>
+          <CardContent className="space-y-2">
+            <div className="text-sm font-medium">{t("settings.publicKey")}</div>
+            <div className="text-xs font-mono break-all text-muted-foreground">{publicKey}</div>
+            <Button variant="link" size="sm" onClick={copyPublicKey}>
+              {t("settings.copy")}
+            </Button>
+          </CardContent>
+        </Card>
 
-      {/* Public Key */}
-      <Card>
-        <CardContent className="space-y-2">
-          <div className="text-sm font-medium">{t("settings.publicKey")}</div>
-          <div className="text-xs font-mono break-all text-muted-foreground">{publicKey}</div>
-          <Button variant="link" size="sm" onClick={copyPublicKey}>
-            {t("settings.copy")}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Export */}
-      <Card>
-        <CardContent className="space-y-2">
-          <Button variant="link" size="sm" onClick={handleExport}>
-            {t("settings.exportKey")}
-          </Button>
-          {showPrivateKey && (
-            <div>
-              <div className="text-xs text-destructive mb-1">{t("settings.exportWarning")}</div>
-              <div className="text-xs font-mono break-all bg-muted p-2 rounded">
-                {keyStore.exportPrivateKey()}
+        {/* Export */}
+        <Card>
+          <CardContent className="space-y-2">
+            <Button variant="link" size="sm" onClick={handleExport}>
+              {t("settings.exportKey")}
+            </Button>
+            {showPrivateKey && (
+              <div>
+                <div className="text-xs text-destructive mb-1">{t("settings.exportWarning")}</div>
+                <div className="text-xs font-mono break-all bg-muted p-2 rounded">
+                  {keyStore.exportPrivateKey()}
+                </div>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </CardContent>
+        </Card>
 
-      {/* Import */}
-      <Card>
-        <CardContent className="space-y-2">
-          <div className="text-sm font-medium">{t("settings.importKey")}</div>
-          <Input
-            className="font-mono text-xs"
-            placeholder={t("settings.importPlaceholder")}
-            value={importValue}
-            onChange={(e) => setImportValue(e.target.value)}
-          />
-          <Button variant="link" size="sm" onClick={handleImport} disabled={!importValue.trim()}>
-            {t("settings.import")}
-          </Button>
-        </CardContent>
-      </Card>
+        {/* Import */}
+        <Card>
+          <CardContent className="space-y-2">
+            <div className="text-sm font-medium">{t("settings.importKey")}</div>
+            <Input
+              className="font-mono text-xs"
+              placeholder={t("settings.importPlaceholder")}
+              value={importValue}
+              onChange={(e) => setImportValue(e.target.value)}
+            />
+            <Button variant="link" size="sm" onClick={handleImport} disabled={!importValue.trim()}>
+              {t("settings.import")}
+            </Button>
+          </CardContent>
+        </Card>
 
-      {/* Language */}
-      <Card>
-        <CardContent className="space-y-2">
-          <div className="text-sm font-medium">{t("settings.language")}</div>
-          <Select
-            value={i18n.language}
-            onValueChange={(value) => value && i18n.changeLanguage(value)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="zh">中文</SelectItem>
-              <SelectItem value="en">English</SelectItem>
-            </SelectContent>
-          </Select>
-        </CardContent>
-      </Card>
-    </div>
+        {/* Language */}
+        <Card>
+          <CardContent className="space-y-2">
+            <div className="text-sm font-medium">{t("settings.language")}</div>
+            <Select
+              value={i18n.language}
+              onValueChange={(value) => value && i18n.changeLanguage(value)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="zh">中文</SelectItem>
+                <SelectItem value="en">English</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      </div>
+    </FullScreenLayout>
   );
 }

@@ -1,13 +1,21 @@
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { FullScreenLayout } from "../components/layout/FullScreenLayout";
 import { ChatView } from "../components/chat/ChatView";
+import { ChatAvatar } from "../components/chat/ChatAvatar";
 import { useChat, type ChatConfig, type ChatMessage } from "../hooks/use-chat";
 import { useAuth } from "../hooks/use-auth";
+
+function truncatePubKey(pubKey: string): string {
+  if (pubKey.length <= 13) return pubKey;
+  return `${pubKey.slice(0, 6)}...${pubKey.slice(-4)}`;
+}
 
 export function AvatarChatPage() {
   const { t } = useTranslation();
   const { pubKey } = useParams<{ pubKey: string }>();
-  const { apiClient } = useAuth();
+  const { apiClient, publicKey } = useAuth();
+  const navigate = useNavigate();
 
   const config: ChatConfig = {
     loadMessages: async (params) => {
@@ -27,17 +35,26 @@ export function AvatarChatPage() {
 
   const chat = useChat(config);
 
+  const myAvatar = <ChatAvatar pubKey={publicKey} size="sm" />;
+  const theirAvatar = (
+    <ChatAvatar pubKey={pubKey ?? ""} size="sm" onClick={() => navigate(`/profile/${pubKey}`)} />
+  );
+
   return (
-    <ChatView
-      messages={chat.messages}
-      streaming={chat.streaming}
-      thinking={chat.thinking}
-      phase={chat.phase}
-      thinkingItems={chat.thinkingItems}
-      hasMore={chat.hasMore}
-      onSend={chat.send}
-      onLoadMore={chat.loadMore}
-      placeholder={t("chat.placeholder")}
-    />
+    <FullScreenLayout title={truncatePubKey(pubKey ?? "")}>
+      <ChatView
+        messages={chat.messages}
+        streaming={chat.streaming}
+        thinking={chat.thinking}
+        phase={chat.phase}
+        thinkingItems={chat.thinkingItems}
+        hasMore={chat.hasMore}
+        onSend={chat.send}
+        onLoadMore={chat.loadMore}
+        placeholder={t("chat.placeholder")}
+        myAvatar={myAvatar}
+        theirAvatar={theirAvatar}
+      />
+    </FullScreenLayout>
   );
 }
