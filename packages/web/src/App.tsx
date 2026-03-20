@@ -1,16 +1,26 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Suspense } from "react";
 import { AuthProvider } from "./hooks/use-auth";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Toaster } from "./components/ui/sonner";
 import { AppShell } from "./components/layout/AppShell";
-import { DashboardPage } from "./pages/DashboardPage";
-import { InterviewPage } from "./pages/InterviewPage";
-import { AnchorsPage } from "./pages/AnchorsPage";
+import { MessagesPage } from "./pages/MessagesPage";
+import { ContactsPage } from "./pages/ContactsPage";
+import { DiscoverPage } from "./pages/DiscoverPage";
+import { MePage } from "./pages/MePage";
+import { RemiChatPage } from "./pages/RemiChatPage";
 import { AvatarChatPage } from "./pages/AvatarChatPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { ProfilePage } from "./pages/ProfilePage";
+import { StatsPage } from "./pages/StatsPage";
+import { AnchorsPage } from "./pages/AnchorsPage";
 import { SharePage } from "./pages/SharePage";
+import { SettingsPage } from "./pages/SettingsPage";
 import "./lib/i18n";
+
+function OldShareRedirect() {
+  const { pubKey } = useParams<{ pubKey: string }>();
+  return <Navigate to={`/profile/${pubKey}`} replace />;
+}
 
 export default function App() {
   return (
@@ -21,22 +31,25 @@ export default function App() {
         <AuthProvider>
           <TooltipProvider>
             <Routes>
+              {/* Tab pages — inside AppShell with NavBar */}
               <Route element={<AppShell />}>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/interview" element={<InterviewPage />} />
-                <Route path="/anchors" element={<AnchorsPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/share" element={<SharePage />} />
+                <Route path="/messages" element={<MessagesPage />} />
+                <Route path="/contacts" element={<ContactsPage />} />
+                <Route path="/discover" element={<DiscoverPage />} />
+                <Route path="/me" element={<MePage />} />
               </Route>
-              {/* Avatar chat — no NavBar, full screen */}
-              <Route
-                path="/s/:pubKey"
-                element={
-                  <div className="h-screen max-w-lg mx-auto">
-                    <AvatarChatPage />
-                  </div>
-                }
-              />
+              {/* Full-screen pages — no NavBar */}
+              <Route path="/chat/remi" element={<RemiChatPage />} />
+              <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
+              <Route path="/profile/:pubKey" element={<ProfilePage />} />
+              <Route path="/stats" element={<StatsPage />} />
+              <Route path="/anchors" element={<AnchorsPage />} />
+              <Route path="/share" element={<SharePage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              {/* Backward compat: old share links */}
+              <Route path="/s/:pubKey" element={<OldShareRedirect />} />
+              {/* Default redirect */}
+              <Route path="*" element={<Navigate to="/messages" replace />} />
             </Routes>
             <Toaster position="top-center" />
           </TooltipProvider>
