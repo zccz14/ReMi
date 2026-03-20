@@ -32,9 +32,9 @@
 - `packages/server/src/app.ts` — register new routes
 - `packages/web/src/App.tsx` — rewrite route definitions
 - `packages/web/src/components/layout/NavBar.tsx` — new 4 tabs
-- `packages/web/src/components/layout/AppShell.tsx` — EphemeralWarning extraction
 - `packages/web/src/components/chat/MessageBubble.tsx` — add avatar slots
 - `packages/web/src/components/chat/ChatView.tsx` — accept avatar props
+- `packages/web/src/components/chat/MessageList.tsx` — pass avatar props to bubbles
 - `packages/web/src/pages/AvatarChatPage.tsx` — update route param, add header
 - `packages/web/src/pages/SharePage.tsx` — update share URL
 - `packages/web/public/locales/zh/translation.json` — new keys
@@ -156,7 +156,7 @@ git commit -m "feat: add ChatAvatar component"
 Layout for full-screen pages (chat, profile, sub-pages). Structure:
 
 - `div.flex.flex-col.h-screen.max-w-lg.mx-auto`
-- Conditionally shows `EphemeralWarning` if `isEphemeral`
+- Calls `useAuth()` to get `isEphemeral`, conditionally shows `EphemeralWarning`
 - Header with back button (ChevronLeft) + centered title
 - `main.flex-1.overflow-hidden` for content via `children`
 - No NavBar
@@ -200,19 +200,7 @@ git add packages/web/src/components/layout/NavBar.tsx
 git commit -m "feat: update NavBar to WeChat-style tabs"
 ```
 
-### Task 6: Update AppShell
-
-**Files:**
-
-- Modify: `packages/web/src/components/layout/AppShell.tsx`
-
-- [ ] **Step 1: No structural change needed**
-
-AppShell stays the same (EphemeralWarning + Outlet + NavBar). The `FullScreenLayout` handles the warning for non-tab pages independently.
-
-- [ ] **Step 2: Verify no changes needed, skip commit**
-
-### Task 7: Rewrite App.tsx Routing
+### Task 6: Rewrite App.tsx Routing
 
 **Files:**
 
@@ -239,9 +227,20 @@ Replace the entire `<Routes>` block. New structure:
   <Route path="/anchors" element={<AnchorsPage />} />
   <Route path="/share" element={<SharePage />} />
   <Route path="/settings" element={<SettingsPage />} />
+  {/* Backward compat: old share links */}
+  <Route path="/s/:pubKey" element={<OldShareRedirect />} />
   {/* Default redirect */}
   <Route path="*" element={<Navigate to="/messages" replace />} />
 </Routes>
+```
+
+Also create a small inline component in App.tsx:
+
+```tsx
+function OldShareRedirect() {
+  const { pubKey } = useParams<{ pubKey: string }>();
+  return <Navigate to={`/profile/${pubKey}`} replace />;
+}
 ```
 
 Update imports: add `Navigate` from react-router-dom, add new page imports, remove `DashboardPage` and `InterviewPage`.
@@ -257,7 +256,7 @@ git commit -m "feat: rewrite routing for WeChat-style navigation"
 
 ## Chunk 3: New Pages (Tab Pages)
 
-### Task 8: MessagesPage
+### Task 7: MessagesPage
 
 **Files:**
 
@@ -274,7 +273,7 @@ git add packages/web/src/pages/MessagesPage.tsx
 git commit -m "feat: add MessagesPage with conversation list"
 ```
 
-### Task 9: ContactsPage
+### Task 8: ContactsPage
 
 **Files:**
 
@@ -291,7 +290,7 @@ git add packages/web/src/pages/ContactsPage.tsx
 git commit -m "feat: add ContactsPage with alphabetical contact list"
 ```
 
-### Task 10: DiscoverPage
+### Task 9: DiscoverPage
 
 **Files:**
 
@@ -308,7 +307,7 @@ git add packages/web/src/pages/DiscoverPage.tsx
 git commit -m "feat: add DiscoverPage placeholder"
 ```
 
-### Task 11: MePage
+### Task 10: MePage
 
 **Files:**
 
@@ -338,7 +337,7 @@ git commit -m "feat: add MePage personal center"
 
 ## Chunk 4: Full-Screen Pages + Chat Refactor
 
-### Task 12: ProfilePage
+### Task 11: ProfilePage
 
 **Files:**
 
@@ -355,7 +354,7 @@ git add packages/web/src/pages/ProfilePage.tsx
 git commit -m "feat: add ProfilePage for user profiles"
 ```
 
-### Task 13: StatsPage
+### Task 12: StatsPage
 
 **Files:**
 
@@ -376,7 +375,7 @@ git rm packages/web/src/pages/DashboardPage.tsx
 git commit -m "feat: replace DashboardPage with StatsPage"
 ```
 
-### Task 14: Chat Page Refactor — MessageBubble + ChatView
+### Task 13: Chat Page Refactor — MessageBubble + ChatView
 
 **Files:**
 
@@ -403,7 +402,7 @@ git add packages/web/src/components/chat/
 git commit -m "feat: add avatar support to chat components"
 ```
 
-### Task 15: RemiChatPage
+### Task 14: RemiChatPage
 
 **Files:**
 
@@ -424,7 +423,7 @@ git rm packages/web/src/pages/InterviewPage.tsx
 git commit -m "feat: replace InterviewPage with RemiChatPage"
 ```
 
-### Task 16: Update AvatarChatPage
+### Task 15: Update AvatarChatPage
 
 **Files:**
 
@@ -445,7 +444,7 @@ git commit -m "feat: update AvatarChatPage with avatar and header"
 
 ## Chunk 5: Cleanup & Wrappers
 
-### Task 17: Update SharePage URL
+### Task 16: Update SharePage URL
 
 **Files:**
 
@@ -472,7 +471,7 @@ git add packages/web/src/pages/SharePage.tsx
 git commit -m "fix: update share URL to /profile/:pubKey"
 ```
 
-### Task 18: Wrap existing sub-pages with FullScreenLayout
+### Task 17: Wrap existing sub-pages with FullScreenLayout
 
 **Files:**
 
@@ -499,7 +498,7 @@ git add packages/web/src/pages/AnchorsPage.tsx packages/web/src/pages/SettingsPa
 git commit -m "feat: wrap sub-pages with FullScreenLayout"
 ```
 
-### Task 19: Final Verification
+### Task 18: Final Verification
 
 - [ ] **Step 1: Build check**
 
