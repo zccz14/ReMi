@@ -1,9 +1,35 @@
 {
   "nav": {
-    "dashboard": "Home",
-    "interview": "Interview",
-    "anchors": "Anchors",
+    "messages": "Messages",
+    "contacts": "Contacts",
+    "discover": "Discover",
+    "me": "Me"
+  },
+  "messages": {
+    "title": "Messages",
+    "empty": "No conversations yet. Chat with ReMi!",
+    "startChat": "Start Chat",
+    "tapToStart": "Tap to start chatting"
+  },
+  "contacts": {
+    "title": "Contacts",
+    "empty": "No contacts yet. Share your profile link to connect."
+  },
+  "discover": {
+    "title": "Discover",
+    "subtitle": "Discover users, browse community",
+    "comingSoon": "Coming Soon"
+  },
+  "me": {
+    "title": "Me",
+    "stats": "Stats",
+    "anchors": "Soul Anchors",
+    "share": "Share Card",
     "settings": "Settings"
+  },
+  "profile": {
+    "title": "Profile",
+    "sendMessage": "Send Message"
   },
   "dashboard": {
     "title": "ReMi",

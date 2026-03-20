@@ -1,9 +1,35 @@
 {
   "nav": {
-    "dashboard": "首页",
-    "interview": "访谈",
-    "anchors": "锚点",
+    "messages": "消息",
+    "contacts": "通讯录",
+    "discover": "发现",
+    "me": "我"
+  },
+  "messages": {
+    "title": "消息",
+    "empty": "还没有对话，和 ReMi 聊聊吧！",
+    "startChat": "开始聊天",
+    "tapToStart": "点击开始聊天"
+  },
+  "contacts": {
+    "title": "通讯录",
+    "empty": "还没有联系人，分享你的链接来认识新朋友吧"
+  },
+  "discover": {
+    "title": "发现",
+    "subtitle": "发现其他用户，浏览社区",
+    "comingSoon": "即将推出"
+  },
+  "me": {
+    "title": "我",
+    "stats": "数据统计",
+    "anchors": "灵魂锚点",
+    "share": "分享名片",
     "settings": "设置"
+  },
+  "profile": {
+    "title": "个人资料",
+    "sendMessage": "发消息"
   },
   "dashboard": {
     "title": "鉴心",
