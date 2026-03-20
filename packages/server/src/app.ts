@@ -9,6 +9,7 @@ import { anchorRoutes } from "./routes/anchors.js";
 import { soulRoutes } from "./routes/soul.js";
 import { interviewRoutes } from "./routes/interview.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
+import { conversationRoutes } from "./routes/conversations.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
 
@@ -111,6 +112,7 @@ export function createApp(config: AppConfig) {
   app.route("/api", anchorRoutes);
   app.route("/api", interviewRoutes);
   app.route("/api", reasoningRoutes);
+  app.route("/api", conversationRoutes);
 
   return { app, connMgr };
 }
