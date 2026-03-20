@@ -63,7 +63,7 @@ Clicking a conversation navigates to `/chat/remi` or `/chat/:pubKey`.
 
 ### Contacts Page (`/contacts`)
 
-Lists other ReMi users' Avatars that the user has added. Organized alphabetically with letter section headers (A, B, C...).
+Lists other ReMi users' Avatars that the user has chatted with. Organized by lexicographic sort of base58 pubKey, with letter section headers based on the first character of the pubKey.
 
 Each contact shows:
 
@@ -97,7 +97,7 @@ Full-screen page. Tab bar is hidden.
 
 **Header:**
 
-- Left: back button (ChevronLeft icon), navigates back
+- Left: back button (ChevronLeft icon), uses `history.back()` to navigate to the previous page
 - Center: counterpart's name (centered text)
 - Right: empty space (for symmetry)
 
@@ -110,13 +110,16 @@ Full-screen page. Tab bar is hidden.
 **Input area:**
 
 - Text input with rounded border
-- Send button (SendHorizonal icon)
+- Send button (SendHorizontal icon)
 
 The existing `ChatView`, `ChatInput`, `MessageList`, `MessageBubble` components will be adapted. The key change is adding avatar display next to each message bubble.
 
-For `/chat/remi`: uses the existing Interview backend (`/api/{pubKey}/interview/*`). The chat behavior is identical to current InterviewPage — cold start auto-greeting, SSE streaming, phase display, thinking blocks.
+**Architecture: two separate page components** sharing the same chat UI components.
 
-For `/chat/:pubKey`: uses the existing reasoning backend (`/api/{pubKey}/reasoning/*`). The chat behavior is identical to current AvatarChatPage.
+- **RemiChatPage** (`/chat/remi`): uses the Interview backend (`/api/{pubKey}/interview/*`). Contains cold-start auto-greeting logic (if no messages, auto-triggers `POST /api/{pubKey}/interview/start`). Supports SSE streaming, phase display, thinking blocks. ReMi's avatar is a colored square with "Ri" initial, using a fixed brand gradient.
+- **AvatarChatPage** (`/chat/:pubKey`): uses the reasoning backend (`/api/{pubKey}/reasoning/*`). No cold-start logic. Simpler initialization.
+
+Both pages render `ChatView` with avatar props. The different initialization and backend logic justifies separate page components rather than one component with conditional branching.
 
 ### Profile Page (`/profile/:pubKey`)
 
@@ -135,7 +138,7 @@ This page is the landing page for share links and QR codes. It replaces the old 
 
 ### Stats Page (`/stats`)
 
-Reuses existing DashboardPage content (total anchors, total messages, last active date). Full-screen with back button. No tab bar.
+Reuses existing DashboardPage content (total anchors, total messages, last active date). Full-screen with back button. No tab bar. The "Start Interview", "View Anchors", and "Share Avatar" action buttons from the old DashboardPage are removed — those entry points now live on the Me page.
 
 ## Navigation Flows
 
@@ -206,24 +209,60 @@ Removed keys: `nav.dashboard`, `nav.interview`, `nav.anchors`, `nav.settings` (s
 
 ## Data Requirements
 
-### Messages List
+### Display Names
 
-The messages page needs an API or local aggregation to list all conversations with:
+Users do not have editable display names in this version. Display names are derived as follows:
 
-- Contact identifier (pubKey or "remi")
-- Display name
-- Last message text (preview)
-- Last message timestamp
+- **ReMi**: hardcoded name "ReMi"
+- **Other users**: display as truncated pubKey (e.g., `5Hx3k...7eFg`). A future version may add user profile endpoints with display names, but that is out of scope.
 
-Currently, interview messages and reasoning messages are stored in separate database tables (`messages` and `reasoning_messages`). The messages list page needs to query both and merge them sorted by most recent activity.
+Avatar appearance: colored square with the first character of the pubKey (base58). Color is deterministically derived from the pubKey (e.g., hash to a hue). ReMi uses a fixed brand gradient (`#667eea` to `#764ba2`) with "Ri" initial.
 
-**Approach:** Add a new API endpoint `GET /api/{pubKey}/conversations` that returns a list of conversations with last message info. Alternatively, this can be assembled client-side from existing endpoints, but a dedicated endpoint is cleaner.
+### Conversations API
 
-### Contacts List
+Add a new server endpoint: `GET /api/{pubKey}/conversations`
 
-Contacts are other users whose Avatars the current user has chatted with. Currently there is no explicit "add contact" mechanism — the contacts list can be derived from the set of distinct pubKeys in `reasoning_messages`.
+Returns a list of conversations sorted by most recent activity:
 
-For the initial implementation, contacts = all pubKeys the user has chatted with via reasoning endpoints.
+```json
+[
+  {
+    "type": "remi",
+    "lastMessage": "那你最近在做什么项目呢？",
+    "lastMessageAt": 1774026000
+  },
+  {
+    "type": "avatar",
+    "pubKey": "5Hx3k...full-key",
+    "lastMessage": "我喜欢旅游和摄影...",
+    "lastMessageAt": 1773939600
+  }
+]
+```
+
+Implementation: query the last message from `messages` table (interview/ReMi) and group-by `visitor_key` last messages from `reasoning_messages` table, merge and sort by `lastMessageAt` descending. Note: each user has their own database file, so no owner filter is needed — all records in a given DB belong to that user. The ReMi conversation entry is always included in the response even if no interview has started (with `lastMessage: null` and `lastMessageAt: 0`), so the frontend can always show ReMi in the list.
+
+### Contacts API
+
+Add a new server endpoint: `GET /api/{pubKey}/contacts`
+
+Returns the list of distinct pubKeys the user has chatted with via reasoning endpoints:
+
+```json
+[{ "pubKey": "5Hx3k...full-key" }, { "pubKey": "7Yz2m...full-key" }]
+```
+
+Implementation: `SELECT DISTINCT visitor_key FROM reasoning_messages`. Each user's data is in their own DB file, so no owner filter is needed. For the initial version, contacts = all visitor_keys with reasoning message history. No explicit add/remove mechanism.
+
+### Empty States
+
+- **Messages page with no conversations**: centered message "No conversations yet. Chat with ReMi to get started!" with a button linking to `/chat/remi`.
+- **Contacts page with no contacts**: centered message "No contacts yet. Share your profile link to connect with others."
+- **Messages page — ReMi always present**: The Conversations API always returns a ReMi entry (with `lastMessage: null` when no interview exists). The frontend renders this as "Tap to start chatting" preview text.
+
+### EphemeralWarning Banner
+
+The `EphemeralWarning` banner (shown when key is not persisted) currently renders inside `AppShell`. For pages outside AppShell (chat, profile, sub-pages), the banner should also be shown. Move the `EphemeralWarning` to a layout wrapper that covers all authenticated routes, not just AppShell routes.
 
 ## Out of Scope
 
