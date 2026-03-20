@@ -1,13 +1,13 @@
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Home, MessageSquare, Anchor, Settings, type LucideIcon } from "lucide-react";
+import { MessageSquare, Users, Compass, User, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems: { path: string; labelKey: string; icon: LucideIcon }[] = [
-  { path: "/", labelKey: "nav.dashboard", icon: Home },
-  { path: "/interview", labelKey: "nav.interview", icon: MessageSquare },
-  { path: "/anchors", labelKey: "nav.anchors", icon: Anchor },
-  { path: "/settings", labelKey: "nav.settings", icon: Settings },
+  { path: "/messages", labelKey: "nav.messages", icon: MessageSquare },
+  { path: "/contacts", labelKey: "nav.contacts", icon: Users },
+  { path: "/discover", labelKey: "nav.discover", icon: Compass },
+  { path: "/me", labelKey: "nav.me", icon: User },
 ];
 
 export function NavBar() {
