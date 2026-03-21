@@ -49,6 +49,7 @@ function createMockDeps(overrides: Partial<EngineDeps> = {}) {
   const deps: EngineDeps = {
     chatClient,
     embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    cleanupEmptyAssistantMessages: vi.fn().mockResolvedValue(0),
     getMessages: vi
       .fn()
       .mockResolvedValue([{ id: 1, role: "assistant", content: "你好", created_at: Date.now() }]),
@@ -61,6 +62,17 @@ function createMockDeps(overrides: Partial<EngineDeps> = {}) {
   };
 
   return deps;
+}
+
+function createEmptyStream(): AsyncGenerator<string, void, unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      return { value: undefined, done: true };
+    },
+  } as AsyncGenerator<string, void, unknown>;
 }
 
 function createRecorderEmitter() {
@@ -262,6 +274,100 @@ describe("InterviewEngine", () => {
 
     expect(events.some((e) => e.type === "error")).toBe(true);
     expect(events.some((e) => e.type === "done")).toBe(false);
+    assertProtocolInvariants(events);
+  });
+
+  it("falls back to non-stream chat when stream returns empty content", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const chat = vi.fn().mockResolvedValue({
+      content: "补偿回复",
+      finishReason: "stop",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const chatStream = vi.fn().mockReturnValue(createEmptyStream());
+
+    const deps = createMockDeps({
+      chatClient: {
+        chat,
+        chatStream,
+      },
+      saveMessage: vi.fn().mockResolvedValue(42),
+    });
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === "token" && e.data === "补偿回复")).toBe(true);
+    expect(deps.saveMessage).toHaveBeenCalledWith("assistant", "补偿回复");
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    assertProtocolInvariants(events);
+  });
+
+  it("emits error and does not save when fallback content is still empty", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const chat = vi.fn().mockResolvedValue({
+      content: "",
+      finishReason: "stop",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const chatStream = vi.fn().mockReturnValue(createEmptyStream());
+
+    const deps = createMockDeps({
+      chatClient: {
+        chat,
+        chatStream,
+      },
+    });
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(events.some((e) => e.type === "error")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(deps.saveMessage).toHaveBeenCalledTimes(1);
+    expect(deps.saveMessage).toHaveBeenCalledWith("user", "hello");
+    assertProtocolInvariants(events);
+  });
+
+  it("retries fallback chat without system role when provider rejects system", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const chat = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          'Chat API returned no choices: {"base_resp":{"status_code":2013,"status_msg":"invalid params, chat content has invalid message role: system"}}',
+        ),
+      )
+      .mockResolvedValueOnce({
+        content: "恢复成功",
+        finishReason: "stop",
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      });
+    const chatStream = vi.fn().mockReturnValue(createEmptyStream());
+
+    const deps = createMockDeps({
+      getMessages: vi.fn().mockResolvedValue([
+        { id: 1, role: "system", content: "legacy system", created_at: Date.now() },
+        { id: 2, role: "user", content: "hello", created_at: Date.now() },
+      ]),
+      chatClient: {
+        chat,
+        chatStream,
+      },
+      saveMessage: vi.fn().mockResolvedValue(52),
+    });
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("继续", emitter);
+
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(events.some((e) => e.type === "token" && e.data === "恢复成功")).toBe(true);
+    expect(deps.saveMessage).toHaveBeenCalledWith("assistant", "恢复成功");
+    expect(events.some((e) => e.type === "done")).toBe(true);
     assertProtocolInvariants(events);
   });
 

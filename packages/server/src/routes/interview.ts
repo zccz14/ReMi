@@ -57,6 +57,14 @@ function createEngine(
       }));
     },
 
+    async cleanupEmptyAssistantMessages(): Promise<number> {
+      const result = conn.drizzle
+        .delete(messages)
+        .where(sql`${messages.role} = 'assistant' AND trim(${messages.content}) = ''`)
+        .run();
+      return result.changes ?? 0;
+    },
+
     async saveMessage(role: "user" | "assistant", content: string): Promise<number> {
       const now = Date.now();
       const result = conn.drizzle.insert(messages).values({ role, content, createdAt: now }).run();

@@ -21,6 +21,7 @@ export interface SSEEmitter {
 export interface EngineDeps {
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient;
+  cleanupEmptyAssistantMessages(): Promise<number>;
   getMessages(
     limit: number,
   ): Promise<
@@ -36,6 +37,33 @@ export interface EngineDeps {
 const WINDOW_SIZE = 20;
 type ConversationPhase = "bootstrapping" | "extracting" | "recalling" | "detecting" | "generating";
 
+function isSystemRoleUnsupportedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes("invalid message role: system");
+}
+
+function downgradeSystemMessages(messages: ChatMessage[]): ChatMessage[] {
+  const systemMessages = messages.filter((m) => m.role === "system").map((m) => m.content.trim());
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
+  const systemPrompt = systemMessages.filter(Boolean).join("\n\n");
+
+  if (!systemPrompt) {
+    return nonSystemMessages;
+  }
+
+  if (nonSystemMessages.length === 0 || nonSystemMessages[0].role !== "user") {
+    return [{ role: "user", content: systemPrompt }, ...nonSystemMessages];
+  }
+
+  return [
+    {
+      role: "user",
+      content: `${systemPrompt}\n\n${nonSystemMessages[0].content}`,
+    },
+    ...nonSystemMessages.slice(1),
+  ];
+}
+
 function shouldInjectInterviewFailure(stage: "extract" | "detect"): boolean {
   if (process.env.NODE_ENV === "production") return false;
   return process.env.REMI_INJECT_INTERVIEW_FAILURE === stage;
@@ -43,6 +71,22 @@ function shouldInjectInterviewFailure(stage: "extract" | "detect"): boolean {
 
 export class InterviewEngine {
   constructor(private deps: EngineDeps) {}
+
+  private async chatFallback(messages: ChatMessage[]): Promise<string> {
+    try {
+      const fallback = await this.deps.chatClient.chat({ messages });
+      return fallback.content;
+    } catch (error) {
+      if (!isSystemRoleUnsupportedError(error)) {
+        throw error;
+      }
+
+      const downgraded = downgradeSystemMessages(messages);
+      log.warn("Provider rejected system role, retrying fallback chat with downgraded messages");
+      const retry = await this.deps.chatClient.chat({ messages: downgraded });
+      return retry.content;
+    }
+  }
 
   async start(emitter: SSEEmitter): Promise<void> {
     const startTime = Date.now();
@@ -55,6 +99,11 @@ export class InterviewEngine {
     log.info("Interview start flow initiated");
 
     try {
+      const cleaned = await this.deps.cleanupEmptyAssistantMessages();
+      if (cleaned > 0) {
+        log.warn({ cleaned }, "Removed empty assistant replies before interview start");
+      }
+
       await emitPhase("bootstrapping");
       const messages = await this.deps.getMessages(WINDOW_SIZE);
       const anchorCount = await this.deps.getAnchorCount();
@@ -102,6 +151,18 @@ export class InterviewEngine {
         await emitter.emitToken(token);
       }
 
+      if (!fullContent.trim()) {
+        log.warn("Interview start stream returned empty content, falling back to non-stream chat");
+        fullContent = await this.chatFallback(chatMessages);
+        if (fullContent) {
+          await emitter.emitToken(fullContent);
+        }
+      }
+
+      if (!fullContent.trim()) {
+        throw new Error("Empty assistant reply after fallback");
+      }
+
       const messageId = await this.deps.saveMessage("assistant", fullContent);
       await emitPhase("generating", "done");
       const ms = Date.now() - startTime;
@@ -134,6 +195,11 @@ export class InterviewEngine {
     log.info("Interview message flow initiated");
 
     try {
+      const cleaned = await this.deps.cleanupEmptyAssistantMessages();
+      if (cleaned > 0) {
+        log.warn({ cleaned }, "Removed empty assistant replies before interview message handling");
+      }
+
       await emitPhase("bootstrapping");
       // 保存用户消息
       await this.deps.saveMessage("user", content);
@@ -261,6 +327,18 @@ export class InterviewEngine {
       for await (const token of this.deps.chatClient.chatStream({ messages: chatMessages })) {
         fullContent += token;
         await emitter.emitToken(token);
+      }
+
+      if (!fullContent.trim()) {
+        log.warn("Interview stream returned empty content, falling back to non-stream chat");
+        fullContent = await this.chatFallback(chatMessages);
+        if (fullContent) {
+          await emitter.emitToken(fullContent);
+        }
+      }
+
+      if (!fullContent.trim()) {
+        throw new Error("Empty assistant reply after fallback");
       }
 
       const messageId = await this.deps.saveMessage("assistant", fullContent);

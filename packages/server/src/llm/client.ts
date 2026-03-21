@@ -33,14 +33,45 @@ export interface ChatClient {
   chatStream(options: ChatOptions): AsyncGenerator<string, void, unknown>;
 }
 
+function normalizeMessages(messages: ChatMessage[]): ChatMessage[] {
+  const systemContents = messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content.trim())
+    .filter(Boolean);
+  const nonSystem = messages.filter((m) => m.role !== "system");
+
+  if (systemContents.length === 0) {
+    return messages;
+  }
+
+  const systemPrompt = systemContents.join("\n\n");
+
+  if (nonSystem.length === 0) {
+    return [{ role: "user", content: systemPrompt }];
+  }
+
+  if (nonSystem[0].role === "user") {
+    return [
+      {
+        role: "user",
+        content: `${systemPrompt}\n\n${nonSystem[0].content}`,
+      },
+      ...nonSystem.slice(1),
+    ];
+  }
+
+  return [{ role: "user", content: systemPrompt }, ...nonSystem];
+}
+
 export function createChatClient(config: ChatClientConfig): ChatClient {
   async function chat(options: ChatOptions): Promise<ChatResponse> {
     const start = Date.now();
-    const msgCount = options.messages.length;
+    const messages = normalizeMessages(options.messages);
+    const msgCount = messages.length;
 
     const body: Record<string, unknown> = {
       model: config.model,
-      messages: options.messages,
+      messages,
       stream: false,
     };
 
@@ -118,11 +149,12 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
   async function* chatStream(options: ChatOptions): AsyncGenerator<string, void, unknown> {
     const start = Date.now();
-    const msgCount = options.messages.length;
+    const messages = normalizeMessages(options.messages);
+    const msgCount = messages.length;
 
     const body: Record<string, unknown> = {
       model: config.model,
-      messages: options.messages,
+      messages,
       stream: true,
     };
 

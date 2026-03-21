@@ -134,6 +134,37 @@ describe("ChatClient", () => {
 
       expect(result.content).toBe("");
     });
+
+    it("should filter out system role before sending chat request", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      await client.chat({
+        messages: [
+          { role: "system", content: "you are helpful" },
+          { role: "user", content: "hello" },
+        ],
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.messages).toEqual([{ role: "user", content: "you are helpful\n\nhello" }]);
+    });
   });
 
   describe("chatStream", () => {
@@ -262,6 +293,51 @@ describe("ChatClient", () => {
       }
 
       expect(tokens).toEqual(["final answer"]);
+    });
+
+    it("should filter out system role before sending stream request", async () => {
+      const sseData = [
+        'data: {"choices":[{"delta":{"content":"done"}}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join("");
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sseData));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      const tokens: string[] = [];
+      for await (const token of client.chatStream({
+        messages: [
+          { role: "system", content: "system prompt" },
+          { role: "assistant", content: "history" },
+          { role: "user", content: "question" },
+        ],
+      })) {
+        tokens.push(token);
+      }
+
+      expect(tokens).toEqual(["done"]);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.messages).toEqual([
+        { role: "user", content: "system prompt" },
+        { role: "assistant", content: "history" },
+        { role: "user", content: "question" },
+      ]);
     });
   });
 });
