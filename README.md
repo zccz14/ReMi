@@ -121,3 +121,45 @@ graph TB
 ```
 
 为什么选 SQLite per-user 而不是 PostgreSQL？三个理由：一是数据隔离天然，不需要在查询层面做租户过滤；二是用户数据可以整文件备份、导出、迁移；三是 Demo 阶段不需要复杂查询，SQLite 足够。等用户量真正起来再考虑迁移。
+
+## 本地分享试玩
+
+如果你想先把本地开发中的 ReMi 分享给别人试玩，当前推荐走 `cloudflared` 临时隧道方案。
+
+### 启动方式
+
+```bash
+npm run dev:public
+```
+
+这会启动：
+
+- Hono 入口：`http://localhost:8787`
+- Vite 开发服务器：`http://localhost:5173`
+
+其中只有 `8787` 应该被暴露给外部。Vite 只绑定在 `localhost`，不要直接拿 `5173` 做 tunnel。
+
+### 启动 cloudflared
+
+```bash
+cloudflared tunnel --url http://localhost:8787
+```
+
+`cloudflared` 会返回一个临时的 `*.trycloudflare.com` 地址。把这个地址发给别人即可。
+
+### 验证清单
+
+1. 运行 `npm run dev:public`
+2. 打开 `http://localhost:8787`，确认页面能正常加载
+3. 确认浏览器里的 API 请求都走当前域名，而不是固定打到 `localhost:3000`
+4. 运行 `cloudflared tunnel --url http://localhost:8787`
+5. 用另一个浏览器或另一台设备打开生成的 `trycloudflare.com` 地址
+6. 确认前端路由跳转和刷新可用
+7. 确认聊天等核心 API 流程正常
+8. 确认没有额外的内部调试路由被这个公共入口暴露出去
+
+### 注意事项
+
+- 这是 Phase 1 的临时试玩方案，不是正式生产部署
+- 你的 Mac 需要保持在线且不休眠，否则外部访问会中断
+- 远端访客的 HMR 不是目标能力；如果热更新链路不稳定，手动刷新页面是可接受退化

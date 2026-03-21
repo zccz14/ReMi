@@ -28,7 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .init()
       .then(() => {
         const apiClient = new ApiClient({
-          baseUrl: import.meta.env.VITE_API_BASE ?? "http://localhost:3000",
+          baseUrl: import.meta.env.VITE_API_BASE ?? window.location.origin,
           keyStore,
         });
         setState({

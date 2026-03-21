@@ -8,6 +8,8 @@ import { logger } from "./logger.js";
 const DATA_DIR = process.env.DATA_DIR ?? "./data";
 const PORT = Number(process.env.PORT ?? 3000);
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 1536);
+const WEB_MODE = (process.env.WEB_MODE ?? "disabled") as "disabled" | "proxy";
+const VITE_DEV_ORIGIN = process.env.VITE_DEV_ORIGIN ?? "http://localhost:5173";
 
 const embeddingClient = process.env.EMBEDDING_API_KEY
   ? createEmbeddingClient({
@@ -31,6 +33,10 @@ const { app } = createApp({
   embeddingDimensions: EMBEDDING_DIMENSIONS,
   embeddingClient,
   chatClient,
+  web: {
+    mode: WEB_MODE,
+    viteOrigin: VITE_DEV_ORIGIN,
+  },
 });
 
 logger.info(
@@ -40,6 +46,8 @@ logger.info(
     embeddingConfigured: !!embeddingClient,
     llmConfigured: !!chatClient,
     llmModel: llmModel ?? null,
+    webMode: WEB_MODE,
+    viteDevOrigin: VITE_DEV_ORIGIN,
   },
   "Starting ReMi server",
 );

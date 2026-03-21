@@ -12,6 +12,7 @@ import { reasoningRoutes } from "./routes/reasoning.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
+import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
 
 interface AppConfig {
   dataDir: string;
@@ -19,6 +20,7 @@ interface AppConfig {
   embeddingDimensions?: number;
   embeddingClient?: EmbeddingClient | null;
   chatClient?: ChatClient | null;
+  web?: WebConfig;
 }
 
 export function createApp(config: AppConfig) {
@@ -32,14 +34,13 @@ export function createApp(config: AppConfig) {
   // CORS for frontend
   const corsOrigins = process.env.CORS_ORIGIN?.split(",").map((s) => s.trim()) ?? [];
   if (corsOrigins.length > 0) {
-    app.use(
-      "/*",
-      cors({
-        origin: corsOrigins,
-        allowHeaders: ["Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
-        allowMethods: ["GET", "POST", "PUT", "DELETE"],
-      }),
-    );
+    const corsMiddleware = cors({
+      origin: corsOrigins,
+      allowHeaders: ["Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE"],
+    });
+    app.use("/api/*", corsMiddleware);
+    app.use("/api", corsMiddleware);
   }
 
   // Request logging middleware
@@ -113,6 +114,17 @@ export function createApp(config: AppConfig) {
   app.route("/api", interviewRoutes);
   app.route("/api", reasoningRoutes);
   app.route("/api", conversationRoutes);
+
+  if (config.web?.mode === "proxy") {
+    app.all("*", async (c) => {
+      const url = new URL(c.req.url);
+      if (!shouldProxyToVite(url.pathname)) {
+        return c.notFound();
+      }
+
+      return proxyToVite(c.req.raw, config.web?.viteOrigin ?? "http://127.0.0.1:5173");
+    });
+  }
 
   return { app, connMgr };
 }
