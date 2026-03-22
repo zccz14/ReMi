@@ -4,7 +4,7 @@ import { interviewRoutes } from "../../src/routes/interview.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
-import { messages } from "../../src/db/schema.js";
+import { messages, soulAnchors } from "../../src/db/schema.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -168,5 +168,105 @@ describe("interview routes", () => {
     expect(body).toContain("event: phase");
     expect(body).toContain("event: token");
     expect(body).toContain("event: done");
+  });
+
+  it("POST /api/:pubKey/interview/start keeps current embedding dependency boundary", async () => {
+    const chatClient: ChatClient = {
+      chat: async () => ({
+        content:
+          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>ok</narrative></judgment>",
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      chatStream: async function* () {
+        yield "你好";
+      },
+    };
+
+    const app = createTestApp(connMgr, PUB_KEY, { chatClient, embeddingClient: null });
+    const res = await app.request(`/api/${PUB_KEY}/interview/start`, { method: "POST" });
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("LLM_ERROR");
+  });
+
+  it("POST /api/:pubKey/interview/message keeps current embedding dependency boundary", async () => {
+    const chatClient: ChatClient = {
+      chat: async () => ({
+        content:
+          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>ok</narrative></judgment>",
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      chatStream: async function* () {
+        yield "你好";
+      },
+    };
+
+    const app = createTestApp(connMgr, PUB_KEY, { chatClient, embeddingClient: null });
+    const res = await app.request(`/api/${PUB_KEY}/interview/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "hello" }),
+    });
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("LLM_ERROR");
+  });
+
+  it("interview anchor loading uses stable updatedAt ordering", async () => {
+    const conn = connMgr.getConnection(PUB_KEY);
+    conn.drizzle
+      .insert(soulAnchors)
+      .values([
+        {
+          id: "older",
+          question: "旧问题",
+          answer: "旧答案",
+          source: "interview",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: "newer",
+          question: "新问题",
+          answer: "新答案",
+          source: "interview",
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ])
+      .run();
+
+    const chatMessages: { role: string; content: string }[][] = [];
+    const chatClient: ChatClient = {
+      chat: async () => ({
+        content:
+          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>ok</narrative></judgment>",
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      chatStream: async function* ({ messages }) {
+        chatMessages.push(messages);
+        yield "你好";
+      },
+    };
+    const embeddingClient: EmbeddingClient = {
+      embed: async () => [[0.1, 0.2, 0.3, 0.4]],
+    };
+
+    const app = createTestApp(connMgr, PUB_KEY, { chatClient, embeddingClient });
+    const res = await app.request(`/api/${PUB_KEY}/interview/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+
+    const systemPrompt = chatMessages[chatMessages.length - 1]?.[0]?.content ?? "";
+    expect(systemPrompt.indexOf("新问题")).toBeLessThan(systemPrompt.indexOf("旧问题"));
   });
 });

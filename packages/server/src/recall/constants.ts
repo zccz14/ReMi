@@ -1,0 +1,1 @@
+export const RECALL_FULL_INJECTION_THRESHOLD = 20;

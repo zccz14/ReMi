@@ -1,9 +1,16 @@
 import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { SoulAnchor } from "../types.js";
-import { batchRecall } from "./batch-recall.js";
+import { goalBasedRecall } from "../recall/goal-based-recall.js";
 import { buildAvatarSystemPrompt } from "./prompts.js";
 import { logger, shortKey } from "../logger.js";
+import {
+  REASONING_FULL_INJECTION_THRESHOLD,
+  mapRecallRuntimeStrategyToReasoningStrategy,
+  type ReasoningAnchorSelectionStrategy,
+} from "./constants.js";
+import { buildBatchRecallJudgmentPrompt } from "./prompts.js";
+import { extractTag } from "../llm/xml-parser.js";
 
 const log = logger.child({ module: "reasoning" });
 
@@ -16,7 +23,9 @@ export interface ReasoningSSEEmitter {
 
 export interface ReasoningEngineDeps {
   chatClient: ChatClient;
-  embeddingClient: EmbeddingClient;
+  embeddingClient?: EmbeddingClient;
+  countAnchors(): Promise<number>;
+  listAnchors(limit?: number): Promise<SoulAnchor[]>;
   getMessages(
     visitorKey: string,
     limit: number,
@@ -26,6 +35,7 @@ export interface ReasoningEngineDeps {
     role: "user" | "assistant",
     content: string,
     recalledAnchors?: string[],
+    anchorSelectionStrategy?: ReasoningAnchorSelectionStrategy,
   ): Promise<number>;
   searchAnchors(embedding: number[]): Promise<SoulAnchor[]>;
   getCachedAnchorIds(visitorKey: string): Promise<string[]>;
@@ -43,6 +53,23 @@ const DEFAULT_GOALS = [
 export class ReasoningEngine {
   constructor(private deps: ReasoningEngineDeps) {}
 
+  private parseRecallJudgment(content: string): {
+    sufficient: boolean;
+    nextQuery?: string;
+    narrative?: string;
+  } {
+    const judgmentBlock = extractTag(content, "judgment");
+    if (!judgmentBlock) {
+      return { sufficient: false };
+    }
+
+    return {
+      sufficient: extractTag(judgmentBlock, "sufficient")?.toLowerCase() === "true",
+      nextQuery: extractTag(judgmentBlock, "next_query") ?? undefined,
+      narrative: extractTag(judgmentBlock, "narrative") ?? undefined,
+    };
+  }
+
   async handleMessage(
     content: string,
     visitorKey: string,
@@ -54,32 +81,39 @@ export class ReasoningEngine {
     try {
       await this.deps.saveMessage(visitorKey, "user", content);
       const messages = await this.deps.getMessages(visitorKey, WINDOW_SIZE);
-
-      const cachedIds = await this.deps.getCachedAnchorIds(visitorKey);
-      const cachedAnchors = cachedIds.length > 0 ? await this.deps.getAnchorsByIds(cachedIds) : [];
-
-      log.debug(
-        { messageCount: messages.length, cachedAnchors: cachedAnchors.length },
-        "Reasoning context loaded",
-      );
+      const anchorCount = await this.deps.countAnchors();
+      log.debug({ messageCount: messages.length, anchorCount }, "Reasoning context loaded");
 
       const contextStr = messages
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n")
         .slice(-2000);
 
-      const recall = await batchRecall({
+      const cachedAnchors =
+        anchorCount > REASONING_FULL_INJECTION_THRESHOLD
+          ? (() => this.deps.getCachedAnchorIds(visitorKey))().then((cachedIds) =>
+              cachedIds.length > 0 ? this.deps.getAnchorsByIds(cachedIds) : Promise.resolve([]),
+            )
+          : Promise.resolve([] as SoulAnchor[]);
+      const recall = await goalBasedRecall({
         chatClient: this.deps.chatClient,
         embeddingClient: this.deps.embeddingClient,
-        searchAnchors: (emb) => this.deps.searchAnchors(emb),
         goals: DEFAULT_GOALS,
         context: contextStr,
-        visitorKey,
-        cachedAnchors,
+        initialAnchors: await cachedAnchors,
+        countAnchors: () => this.deps.countAnchors(),
+        listAnchors: (limit?: number) => this.deps.listAnchors(limit),
+        searchAnchors: (emb) => this.deps.searchAnchors(emb),
+        buildJudgmentPrompt: ({ goals, anchors, context }) =>
+          buildBatchRecallJudgmentPrompt(goals, anchors, context, visitorKey) as ChatMessage[],
+        parseJudgment: (value) => this.parseRecallJudgment(value),
         onNarrative: (n) => emitter.emitThinking(n),
       });
 
-      const systemPrompt = buildAvatarSystemPrompt(recall.anchors);
+      const selectedAnchors = recall.anchors;
+      const anchorSelectionStrategy = mapRecallRuntimeStrategyToReasoningStrategy(recall.strategy);
+
+      const systemPrompt = buildAvatarSystemPrompt(selectedAnchors);
       const chatMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         ...messages.map((m) => ({
@@ -96,17 +130,25 @@ export class ReasoningEngine {
         await emitter.emitToken(token);
       }
 
-      const anchorIds = recall.anchors.map((a) => a.id);
+      const anchorIds = selectedAnchors.map((a) => a.id);
       const messageId = await this.deps.saveMessage(
         visitorKey,
         "assistant",
         fullContent,
         anchorIds,
+        anchorSelectionStrategy,
       );
 
       const ms = Date.now() - startTime;
       log.info(
-        { messageId, recalledAnchors: anchorIds.length, ms },
+        {
+          messageId,
+          recalledAnchors: anchorIds.length,
+          selectionStrategy: anchorSelectionStrategy,
+          anchorCount,
+          promptChars: systemPrompt.length,
+          ms,
+        },
         "Reasoning message flow completed",
       );
 

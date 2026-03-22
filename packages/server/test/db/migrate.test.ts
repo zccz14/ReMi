@@ -86,6 +86,7 @@ describe("initializeDatabase", () => {
         "role",
         "content",
         "recalled_anchors",
+        "anchor_selection_strategy",
         "created_at",
       ]),
     );

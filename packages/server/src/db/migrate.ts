@@ -36,9 +36,19 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
       content TEXT NOT NULL,
       recalled_anchors TEXT,
+      anchor_selection_strategy TEXT CHECK(anchor_selection_strategy IN ('batch-recall', 'full-injection')),
       created_at INTEGER NOT NULL
     );
   `);
+
+  try {
+    db.exec(`
+      ALTER TABLE reasoning_messages
+      ADD COLUMN anchor_selection_strategy TEXT CHECK(anchor_selection_strategy IN ('batch-recall', 'full-injection'))
+    `);
+  } catch {
+    // column already exists
+  }
 
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS soul_anchors_vec USING vec0(

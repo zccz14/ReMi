@@ -72,7 +72,12 @@ function createEngine(
     },
 
     async getAnchors(limit: number): Promise<SoulAnchor[]> {
-      return conn.drizzle.select().from(soulAnchors).limit(limit).all() as SoulAnchor[];
+      return conn.drizzle
+        .select()
+        .from(soulAnchors)
+        .orderBy(desc(soulAnchors.updatedAt), desc(soulAnchors.createdAt))
+        .limit(limit)
+        .all() as SoulAnchor[];
     },
 
     async saveAnchors(anchors: { question: string; answer: string }[]): Promise<void> {

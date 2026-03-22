@@ -2,11 +2,13 @@ import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { SoulAnchor } from "../types.js";
 import { extractAnchors } from "./extractor.js";
-import { agenticRecall } from "./recall.js";
+import { goalBasedRecall } from "../recall/goal-based-recall.js";
 import { detectContradictions } from "./contradiction.js";
-import { buildInterviewerSystemPrompt } from "./prompts.js";
+import { buildInterviewerSystemPrompt, buildRecallJudgmentPrompt } from "./prompts.js";
 import { logger } from "../logger.js";
 import { getConversationFlowMode } from "../config/feature-flags.js";
+import { INTERVIEW_RECALL_GOALS } from "./constants.js";
+import { extractTag } from "../llm/xml-parser.js";
 
 const log = logger.child({ module: "interview" });
 
@@ -72,6 +74,23 @@ function shouldInjectInterviewFailure(stage: "extract" | "detect"): boolean {
 export class InterviewEngine {
   constructor(private deps: EngineDeps) {}
 
+  private parseRecallJudgment(content: string): {
+    sufficient: boolean;
+    nextQuery?: string;
+    narrative?: string;
+  } {
+    const judgmentBlock = extractTag(content, "judgment");
+    if (!judgmentBlock) {
+      return { sufficient: false };
+    }
+
+    return {
+      sufficient: extractTag(judgmentBlock, "sufficient")?.toLowerCase() === "true",
+      nextQuery: extractTag(judgmentBlock, "next_query") ?? undefined,
+      narrative: extractTag(judgmentBlock, "narrative") ?? undefined,
+    };
+  }
+
   private async chatFallback(messages: ChatMessage[]): Promise<string> {
     try {
       const fallback = await this.deps.chatClient.chat({ messages });
@@ -111,16 +130,21 @@ export class InterviewEngine {
 
       // Agentic Recall
       await emitPhase("recalling");
-      const recall = await agenticRecall({
+      const recall = await goalBasedRecall({
         chatClient: this.deps.chatClient,
         embeddingClient: this.deps.embeddingClient,
+        goals: [...INTERVIEW_RECALL_GOALS],
         searchAnchors: (emb) => this.deps.searchAnchors(emb),
+        countAnchors: () => this.deps.getAnchorCount(),
+        listAnchors: (limit?: number) => this.deps.getAnchors(limit ?? 200),
+        buildJudgmentPrompt: ({ goals, anchors, context }) =>
+          buildRecallJudgmentPrompt(anchors, context, goals) as ChatMessage[],
+        parseJudgment: (value) => this.parseRecallJudgment(value),
         context:
           messages
             .map((m) => `${m.role}: ${m.content}`)
             .join("\n")
             .slice(-2000) || "新用户，第一次对话",
-        goal: "理解本体已有的认知框架，准备发起/恢复访谈",
         onNarrative: (n) => emitter.emitThinking(n),
       });
       await emitPhase("recalling", `${recall.anchors.length}`);
@@ -233,15 +257,20 @@ export class InterviewEngine {
         await emitPhase("recalling");
         const startedAt = Date.now();
         try {
-          return await agenticRecall({
+          return await goalBasedRecall({
             chatClient: this.deps.chatClient,
             embeddingClient: this.deps.embeddingClient,
+            goals: [...INTERVIEW_RECALL_GOALS],
             searchAnchors: (emb) => this.deps.searchAnchors(emb),
+            countAnchors: () => this.deps.getAnchorCount(),
+            listAnchors: (limit?: number) => this.deps.getAnchors(limit ?? 200),
+            buildJudgmentPrompt: ({ goals, anchors, context }) =>
+              buildRecallJudgmentPrompt(anchors, context, goals) as ChatMessage[],
+            parseJudgment: (value) => this.parseRecallJudgment(value),
             context: messages
               .map((m) => `${m.role}: ${m.content}`)
               .join("\n")
               .slice(-2000),
-            goal: "充分理解本体在当前话题的认知，问出好问题",
             onNarrative: (n) => emitter.emitThinking(n),
           });
         } finally {

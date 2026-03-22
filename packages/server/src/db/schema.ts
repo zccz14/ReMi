@@ -15,6 +15,9 @@ export const reasoningMessages = sqliteTable("reasoning_messages", {
   role: text("role", { enum: ["user", "assistant"] }).notNull(),
   content: text("content").notNull(),
   recalledAnchors: text("recalled_anchors"),
+  anchorSelectionStrategy: text("anchor_selection_strategy", {
+    enum: ["batch-recall", "full-injection"],
+  }),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
 });
 

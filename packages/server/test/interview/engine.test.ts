@@ -2,15 +2,16 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { InterviewEngine, type EngineDeps, type SSEEmitter } from "../../src/interview/engine.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import { extractAnchors } from "../../src/interview/extractor.js";
-import { agenticRecall } from "../../src/interview/recall.js";
+import { goalBasedRecall } from "../../src/recall/goal-based-recall.js";
 import { detectContradictions } from "../../src/interview/contradiction.js";
+import { INTERVIEW_RECALL_GOALS } from "../../src/interview/constants.js";
 
 vi.mock("../../src/interview/extractor.js", () => ({
   extractAnchors: vi.fn(),
 }));
 
-vi.mock("../../src/interview/recall.js", () => ({
-  agenticRecall: vi.fn(),
+vi.mock("../../src/recall/goal-based-recall.js", () => ({
+  goalBasedRecall: vi.fn(),
 }));
 
 vi.mock("../../src/interview/contradiction.js", () => ({
@@ -113,7 +114,7 @@ function assertProtocolInvariants(events: { type: string; data?: unknown }[]) {
 }
 
 const mockExtractAnchors = vi.mocked(extractAnchors);
-const mockAgenticRecall = vi.mocked(agenticRecall);
+const mockGoalBasedRecall = vi.mocked(goalBasedRecall);
 const mockDetectContradictions = vi.mocked(detectContradictions);
 
 describe("InterviewEngine", () => {
@@ -127,11 +128,12 @@ describe("InterviewEngine", () => {
     delete process.env.NODE_ENV;
 
     mockExtractAnchors.mockResolvedValue([{ question: "价值观", answer: "诚实" }]);
-    mockAgenticRecall.mockResolvedValue({
+    mockGoalBasedRecall.mockResolvedValue({
       anchors: [],
       narratives: ["想好了"],
       rounds: 1,
       sufficient: true,
+      strategy: "recall-loop",
     });
     mockDetectContradictions.mockResolvedValue([]);
   });
@@ -163,9 +165,9 @@ describe("InterviewEngine", () => {
       steps.push("extract");
       return [{ question: "q", answer: "a" }];
     });
-    mockAgenticRecall.mockImplementation(async () => {
+    mockGoalBasedRecall.mockImplementation(async () => {
       steps.push("recall");
-      return { anchors: [], narratives: [], rounds: 1, sufficient: true };
+      return { anchors: [], narratives: [], rounds: 1, sufficient: true, strategy: "recall-loop" };
     });
 
     const deps = createMockDeps();
@@ -186,9 +188,9 @@ describe("InterviewEngine", () => {
       steps.push("extract");
       return [{ question: "q", answer: "a" }];
     });
-    mockAgenticRecall.mockImplementation(async () => {
+    mockGoalBasedRecall.mockImplementation(async () => {
       steps.push("recall");
-      return { anchors: [], narratives: [], rounds: 1, sufficient: true };
+      return { anchors: [], narratives: [], rounds: 1, sufficient: true, strategy: "recall-loop" };
     });
 
     const deps = createMockDeps();
@@ -206,13 +208,19 @@ describe("InterviewEngine", () => {
     process.env.REMI_CONVERSATION_FLOW_V2 = "full";
     const started: string[] = [];
     const extractDfd = deferred<{ question: string; answer: string }[]>();
-    const recallDfd = deferred<{ anchors: []; narratives: []; rounds: number; sufficient: true }>();
+    const recallDfd = deferred<{
+      anchors: [];
+      narratives: [];
+      rounds: number;
+      sufficient: true;
+      strategy: "recall-loop";
+    }>();
 
     mockExtractAnchors.mockImplementation(() => {
       started.push("extract");
       return extractDfd.promise;
     });
-    mockAgenticRecall.mockImplementation(() => {
+    mockGoalBasedRecall.mockImplementation(() => {
       started.push("recall");
       return recallDfd.promise;
     });
@@ -226,7 +234,13 @@ describe("InterviewEngine", () => {
     expect(started).toEqual(["extract", "recall"]);
 
     extractDfd.resolve([{ question: "q", answer: "a" }]);
-    recallDfd.resolve({ anchors: [], narratives: [], rounds: 1, sufficient: true });
+    recallDfd.resolve({
+      anchors: [],
+      narratives: [],
+      rounds: 1,
+      sufficient: true,
+      strategy: "recall-loop",
+    });
     await run;
 
     expect(events.some((e) => e.type === "phase")).toBe(true);
@@ -264,7 +278,7 @@ describe("InterviewEngine", () => {
 
   it("recall failure emits error and stops", async () => {
     process.env.REMI_CONVERSATION_FLOW_V2 = "full";
-    mockAgenticRecall.mockRejectedValue(new Error("recall failed"));
+    mockGoalBasedRecall.mockRejectedValue(new Error("recall failed"));
 
     const deps = createMockDeps();
     const engine = new InterviewEngine(deps);
@@ -417,5 +431,40 @@ describe("InterviewEngine", () => {
     expect(mockExtractAnchors).toHaveBeenCalledTimes(1);
     expect(events.some((e) => e.type === "done")).toBe(true);
     assertProtocolInvariants(events);
+  });
+
+  it("start and message both use fixed interview recall goals", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const deps = createMockDeps({ getMessages: vi.fn().mockResolvedValue([]) });
+    const engine = new InterviewEngine(deps);
+
+    await engine.start(createRecorderEmitter().emitter);
+    await engine.handleMessage("hello", createRecorderEmitter().emitter);
+
+    expect(mockGoalBasedRecall).toHaveBeenCalledTimes(2);
+    expect(mockGoalBasedRecall.mock.calls[0]?.[0]).toMatchObject({
+      goals: [...INTERVIEW_RECALL_GOALS],
+    });
+    expect(mockGoalBasedRecall.mock.calls[1]?.[0]).toMatchObject({
+      goals: [...INTERVIEW_RECALL_GOALS],
+    });
+  });
+
+  it("message full injection does not emit recall thinking", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    mockGoalBasedRecall.mockResolvedValue({
+      anchors: [],
+      narratives: [],
+      rounds: 0,
+      sufficient: true,
+      strategy: "full-injection",
+    });
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(events.some((e) => e.type === "thinking")).toBe(false);
   });
 });

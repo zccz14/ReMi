@@ -36,7 +36,7 @@ ${existingList || "(暂无)"}
 export function buildRecallJudgmentPrompt(
   recalledAnchors: SoulAnchor[],
   context: string,
-  goal: string,
+  goals: string[],
 ): { role: string; content: string }[] {
   const anchorList = recalledAnchors
     .map((a) => `Q: ${a.question}\nA: ${a.answer ?? "(未回答)"}`)
@@ -64,7 +64,8 @@ export function buildRecallJudgmentPrompt(
       role: "user",
       content: `请评估以下信息的充分性。
 
-当前目标：${goal}
+目标列表：
+${goals.map((goal, index) => `${index + 1}. ${goal}`).join("\n")}
 
 已召回锚点：
 ${anchorList || "(暂无)"}

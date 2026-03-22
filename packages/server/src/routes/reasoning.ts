@@ -11,6 +11,7 @@ import type { EmbeddingClient } from "../embedding/client.js";
 import { searchSimilar } from "../embedding/index.js";
 import type { SoulAnchor } from "../types.js";
 import { logger, shortKey } from "../logger.js";
+import type { ReasoningAnchorSelectionStrategy } from "../reasoning/constants.js";
 
 const log = logger.child({ module: "route:reasoning" });
 
@@ -20,11 +21,28 @@ function createEngine(
     drizzle: ReturnType<ConnectionManager["getConnection"]>["drizzle"];
   },
   chatClient: ChatClient,
-  embeddingClient: EmbeddingClient,
+  embeddingClient: EmbeddingClient | null,
 ): ReasoningEngine {
   const deps = {
     chatClient,
-    embeddingClient,
+    embeddingClient: embeddingClient ?? undefined,
+
+    async countAnchors(): Promise<number> {
+      const row = conn.drizzle
+        .select({ count: sql<number>`count(*)` })
+        .from(soulAnchors)
+        .get();
+      return Number(row?.count ?? 0);
+    },
+
+    async listAnchors(limit?: number): Promise<SoulAnchor[]> {
+      const query = conn.drizzle
+        .select()
+        .from(soulAnchors)
+        .orderBy(desc(soulAnchors.updatedAt), desc(soulAnchors.createdAt));
+
+      return (limit === undefined ? query : query.limit(limit)).all() as SoulAnchor[];
+    },
 
     async getMessages(visitorKey: string, limit: number) {
       const rows = conn.drizzle
@@ -46,6 +64,7 @@ function createEngine(
       role: "user" | "assistant",
       content: string,
       recalledAnchors?: string[],
+      anchorSelectionStrategy?: ReasoningAnchorSelectionStrategy,
     ): Promise<number> {
       const now = Date.now();
       const result = conn.drizzle
@@ -55,6 +74,7 @@ function createEngine(
           role,
           content,
           recalledAnchors: recalledAnchors ? JSON.stringify(recalledAnchors) : null,
+          anchorSelectionStrategy: anchorSelectionStrategy ?? null,
           createdAt: now,
         })
         .run();
@@ -77,7 +97,12 @@ function createEngine(
         .select({ recalledAnchors: reasoningMessages.recalledAnchors })
         .from(reasoningMessages)
         .where(
-          sql`${reasoningMessages.visitorKey} = ${visitorKey} AND ${reasoningMessages.role} = 'assistant'`,
+          sql`${reasoningMessages.visitorKey} = ${visitorKey}
+            AND ${reasoningMessages.role} = 'assistant'
+            AND (
+              ${reasoningMessages.anchorSelectionStrategy} = 'batch-recall'
+              OR ${reasoningMessages.anchorSelectionStrategy} IS NULL
+            )`,
         )
         .orderBy(desc(reasoningMessages.id))
         .limit(1)
@@ -92,11 +117,14 @@ function createEngine(
 
     async getAnchorsByIds(ids: string[]): Promise<SoulAnchor[]> {
       if (ids.length === 0) return [];
-      return conn.drizzle
+      const anchors = conn.drizzle
         .select()
         .from(soulAnchors)
         .where(inArray(soulAnchors.id, ids))
         .all() as SoulAnchor[];
+
+      const anchorMap = new Map(anchors.map((anchor) => [anchor.id, anchor]));
+      return ids.map((id) => anchorMap.get(id)).filter((anchor): anchor is SoulAnchor => !!anchor);
     },
   };
 
@@ -177,6 +205,7 @@ reasoningRoutes.get("/:pubKey/reasoning/messages", (c) => {
             }
           })()
         : null,
+      anchorSelectionStrategy: undefined,
       recalledAnchors: undefined,
       visitor_key: r.visitorKey,
       visitorKey: undefined,
@@ -208,11 +237,11 @@ reasoningRoutes.post(
     const chatClient = c.get("chatClient");
     const embeddingClient = c.get("embeddingClient");
 
-    if (!chatClient || !embeddingClient) {
+    if (!chatClient) {
       return c.json(
         {
           error: "LLM_ERROR",
-          message: "Chat or embedding client not configured",
+          message: "Chat client not configured",
         },
         500,
       );
