@@ -323,6 +323,31 @@ describe("AvatarCropDialog", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarCropExportError");
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it("does not show the export error when parent submit rejects after export succeeds", async () => {
+    const user = userEvent.setup();
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
+    const submitError = new Error("submit failed");
+    const onConfirm = vi.fn().mockRejectedValue(submitError);
+
+    vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 800, height: 400 });
+    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
+
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(exportedBlob));
+    expect(screen.queryByText("settings.avatarCropExportError")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
 
 function stubPreviewUrl() {

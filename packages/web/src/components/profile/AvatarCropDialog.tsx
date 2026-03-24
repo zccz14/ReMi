@@ -83,16 +83,25 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     setIsSubmitting(true);
 
     try {
-      const blob = await exportCroppedAvatar({
-        image: exportSource,
-        cropAreaPixels: latestCropAreaPixels,
-        size: EXPORT_SIZE,
-        maxBytes: MAX_UPLOAD_BYTES,
-      });
+      let blob: Blob;
 
-      await onConfirm(blob);
-    } catch {
-      setErrorMessage(t("settings.avatarCropExportError"));
+      try {
+        blob = await exportCroppedAvatar({
+          image: exportSource,
+          cropAreaPixels: latestCropAreaPixels,
+          size: EXPORT_SIZE,
+          maxBytes: MAX_UPLOAD_BYTES,
+        });
+      } catch {
+        setErrorMessage(t("settings.avatarCropExportError"));
+        return;
+      }
+
+      try {
+        await onConfirm(blob);
+      } catch {
+        return;
+      }
     } finally {
       setIsSubmitting(false);
     }
