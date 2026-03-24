@@ -76,4 +76,25 @@ describe("detectContradictions", () => {
     expect(result).toEqual([]);
     expect(client.chat).not.toHaveBeenCalled();
   });
+
+  it("does not mark time-progressed updates as contradictions", async () => {
+    const client = mockChatClient("这些是状态更新，不构成矛盾。");
+
+    const result = await detectContradictions({
+      chatClient: client,
+      newAnchors: [{ question: "我最近在经历什么求职进展？", answer: "我拿到二面了。" }],
+      existingAnchors: [
+        {
+          id: "a1",
+          question: "我最近在经历什么求职进展？",
+          answer: "我刚投完简历。",
+          source: "interview",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    expect(result).toEqual([]);
+  });
 });
