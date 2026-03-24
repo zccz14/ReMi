@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { exportCroppedAvatar, validateAvatarFile } from "../../src/lib/avatar-editor";
 
@@ -35,6 +35,10 @@ describe("avatar-editor", () => {
         return canvas as unknown as HTMLCanvasElement;
       }),
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("exports from the provided pixel crop rectangle", async () => {
@@ -131,10 +135,32 @@ describe("avatar-editor", () => {
     ).resolves.toHaveLength(3);
   });
 
-  it("reduces quality or dimensions until the avatar fits the upload limit", async () => {
+  it("rejects non-positive or invalid maxBytes before export", async () => {
+    await expect(
+      exportCroppedAvatar({
+        image,
+        cropAreaPixels: { x: 0, y: 0, width: 300, height: 300 },
+        size: 1024,
+        maxBytes: 0,
+      }),
+    ).rejects.toThrow(/maxBytes/i);
+
+    await expect(
+      exportCroppedAvatar({
+        image,
+        cropAreaPixels: { x: 0, y: 0, width: 300, height: 300 },
+        size: 1024,
+        maxBytes: Number.NaN,
+      }),
+    ).rejects.toThrow(/maxBytes/i);
+  });
+
+  it("reduces dimensions after quality fallback until the avatar fits the upload limit", async () => {
     toBlobImpl = async (_type, quality) => {
       const normalizedQuality = typeof quality === "number" ? quality : 0.92;
-      const size = normalizedQuality <= 0.5 ? 180 : 400;
+      const lastDrawImageCall = drawImage.mock.calls.at(-1);
+      const renderedWidth = lastDrawImageCall?.[7];
+      const size = normalizedQuality <= 0.4 && renderedWidth !== 1024 ? 180 : 400;
       return new Blob([new Uint8Array(size)], { type: "image/webp" });
     };
 
@@ -146,6 +172,7 @@ describe("avatar-editor", () => {
     });
 
     expect(result.size).toBeLessThanOrEqual(256);
+    expect(drawImage).toHaveBeenLastCalledWith(image, 0, 0, 300, 300, 0, 0, 896, 896);
   });
 
   it("fails deterministically when the avatar cannot be reduced under the limit", async () => {

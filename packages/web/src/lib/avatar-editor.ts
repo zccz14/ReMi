@@ -34,6 +34,10 @@ export async function validateAvatarFile(file: File): Promise<File> {
 }
 
 export async function exportCroppedAvatar(input: ExportCroppedAvatarInput): Promise<Blob> {
+  if (input.maxBytes != null && (!Number.isFinite(input.maxBytes) || input.maxBytes <= 0)) {
+    throw new Error("maxBytes must be a positive number");
+  }
+
   const cropRect = resolveCropRect(input.cropAreaPixels, input.image);
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -65,7 +69,7 @@ export async function exportCroppedAvatar(input: ExportCroppedAvatarInput): Prom
         throw new Error("Avatar export failed");
       }
 
-      if (!input.maxBytes || blob.size <= input.maxBytes) {
+      if (input.maxBytes == null || blob.size <= input.maxBytes) {
         return blob;
       }
     }
