@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Start backend server
-PORT=$SERVER_PORT WEB_MODE=$SERVER_WEB_MODE VITE_DEV_ORIGIN=$SERVER_VITE_ORIGIN npx tsx packages/server/src/index.ts > server.log 2>&1 &
+PORT=$SERVER_PORT WEB_MODE=$SERVER_WEB_MODE VITE_DEV_ORIGIN=$SERVER_VITE_ORIGIN npx tsx watch packages/server/src/index.ts > server.log 2>&1 &
 SERVER_PID=$!
 
 # Start frontend dev server
@@ -36,13 +36,13 @@ WEB_PID=$!
 
 sleep 1
 
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-  echo "Server failed to start. Check server.log"
+if ! kill -0 $WEB_PID 2>/dev/null; then
+  echo "Frontend failed to start. Check web.log"
   exit 1
 fi
 
-if ! kill -0 $WEB_PID 2>/dev/null; then
-  echo "Frontend failed to start. Check web.log"
+if ! node scripts/wait-for-url.mjs "http://127.0.0.1:${SERVER_PORT}/api/health" 5000; then
+  echo "Server failed to start. Check server.log"
   exit 1
 fi
 
