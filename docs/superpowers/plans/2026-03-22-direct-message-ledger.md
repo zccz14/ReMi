@@ -584,3 +584,58 @@ Expected: PASS
 git add packages/server/src/db/migrate.ts packages/server/src/db/schema.ts packages/server/src/messaging packages/server/src/routes/reasoning.ts packages/server/src/routes/conversations.ts packages/server/src/reasoning/engine.ts packages/server/test/db/migrate.test.ts packages/server/test/messaging packages/server/test/routes/reasoning.test.ts packages/server/test/routes/conversations.test.ts test/reasoning-integration.test.ts packages/web/src/pages/AvatarChatPage.tsx packages/web/src/pages/MessagesPage.tsx packages/web/src/hooks/use-chat.ts packages/web/test/hooks/use-chat.test.ts docs/superpowers/specs/2026-03-22-conversation-ledger-design.md docs/superpowers/plans/2026-03-22-direct-message-ledger.md
 git commit -m "refactor(server): replace reasoning messages with direct message ledger"
 ```
+
+---
+
+## Follow-up TODOs After Initial Ledger Migration
+
+这些事项来自实现完成后的规格复核，表示当前版本与设计文档仍存在的差距或待收尾项。
+
+### TODO 1: 自动推进 read 回执
+
+- [ ] 在前端消息实际渲染/打开后自动调用 `POST /:pubKey/reasoning/messages/:sharedMessageId/read`
+- [ ] 明确触发时机，避免仅加载列表就误标已读
+- [ ] 为自动 read 补充前端与集成测试
+
+### TODO 2: 自动推进后台 attestation
+
+- [ ] 在 read 成功后由客户端后台自动对 `message_hash` 签名
+- [ ] 自动调用 `POST /:pubKey/reasoning/messages/:sharedMessageId/attest`
+- [ ] 确保默认 UI 只暴露 delivered / read，不要求用户手动 attest
+- [ ] 为自动 attest 补充失败重试与集成测试
+
+### TODO 3: receipt 漂移补偿与重试
+
+- [ ] 为 `pending_receipt_sync:read` / `pending_receipt_sync:attest` 增加真实重试机制
+- [ ] 定义 retry queue 或后台 job 的调度策略
+- [ ] 确保副本收敛后自动清除 `status_reason_*` 漂移标记
+- [ ] 为 receipt 副本漂移补偿补充测试
+
+### TODO 4: repair job 与 blocked 线程解封
+
+- [ ] 为双写回滚失败场景实现 repair job
+- [ ] 对双方数据库按 `shared_message_id` 与 `message_hash` 执行对账
+- [ ] 修复完成后清除 `blocked:rollback_failed` 并允许线程恢复发送
+- [ ] 为 blocked -> repaired -> unblocked 闭环补充测试
+
+### TODO 5: blocked 会话前端状态
+
+- [ ] 当前端遇到被阻塞线程时展示“会话修复中”或等价提示
+- [ ] 禁止继续发送并给出明确恢复语义
+- [ ] 为 blocked 会话 UI 状态补充测试
+
+### TODO 6: 密钥封装协议互操作性复核
+
+- [ ] 复核当前 sealed-box 风格 X25519 包装是否满足设计要求的互操作边界
+- [ ] 若目标是与 libsodium `crypto_box_seal` 线协议严格互通，则调整 envelope/包裹实现
+- [ ] 若保持当前实现，则补充文档，明确其为语义等价而非 sodium 原生线格式
+
+### TODO 7: 消息流分页语义复核
+
+- [ ] 复核当前按 `id` 分页的实现是否需要升级为 `created_at/id` 联合排序分页
+- [ ] 若升级，补齐同毫秒多消息场景测试
+
+### TODO 8: 历史文档与遗留引用清理
+
+- [ ] 清理仓库中仍把私聊主路径描述为 `reasoning_messages` 的历史文档
+- [ ] 明确旧设计文档已过时，避免后续实现继续参考旧模型
