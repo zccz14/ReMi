@@ -22,38 +22,42 @@ function OldShareRedirect() {
   return <Navigate to={`/profile/${pubKey}`} replace />;
 }
 
+function AuthenticatedRoutes() {
+  return (
+    <AuthProvider>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/messages" element={<MessagesPage />} />
+          <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/discover" element={<DiscoverPage />} />
+          <Route path="/me" element={<MePage />} />
+        </Route>
+        <Route path="/chat/remi" element={<RemiChatPage />} />
+        <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
+        <Route path="/stats" element={<StatsPage />} />
+        <Route path="/anchors" element={<AnchorsPage />} />
+        <Route path="/share" element={<SharePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="*" element={<Navigate to="/messages" replace />} />
+      </Routes>
+    </AuthProvider>
+  );
+}
+
 export default function App() {
   return (
     <Suspense
       fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}
     >
       <BrowserRouter>
-        <AuthProvider>
-          <TooltipProvider>
-            <Routes>
-              {/* Tab pages — inside AppShell with NavBar */}
-              <Route element={<AppShell />}>
-                <Route path="/messages" element={<MessagesPage />} />
-                <Route path="/contacts" element={<ContactsPage />} />
-                <Route path="/discover" element={<DiscoverPage />} />
-                <Route path="/me" element={<MePage />} />
-              </Route>
-              {/* Full-screen pages — no NavBar */}
-              <Route path="/chat/remi" element={<RemiChatPage />} />
-              <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
-              <Route path="/profile/:pubKey" element={<ProfilePage />} />
-              <Route path="/stats" element={<StatsPage />} />
-              <Route path="/anchors" element={<AnchorsPage />} />
-              <Route path="/share" element={<SharePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              {/* Backward compat: old share links */}
-              <Route path="/s/:pubKey" element={<OldShareRedirect />} />
-              {/* Default redirect */}
-              <Route path="*" element={<Navigate to="/messages" replace />} />
-            </Routes>
-            <Toaster position="top-center" />
-          </TooltipProvider>
-        </AuthProvider>
+        <TooltipProvider>
+          <Routes>
+            <Route path="/profile/:pubKey" element={<ProfilePage />} />
+            <Route path="/s/:pubKey" element={<OldShareRedirect />} />
+            <Route path="*" element={<AuthenticatedRoutes />} />
+          </Routes>
+          <Toaster position="top-center" />
+        </TooltipProvider>
       </BrowserRouter>
     </Suspense>
   );

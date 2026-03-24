@@ -47,6 +47,11 @@ export class ApiClient {
     return this.request<T>("PUT", path, body);
   }
 
+  async putBinary(path: string, body: Blob, contentType: string): Promise<void> {
+    const bytes = new Uint8Array(await body.arrayBuffer());
+    await this.requestBinary("PUT", path, bytes, body, contentType);
+  }
+
   async del(path: string): Promise<void> {
     await this.request<void>("DELETE", path);
   }
@@ -95,13 +100,7 @@ export class ApiClient {
     const timestamp = String(Date.now());
     const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
     const bodyBytes = bodyStr ? new TextEncoder().encode(bodyStr) : undefined;
-
-    // Extract pathname only (no query string) for signing
-    const url = new URL(path, "http://placeholder");
-    const pathname = url.pathname;
-
-    const stringToSign = await buildStringToSign(method, pathname, timestamp, bodyBytes);
-    const signature = await this.keyStore.sign(new TextEncoder().encode(stringToSign));
+    const signature = await this.signRequest(method, path, timestamp, bodyBytes);
 
     const headers: Record<string, string> = {
       "X-Public-Key": this.keyStore.getPublicKey(),
@@ -134,5 +133,52 @@ export class ApiClient {
 
     if (response.status === 204) return undefined as T;
     return response.json();
+  }
+
+  private async requestBinary(
+    method: string,
+    path: string,
+    bodyBytes: Uint8Array,
+    body: Blob,
+    contentType: string,
+  ): Promise<void> {
+    const timestamp = String(Date.now());
+    const signature = await this.signRequest(method, path, timestamp, bodyBytes);
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: {
+        "Content-Type": contentType,
+        "X-Public-Key": this.keyStore.getPublicKey(),
+        "X-Timestamp": timestamp,
+        "X-Signature": signature,
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      let errorBody: { error?: string; message?: string } = {};
+      try {
+        errorBody = await response.json();
+      } catch {
+        // ignore parse errors
+      }
+      throw new ApiError(
+        response.status,
+        errorBody.error ?? "UNKNOWN",
+        errorBody.message ?? `HTTP ${response.status}`,
+      );
+    }
+  }
+
+  private async signRequest(
+    method: string,
+    path: string,
+    timestamp: string,
+    bodyBytes?: Uint8Array,
+  ): Promise<string> {
+    const pathname = new URL(path, "http://placeholder").pathname;
+    const stringToSign = await buildStringToSign(method, pathname, timestamp, bodyBytes);
+    return this.keyStore.sign(new TextEncoder().encode(stringToSign));
   }
 }

@@ -7,6 +7,8 @@ import { type EmbeddingClient } from "./embedding/client.js";
 import { healthRoutes } from "./routes/health.js";
 import { anchorRoutes } from "./routes/anchors.js";
 import { soulRoutes } from "./routes/soul.js";
+import { profileRoutes } from "./routes/profile.js";
+import { publicProfileRoutes } from "./routes/public-profile.js";
 import { interviewRoutes } from "./routes/interview.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { conversationRoutes } from "./routes/conversations.js";
@@ -76,6 +78,12 @@ export function createApp(config: AppConfig) {
   // Health check (no auth required)
   app.route("/api", healthRoutes);
 
+  app.use("/api/public/*", async (c, next) => {
+    c.set("connMgr", connMgr);
+    await next();
+  });
+  app.route("/api", publicProfileRoutes);
+
   // Auth-required routes
   app.use("/api/:pubKey/*", authMiddleware());
   app.use("/api/:pubKey", authMiddleware());
@@ -88,17 +96,20 @@ export function createApp(config: AppConfig) {
     const signerPubKey = c.get("signerPubKey") as string;
     const targetPubKey = c.req.param("pubKey") as string;
     const role = determineRole(signerPubKey, targetPubKey);
+    const soulExistedBeforeRequest = connMgr.soulExists(targetPubKey);
+    const isCopyRequest = c.req.method === "POST" && new URL(c.req.url).pathname.endsWith("/copy");
 
     c.set("role", role);
     c.set("connMgr", connMgr);
     c.set("embeddingClient", embeddingClient);
     c.set("chatClient", chatClient);
+    c.set("soulExistedBeforeRequest", soulExistedBeforeRequest);
 
     // Soul implicit creation
-    if (role === "owner" && !connMgr.soulExists(targetPubKey)) {
+    if (role === "owner" && !soulExistedBeforeRequest && !isCopyRequest) {
       connMgr.getConnection(targetPubKey, { create: true });
       logger.info({ soul: shortKey(targetPubKey) }, "Soul implicitly created");
-    } else if (role === "visitor" && !connMgr.soulExists(targetPubKey)) {
+    } else if (role === "visitor" && !soulExistedBeforeRequest) {
       return c.json({ error: "SOUL_NOT_FOUND", message: "Soul does not exist" }, 404);
     }
 
@@ -110,6 +121,7 @@ export function createApp(config: AppConfig) {
 
   // Business routes
   app.route("/api", soulRoutes);
+  app.route("/api", profileRoutes);
   app.route("/api", anchorRoutes);
   app.route("/api", interviewRoutes);
   app.route("/api", reasoningRoutes);

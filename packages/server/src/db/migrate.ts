@@ -55,6 +55,19 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       status_reason_b TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS public_profile (
+      id TEXT PRIMARY KEY,
+      display_name TEXT,
+      bio TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS public_profile_avatar (
+      id TEXT PRIMARY KEY,
+      blob BLOB NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_messages_shared_message_id
       ON direct_messages(shared_message_id);
 

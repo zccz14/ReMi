@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, blob } from "drizzle-orm/sqlite-core";
 
 export const soulAnchors = sqliteTable("soul_anchors", {
   id: text("id").primaryKey(),
@@ -50,4 +50,17 @@ export const memories = sqliteTable("memories", {
   source: text("source", { enum: ["interview", "manual"] }).notNull(),
   metadata: text("metadata"),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
+});
+
+export const publicProfile = sqliteTable("public_profile", {
+  id: text("id").primaryKey(),
+  displayName: text("display_name"),
+  bio: text("bio"),
+  updatedAt: integer("updated_at", { mode: "number" }).notNull(),
+});
+
+export const publicProfileAvatar = sqliteTable("public_profile_avatar", {
+  id: text("id").primaryKey(),
+  blob: blob("blob", { mode: "buffer" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });

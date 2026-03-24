@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import { EphemeralWarning } from "../common/EphemeralWarning";
-import { useAuth } from "../../hooks/use-auth";
+import { AuthContext } from "../../hooks/use-auth";
 
 interface FullScreenLayoutProps {
   title: string;
@@ -14,7 +14,8 @@ export function FullScreenLayout({
   children,
   onBack = () => window.history.back(),
 }: FullScreenLayoutProps) {
-  const { isEphemeral } = useAuth();
+  const authState = useContext(AuthContext);
+  const isEphemeral = authState?.isEphemeral ?? false;
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto">

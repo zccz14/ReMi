@@ -29,7 +29,11 @@
   },
   "profile": {
     "title": "个人资料",
-    "sendMessage": "发消息"
+    "sendMessage": "发消息",
+    "loading": "正在加载资料…",
+    "notFound": "未找到该资料",
+    "invalidLink": "该资料链接无效",
+    "error": "加载资料失败"
   },
   "dashboard": {
     "title": "鉴心",
@@ -61,7 +65,31 @@
   },
   "settings": {
     "title": "设置",
+    "publicProfile": "公开资料",
+    "publicProfileDescription": "管理会展示在公开名片上的昵称、简介和头像。",
     "publicKey": "公钥",
+    "displayName": "昵称",
+    "bio": "个人简介",
+    "avatarPreview": "头像预览",
+    "uploadAvatar": "上传头像",
+    "deleteAvatar": "删除头像",
+    "saveProfile": "保存公开资料",
+    "profileSaved": "公开资料已保存",
+    "profileLoadError": "加载公开资料失败",
+    "retryProfileLoad": "重试加载公开资料",
+    "profileSaveError": "保存公开资料失败",
+    "avatarUploadSuccess": "头像已更新",
+    "avatarUploadError": "上传头像失败",
+    "avatarDeleteSuccess": "头像已删除",
+    "avatarDeleteError": "删除头像失败",
+    "avatarGifUnsupported": "暂不支持 GIF 头像",
+    "avatarFileUnsupported": "请选择 PNG、JPEG 或 WebP 图片",
+    "avatarCropTitle": "裁剪头像",
+    "avatarCropDescription": "拖动图片并调整缩放后再确认。",
+    "avatarCropPreviewAlt": "已选头像预览",
+    "avatarCropZoom": "缩放",
+    "avatarCropSubmitting": "上传中...",
+    "avatarCropExportError": "无法导出头像，请尝试其他裁剪区域或图片。",
     "copy": "复制",
     "copied": "已复制",
     "exportKey": "导出私钥",
@@ -77,7 +105,9 @@
     "title": "分享分身",
     "description": "扫描二维码与你的分身对话",
     "copyLink": "复制链接",
-    "copied": "已复制"
+    "copied": "已复制",
+    "bootstrapping": "正在准备公开资料…",
+    "bootstrapError": "公开资料准备失败，请稍后重试。"
   },
   "common": {
     "cancel": "取消",

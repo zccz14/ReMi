@@ -29,7 +29,11 @@
   },
   "profile": {
     "title": "Profile",
-    "sendMessage": "Send Message"
+    "sendMessage": "Send Message",
+    "loading": "Loading profile…",
+    "notFound": "Profile not found",
+    "invalidLink": "This profile link is invalid",
+    "error": "Failed to load profile"
   },
   "dashboard": {
     "title": "ReMi",
@@ -61,7 +65,31 @@
   },
   "settings": {
     "title": "Settings",
+    "publicProfile": "Public Profile",
+    "publicProfileDescription": "Manage the nickname, bio, and avatar shown on your public card.",
     "publicKey": "Public Key",
+    "displayName": "Display Name",
+    "bio": "Bio",
+    "avatarPreview": "Avatar preview",
+    "uploadAvatar": "Upload Avatar",
+    "deleteAvatar": "Delete Avatar",
+    "saveProfile": "Save Profile",
+    "profileSaved": "Public profile saved",
+    "profileLoadError": "Could not load your public profile",
+    "retryProfileLoad": "Retry loading profile",
+    "profileSaveError": "Could not save your public profile",
+    "avatarUploadSuccess": "Avatar updated",
+    "avatarUploadError": "Could not upload avatar",
+    "avatarDeleteSuccess": "Avatar removed",
+    "avatarDeleteError": "Could not delete avatar",
+    "avatarGifUnsupported": "GIF avatars are not supported",
+    "avatarFileUnsupported": "Please choose a PNG, JPEG, or WebP image",
+    "avatarCropTitle": "Crop avatar",
+    "avatarCropDescription": "Drag the image and adjust zoom before confirming.",
+    "avatarCropPreviewAlt": "Selected avatar preview",
+    "avatarCropZoom": "Zoom",
+    "avatarCropSubmitting": "Uploading...",
+    "avatarCropExportError": "Could not export avatar. Please try a different crop or image.",
     "copy": "Copy",
     "copied": "Copied",
     "exportKey": "Export Private Key",
@@ -77,7 +105,9 @@
     "title": "Share Avatar",
     "description": "Scan QR code to chat with your avatar",
     "copyLink": "Copy Link",
-    "copied": "Copied"
+    "copied": "Copied",
+    "bootstrapping": "Preparing your public profile…",
+    "bootstrapError": "Failed to prepare your public profile. Try again later."
   },
   "common": {
     "cancel": "Cancel",

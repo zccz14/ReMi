@@ -30,10 +30,10 @@ test.describe("Share Page", () => {
     await qrSvg.waitFor({ timeout: 10000 });
     await expect(qrSvg).toBeVisible();
 
-    // Share URL should contain "/s/" and the public key
+    // Share URL should contain "/profile/" and the public key
     const urlText = page.locator(".font-mono");
     await urlText.waitFor({ timeout: 10000 });
     const shareUrl = await urlText.textContent();
-    expect(shareUrl).toContain("/s/");
+    expect(shareUrl).toContain("/profile/");
   });
 });
