@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useAuth } from "../hooks/use-auth";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
+import { loadPublicProfileSummary, type ResolvedProfileSummary } from "../lib/profile";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -44,14 +45,56 @@ export function ContactsPage() {
   const navigate = useNavigate();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [profiles, setProfiles] = useState<Record<string, ResolvedProfileSummary>>({});
 
   useEffect(() => {
+    let active = true;
+
     apiClient
       .get<{ data: Contact[] }>(apiClient.ownerPath("/contacts"))
-      .then((res) => setContacts(res.data))
-      .catch(() => toast.error(t("common.error")))
-      .finally(() => setLoading(false));
+      .then((res) => {
+        if (active) {
+          setContacts(res.data);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          toast.error(t("common.error"));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, [apiClient, t]);
+
+  useEffect(() => {
+    const pubKeys = [...new Set(contacts.map((contact) => contact.pubKey))];
+
+    if (pubKeys.length === 0) {
+      setProfiles({});
+      return;
+    }
+
+    let active = true;
+
+    void Promise.all(
+      pubKeys.map(async (pubKey) => [pubKey, await loadPublicProfileSummary(pubKey)] as const),
+    ).then((entries) => {
+      if (active) {
+        setProfiles(Object.fromEntries(entries));
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [contacts]);
 
   const grouped = groupByFirstChar(contacts);
 
@@ -76,20 +119,29 @@ export function ContactsPage() {
               <div className="px-4 py-1.5 text-xs font-medium text-muted-foreground bg-muted/30 sticky top-0">
                 {letter}
               </div>
-              {group.map((contact, idx) => (
-                <button
-                  key={contact.pubKey}
-                  type="button"
-                  className={cn(
-                    "flex items-center gap-3 w-full text-left px-4 py-3 hover:bg-accent/50 active:bg-accent transition-colors",
-                    idx < group.length - 1 && "border-b border-border",
-                  )}
-                  onClick={() => navigate(`/chat/${contact.pubKey}`)}
-                >
-                  <ChatAvatar pubKey={contact.pubKey} />
-                  <span className="text-sm font-medium">{truncatePubKey(contact.pubKey)}</span>
-                </button>
-              ))}
+              {group.map((contact, idx) => {
+                const profile = profiles[contact.pubKey];
+                const displayName = profile?.displayName ?? truncatePubKey(contact.pubKey);
+
+                return (
+                  <button
+                    key={contact.pubKey}
+                    type="button"
+                    className={cn(
+                      "flex items-center gap-3 w-full text-left px-4 py-3 hover:bg-accent/50 active:bg-accent transition-colors",
+                      idx < group.length - 1 && "border-b border-border",
+                    )}
+                    onClick={() => navigate(`/chat/${contact.pubKey}`)}
+                  >
+                    <ChatAvatar
+                      pubKey={contact.pubKey}
+                      name={displayName}
+                      src={profile?.avatarUrl ?? undefined}
+                    />
+                    <span className="text-sm font-medium">{displayName}</span>
+                  </button>
+                );
+              })}
             </div>
           ))}
         </div>

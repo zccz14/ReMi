@@ -1,15 +1,12 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BarChart3, Anchor, Share2, Settings, ChevronRight } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
+import { emptyPublicProfile, resolveProfileSummary } from "../lib/profile";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-
-function truncatePubKey(pubKey: string): string {
-  if (pubKey.length <= 13) return pubKey;
-  return `${pubKey.slice(0, 6)}...${pubKey.slice(-4)}`;
-}
 
 const menuItems = [
   { icon: BarChart3, labelKey: "me.stats", to: "/stats" },
@@ -20,7 +17,33 @@ const menuItems = [
 
 export function MePage() {
   const { t } = useTranslation();
-  const { publicKey } = useAuth();
+  const { apiClient, publicKey } = useAuth();
+  const [summary, setSummary] = useState(() =>
+    resolveProfileSummary(publicKey, emptyPublicProfile),
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    setSummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+
+    void apiClient
+      .get<{ data: typeof emptyPublicProfile }>(apiClient.ownerPath("/profile"))
+      .then((res) => {
+        if (active) {
+          setSummary(resolveProfileSummary(publicKey, res.data ?? emptyPublicProfile));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiClient, publicKey]);
 
   return (
     <div className="flex flex-col h-full">
@@ -30,9 +53,17 @@ export function MePage() {
         {/* Profile card */}
         <Card>
           <CardContent className="flex items-center gap-4">
-            <ChatAvatar pubKey={publicKey} size="lg" />
+            <ChatAvatar
+              pubKey={publicKey}
+              name={summary.displayName}
+              src={summary.avatarUrl ?? undefined}
+              size="lg"
+            />
             <div className="min-w-0">
-              <div className="text-base font-semibold">{truncatePubKey(publicKey)}</div>
+              <div className="text-base font-semibold">{summary.displayName}</div>
+              {summary.bio ? (
+                <div className="text-sm text-muted-foreground">{summary.bio}</div>
+              ) : null}
             </div>
           </CardContent>
         </Card>
