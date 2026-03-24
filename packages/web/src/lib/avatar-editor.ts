@@ -2,16 +2,16 @@ const WEBP_MIME_TYPE = "image/webp";
 const ACCEPTED_STATIC_AVATAR_TYPES = ["image/png", "image/jpeg", WEBP_MIME_TYPE] as const;
 const EXPORT_QUALITY_STEPS = [0.92, 0.85, 0.75, 0.65, 0.5, 0.4] as const;
 
-export interface AvatarCrop {
+export interface AvatarCropAreaPixels {
   x: number;
   y: number;
+  width: number;
+  height: number;
 }
 
 export interface ExportCroppedAvatarInput {
   image: CanvasImageSource;
-  crop: AvatarCrop;
-  zoom: number;
-  cropSize: number;
+  cropAreaPixels: AvatarCropAreaPixels;
   size: number;
   maxBytes?: number;
   minSize?: number;
@@ -34,7 +34,7 @@ export async function validateAvatarFile(file: File): Promise<File> {
 }
 
 export async function exportCroppedAvatar(input: ExportCroppedAvatarInput): Promise<Blob> {
-  const cropRect = resolveCropRect(input);
+  const cropRect = resolveCropRect(input.cropAreaPixels, input.image);
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
 
@@ -49,10 +49,10 @@ export async function exportCroppedAvatar(input: ExportCroppedAvatarInput): Prom
     canvas.height = dimension;
     context.drawImage(
       input.image,
-      cropRect.sourceX,
-      cropRect.sourceY,
-      cropRect.sourceSize,
-      cropRect.sourceSize,
+      cropRect.x,
+      cropRect.y,
+      cropRect.width,
+      cropRect.height,
       0,
       0,
       dimension,
@@ -76,19 +76,23 @@ export async function exportCroppedAvatar(input: ExportCroppedAvatarInput): Prom
   );
 }
 
-function resolveCropRect(input: ExportCroppedAvatarInput) {
-  const { width: sourceWidth, height: sourceHeight } = getImageDimensions(input.image);
-  const zoom = Number.isFinite(input.zoom) && input.zoom > 0 ? input.zoom : 1;
-  const cropSize = Math.max(1, input.cropSize);
-  const sourceSize = Math.min(cropSize / zoom, sourceWidth, sourceHeight);
-  const centeredX = (sourceWidth - sourceSize) / 2;
-  const centeredY = (sourceHeight - sourceSize) / 2;
+function resolveCropRect(cropAreaPixels: AvatarCropAreaPixels, image: CanvasImageSource) {
+  const { width: sourceWidth, height: sourceHeight } = getImageDimensions(image);
+  const x = clamp(Math.round(cropAreaPixels.x), 0, sourceWidth - 1);
+  const y = clamp(Math.round(cropAreaPixels.y), 0, sourceHeight - 1);
+  const maxWidth = sourceWidth - x;
+  const maxHeight = sourceHeight - y;
 
   return {
-    sourceX: clamp(centeredX - input.crop.x / zoom, 0, sourceWidth - sourceSize),
-    sourceY: clamp(centeredY - input.crop.y / zoom, 0, sourceHeight - sourceSize),
-    sourceSize,
+    x,
+    y,
+    width: normalizeCropSize(cropAreaPixels.width, maxWidth),
+    height: normalizeCropSize(cropAreaPixels.height, maxHeight),
   };
+}
+
+function normalizeCropSize(value: number, maxSize: number): number {
+  return clamp(Math.round(value), 1, Math.max(1, maxSize));
 }
 
 function getImageDimensions(image: CanvasImageSource) {
