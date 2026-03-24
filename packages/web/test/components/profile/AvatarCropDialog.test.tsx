@@ -18,6 +18,7 @@ type MockCropperProps = {
   zoom: number;
   minZoom?: number;
   maxZoom?: number;
+  objectFit?: string;
   onCropChange: (crop: { x: number; y: number }) => void;
   onZoomChange: (zoom: number) => void;
   onCropComplete?: (_: CropperArea, croppedAreaPixels: CropperArea) => void;
@@ -38,6 +39,7 @@ vi.mock("react-easy-crop", () => ({
           data-zoom={String(props.zoom)}
           data-min-zoom={String(props.minZoom ?? "")}
           data-max-zoom={String(props.maxZoom ?? "")}
+          data-object-fit={props.objectFit ?? ""}
         />
         <button
           type="button"
@@ -87,7 +89,7 @@ describe("AvatarCropDialog", () => {
     expect(screen.getByRole("button", { name: "common.cancel" })).toBeInTheDocument();
   });
 
-  it("starts centered at minZoom and only becomes ready after source load plus first crop result", () => {
+  it("starts with whole landscape image visible and only becomes ready after source load plus first crop result", () => {
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
 
     stubPreviewUrl();
@@ -104,17 +106,42 @@ describe("AvatarCropDialog", () => {
     expect(slider.value).toBe("1");
     expect(confirmButton).toBeDisabled();
 
-    loadPreview({ width: 220, height: 320 });
+    loadPreview({ width: 320, height: 220 });
 
-    expect(Number(slider.min)).toBeCloseTo(256 / 220, 5);
-    expect(Number(slider.value)).toBeCloseTo(256 / 220, 5);
+    expect(Number(slider.min)).toBe(1);
+    expect(Number(slider.value)).toBe(1);
     expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
-    expect(latestCropperProps?.zoom).toBeCloseTo(256 / 220, 5);
+    expect(latestCropperProps?.minZoom).toBe(1);
+    expect(latestCropperProps?.zoom).toBe(1);
+    expect(latestCropperProps?.objectFit).toBe("contain");
     expect(confirmButton).toBeDisabled();
 
     emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
 
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+  });
+
+  it("starts with whole portrait image visible", () => {
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    const slider = screen.getByRole("slider", {
+      name: "settings.avatarCropZoom",
+    }) as HTMLInputElement;
+
+    loadPreview({ width: 220, height: 320 });
+
+    expect(Number(slider.min)).toBe(1);
+    expect(Number(slider.value)).toBe(1);
+    expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
+    expect(latestCropperProps?.minZoom).toBe(1);
+    expect(latestCropperProps?.zoom).toBe(1);
+    expect(latestCropperProps?.objectFit).toBe("contain");
   });
 
   it("changes zoom state from the slider and confirms using the latest croppedAreaPixels", async () => {

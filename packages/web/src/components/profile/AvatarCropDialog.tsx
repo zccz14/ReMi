@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import { useTranslation } from "react-i18next";
 
@@ -20,19 +20,16 @@ type Props = {
   onCancel: () => void;
 };
 
-type ImageSize = { width: number; height: number };
-
 const DEFAULT_CROP: Point = { x: 0, y: 0 };
-const CROP_SIZE = 256;
 const EXPORT_SIZE = 512;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ZOOM = 3;
+const DEFAULT_MIN_ZOOM = 1;
 
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
   const cropAreaPixelsRef = useRef<Area | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
   const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
   const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
   const [zoom, setZoom] = useState(1);
@@ -42,7 +39,6 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
 
   useEffect(() => {
     setPreviewUrl(null);
-    setImageSize(null);
     setExportSource(null);
     setCrop(DEFAULT_CROP);
     setZoom(1);
@@ -62,14 +58,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     };
   }, [file, open]);
 
-  const minZoom = useMemo(() => {
-    if (!imageSize) {
-      return 1;
-    }
-
-    return Math.max(1, CROP_SIZE / Math.min(imageSize.width, imageSize.height));
-  }, [imageSize]);
-
+  const minZoom = DEFAULT_MIN_ZOOM;
   const maxZoom = Math.max(DEFAULT_MAX_ZOOM, minZoom);
   const clampedZoom = clamp(zoom, minZoom, maxZoom);
   const isReady = exportSource !== null && cropAreaPixels !== null;
@@ -136,7 +125,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
                 minZoom={minZoom}
                 maxZoom={maxZoom}
                 aspect={1}
-                objectFit="cover"
+                objectFit="contain"
                 restrictPosition
                 onCropChange={(nextCrop) => {
                   setErrorMessage(null);
@@ -164,19 +153,9 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
               className="hidden"
               onLoad={(event) => {
                 const target = event.currentTarget;
-                const nextImageSize = {
-                  width: target.naturalWidth,
-                  height: target.naturalHeight,
-                };
-                const nextMinZoom = Math.max(
-                  1,
-                  CROP_SIZE / Math.min(nextImageSize.width, nextImageSize.height),
-                );
-
-                setImageSize(nextImageSize);
                 setExportSource(target);
                 setCrop(DEFAULT_CROP);
-                setZoom(nextMinZoom);
+                setZoom(DEFAULT_MIN_ZOOM);
               }}
             />
           ) : null}
