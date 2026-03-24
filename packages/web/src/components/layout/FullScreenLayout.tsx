@@ -4,7 +4,7 @@ import { EphemeralWarning } from "../common/EphemeralWarning";
 import { AuthContext } from "../../hooks/use-auth";
 
 interface FullScreenLayoutProps {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   onBack?: () => void;
 }
@@ -21,7 +21,7 @@ export function FullScreenLayout({
     <div className="flex flex-col h-screen max-w-lg mx-auto">
       {isEphemeral && <EphemeralWarning />}
       <header className="flex items-center border-b bg-card">
-        <button onClick={onBack} className="px-3 py-2">
+        <button type="button" aria-label="Back" onClick={onBack} className="px-3 py-2">
           <ChevronLeft className="size-5" />
         </button>
         <h1 className="flex-1 text-center font-medium">{title}</h1>

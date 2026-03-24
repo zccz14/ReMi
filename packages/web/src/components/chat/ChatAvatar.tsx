@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface ChatAvatarProps {
   pubKey: string;
   name?: string;
+  src?: string;
   size?: "sm" | "md" | "lg";
   onClick?: () => void;
 }
@@ -29,11 +31,18 @@ function getDisplayChar(pubKey: string, name?: string): string {
   return pubKey.charAt(0).toUpperCase();
 }
 
-export function ChatAvatar({ pubKey, name, size = "md", onClick }: ChatAvatarProps) {
+export function ChatAvatar({ pubKey, name, src, size = "md", onClick }: ChatAvatarProps) {
+  const [imageFailed, setImageFailed] = useState(false);
   const isReMi = pubKey === "remi";
   const { px, radius, fontSize } = sizeMap[size];
 
   const displayText = isReMi ? "Ri" : getDisplayChar(pubKey, name);
+  const accessibleName = name ?? pubKey;
+  const canShowImage = Boolean(src) && !imageFailed;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [src]);
 
   const bgStyle: React.CSSProperties = isReMi
     ? { background: "linear-gradient(135deg, #667eea, #764ba2)" }
@@ -63,10 +72,28 @@ export function ChatAvatar({ pubKey, name, size = "md", onClick }: ChatAvatarPro
         width: px,
         height: px,
         borderRadius: radius,
-        ...bgStyle,
       }}
+      aria-label={onClick && !canShowImage ? accessibleName : undefined}
     >
-      {displayText}
+      {canShowImage ? (
+        <img
+          src={src}
+          alt={accessibleName}
+          onError={() => setImageFailed(true)}
+          className="h-full w-full object-cover"
+          style={{ borderRadius: radius }}
+        />
+      ) : (
+        <div
+          className="inline-flex h-full w-full items-center justify-center"
+          style={{
+            borderRadius: radius,
+            ...bgStyle,
+          }}
+        >
+          {displayText}
+        </div>
+      )}
     </div>
   );
 }
