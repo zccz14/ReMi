@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Cropper, { type Area, type Point } from "react-easy-crop";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -19,10 +20,9 @@ type Props = {
   onCancel: () => void;
 };
 
-type Crop = { x: number; y: number };
 type ImageSize = { width: number; height: number };
 
-const DEFAULT_CROP: Crop = { x: 0, y: 0 };
+const DEFAULT_CROP: Point = { x: 0, y: 0 };
 const CROP_SIZE = 256;
 const EXPORT_SIZE = 512;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
@@ -30,28 +30,27 @@ const DEFAULT_MAX_ZOOM = 3;
 
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
-  const previewRef = useRef<HTMLImageElement | null>(null);
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const dragStateRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  const cropRef = useRef<Crop>(DEFAULT_CROP);
+  const cropAreaPixelsRef = useRef<Area | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<ImageSize | null>(null);
-  const [surfaceSize, setSurfaceSize] = useState(CROP_SIZE);
-  const [crop, setCrop] = useState<Crop>(DEFAULT_CROP);
+  const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
+  const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
   const [zoom, setZoom] = useState(1);
+  const [cropAreaPixels, setCropAreaPixels] = useState<Area | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    setPreviewUrl(null);
     setImageSize(null);
+    setExportSource(null);
     setCrop(DEFAULT_CROP);
-    cropRef.current = DEFAULT_CROP;
     setZoom(1);
-    setSurfaceSize(CROP_SIZE);
+    setCropAreaPixels(null);
+    cropAreaPixelsRef.current = null;
     setErrorMessage(null);
 
     if (!file || !open) {
-      setPreviewUrl(null);
       return;
     }
 
@@ -63,10 +62,6 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     };
   }, [file, open]);
 
-  useEffect(() => {
-    cropRef.current = crop;
-  }, [crop]);
-
   const minZoom = useMemo(() => {
     if (!imageSize) {
       return 1;
@@ -76,12 +71,8 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   }, [imageSize]);
 
   const maxZoom = Math.max(DEFAULT_MAX_ZOOM, minZoom);
-
   const clampedZoom = clamp(zoom, minZoom, maxZoom);
-  const clampedCrop = useMemo(
-    () => (imageSize ? clampCrop(crop, imageSize, clampedZoom) : DEFAULT_CROP),
-    [crop, imageSize, clampedZoom],
-  );
+  const isReady = exportSource !== null && cropAreaPixels !== null;
 
   useEffect(() => {
     if (zoom !== clampedZoom) {
@@ -89,38 +80,23 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     }
   }, [clampedZoom, zoom]);
 
-  useEffect(() => {
-    if (crop.x !== clampedCrop.x || crop.y !== clampedCrop.y) {
-      cropRef.current = clampedCrop;
-      setCrop(clampedCrop);
-    }
-  }, [clampedCrop, crop.x, crop.y]);
-
   if (!open || !file) {
     return null;
   }
 
-  const previewStyle = imageSize
-    ? buildPreviewStyle({ imageSize, crop: clampedCrop, zoom: clampedZoom, surfaceSize })
-    : undefined;
-
-  const surfaceScale = surfaceSize / CROP_SIZE;
-
   const handleConfirm = async () => {
-    if (!previewRef.current || !imageSize || isSubmitting) {
+    const latestCropAreaPixels = cropAreaPixelsRef.current;
+    if (!exportSource || !latestCropAreaPixels || isSubmitting) {
       return;
     }
 
-    measureSurface();
     setErrorMessage(null);
     setIsSubmitting(true);
 
     try {
       const blob = await exportCroppedAvatar({
-        image: previewRef.current,
-        crop: clampedCrop,
-        zoom: clampedZoom,
-        cropSize: CROP_SIZE,
+        image: exportSource,
+        cropAreaPixels: latestCropAreaPixels,
         size: EXPORT_SIZE,
         maxBytes: MAX_UPLOAD_BYTES,
       });
@@ -130,58 +106,6 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       setErrorMessage(t("settings.avatarCropExportError"));
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!imageSize) {
-      return;
-    }
-
-    measureSurface();
-    setErrorMessage(null);
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragStateRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-  };
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const dragState = dragStateRef.current;
-    if (
-      !dragState ||
-      dragState.pointerId !== event.pointerId ||
-      !imageSize ||
-      (event.buttons & 1) !== 1
-    ) {
-      return;
-    }
-
-    const nextCrop = clampCrop(
-      {
-        x: cropRef.current.x + (event.clientX - dragState.x) / surfaceScale,
-        y: cropRef.current.y + (event.clientY - dragState.y) / surfaceScale,
-      },
-      imageSize,
-      clampedZoom,
-    );
-
-    dragStateRef.current = { ...dragState, x: event.clientX, y: event.clientY };
-    cropRef.current = nextCrop;
-    setCrop(nextCrop);
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragStateRef.current?.pointerId === event.pointerId) {
-      dragStateRef.current = null;
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const handleLostPointerCapture = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragStateRef.current?.pointerId === event.pointerId) {
-      dragStateRef.current = null;
     }
   };
 
@@ -201,45 +125,61 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
 
         <div className="space-y-4">
           <div
-            ref={surfaceRef}
             data-testid="avatar-crop-surface"
-            className="relative h-64 w-64 touch-none overflow-hidden rounded-xl border border-border bg-muted/30"
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onLostPointerCapture={handleLostPointerCapture}
+            className="relative h-64 w-64 overflow-hidden rounded-xl border border-border bg-muted/30"
           >
             {previewUrl ? (
-              <img
-                ref={previewRef}
-                src={previewUrl}
-                alt={t("settings.avatarCropPreviewAlt")}
-                draggable={false}
-                className="absolute max-w-none select-none"
-                style={previewStyle}
-                onLoad={(event) => {
-                  const target = event.currentTarget;
-                  const nextImageSize = {
-                    width: target.naturalWidth,
-                    height: target.naturalHeight,
-                  };
-
-                  const nextMinZoom = Math.max(
-                    1,
-                    CROP_SIZE / Math.min(nextImageSize.width, nextImageSize.height),
-                  );
-                  const nextMaxZoom = Math.max(DEFAULT_MAX_ZOOM, nextMinZoom);
-
-                  measureSurface();
-                  setImageSize(nextImageSize);
-                  setZoom((currentZoom) => clamp(currentZoom, nextMinZoom, nextMaxZoom));
-                  setCrop((currentCrop) => clampCrop(currentCrop, nextImageSize, nextMinZoom));
+              <Cropper
+                image={previewUrl}
+                crop={crop}
+                zoom={clampedZoom}
+                minZoom={minZoom}
+                maxZoom={maxZoom}
+                aspect={1}
+                objectFit="cover"
+                restrictPosition
+                onCropChange={(nextCrop) => {
+                  setErrorMessage(null);
+                  setCrop(nextCrop);
+                }}
+                onZoomChange={(nextZoom) => {
+                  setErrorMessage(null);
+                  setZoom(nextZoom);
+                }}
+                onCropComplete={(_, nextCropAreaPixels) => {
+                  setErrorMessage(null);
+                  cropAreaPixelsRef.current = nextCropAreaPixels;
+                  setCropAreaPixels(nextCropAreaPixels);
                 }}
               />
             ) : null}
-            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-black/10" />
           </div>
+
+          {previewUrl ? (
+            <img
+              data-testid="avatar-export-source"
+              src={previewUrl}
+              alt=""
+              aria-hidden="true"
+              className="hidden"
+              onLoad={(event) => {
+                const target = event.currentTarget;
+                const nextImageSize = {
+                  width: target.naturalWidth,
+                  height: target.naturalHeight,
+                };
+                const nextMinZoom = Math.max(
+                  1,
+                  CROP_SIZE / Math.min(nextImageSize.width, nextImageSize.height),
+                );
+
+                setImageSize(nextImageSize);
+                setExportSource(target);
+                setCrop(DEFAULT_CROP);
+                setZoom(nextMinZoom);
+              }}
+            />
+          ) : null}
 
           <p className="text-xs text-muted-foreground">{file.name}</p>
 
@@ -270,51 +210,13 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
           <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={handleConfirm} disabled={!imageSize || isSubmitting}>
+          <Button type="button" onClick={handleConfirm} disabled={!isReady || isSubmitting}>
             {isSubmitting ? t("settings.avatarCropSubmitting") : t("common.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
-
-  function measureSurface() {
-    const nextSize = surfaceRef.current?.getBoundingClientRect().width ?? 0;
-    if (Number.isFinite(nextSize) && nextSize > 0) {
-      setSurfaceSize(nextSize);
-    }
-  }
-}
-
-function buildPreviewStyle({
-  imageSize,
-  crop,
-  zoom,
-  surfaceSize,
-}: {
-  imageSize: ImageSize;
-  crop: Crop;
-  zoom: number;
-  surfaceSize: number;
-}) {
-  const scale = surfaceSize / CROP_SIZE;
-
-  return {
-    width: `${imageSize.width * zoom * scale}px`,
-    height: `${imageSize.height * zoom * scale}px`,
-    left: `${(surfaceSize - imageSize.width * zoom * scale) / 2 + crop.x * scale}px`,
-    top: `${(surfaceSize - imageSize.height * zoom * scale) / 2 + crop.y * scale}px`,
-  };
-}
-
-function clampCrop(crop: Crop, imageSize: ImageSize, zoom: number): Crop {
-  const maxX = Math.max(0, (imageSize.width * zoom - CROP_SIZE) / 2);
-  const maxY = Math.max(0, (imageSize.height * zoom - CROP_SIZE) / 2);
-
-  return {
-    x: clamp(crop.x, -maxX, maxX),
-    y: clamp(crop.y, -maxY, maxY),
-  };
 }
 
 function clamp(value: number, min: number, max: number) {
