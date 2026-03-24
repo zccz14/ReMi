@@ -29,7 +29,11 @@ export function AvatarChatPage() {
     },
     sendMessage: async (content, handlers) => {
       const path = `/api/${pubKey}/reasoning/message`;
-      await apiClient.streamPost(path, { content }, handlers);
+      await apiClient.streamPost(
+        path,
+        { body_json: { type: "text", version: 1, text: content, entities: [] } },
+        handlers,
+      );
     },
   };
 

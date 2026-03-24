@@ -9,16 +9,29 @@ export const soulAnchors = sqliteTable("soul_anchors", {
   updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });
 
-export const reasoningMessages = sqliteTable("reasoning_messages", {
+export const directMessages = sqliteTable("direct_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  visitorKey: text("visitor_key").notNull(),
-  role: text("role", { enum: ["user", "assistant"] }).notNull(),
-  content: text("content").notNull(),
-  recalledAnchors: text("recalled_anchors"),
-  anchorSelectionStrategy: text("anchor_selection_strategy", {
-    enum: ["batch-recall", "full-injection"],
-  }),
+  sharedMessageId: text("shared_message_id").notNull(),
+  partyAKey: text("party_a_key").notNull(),
+  partyBKey: text("party_b_key").notNull(),
+  senderKey: text("sender_key").notNull(),
+  senderKind: text("sender_kind", { enum: ["owner", "avatar"] }).notNull(),
+  ciphertextA: text("ciphertext_a").notNull(),
+  ciphertextB: text("ciphertext_b").notNull(),
+  ciphertextC: text("ciphertext_c").notNull(),
+  messageHash: text("message_hash").notNull(),
+  prevMessageHash: text("prev_message_hash"),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
+  deliveredAtA: integer("delivered_at_a", { mode: "number" }),
+  deliveredAtB: integer("delivered_at_b", { mode: "number" }),
+  readAtA: integer("read_at_a", { mode: "number" }),
+  readAtB: integer("read_at_b", { mode: "number" }),
+  attestedAtA: integer("attested_at_a", { mode: "number" }),
+  attestedAtB: integer("attested_at_b", { mode: "number" }),
+  signA: text("sign_a"),
+  signB: text("sign_b"),
+  statusReasonA: text("status_reason_a"),
+  statusReasonB: text("status_reason_b"),
 });
 
 export const messages = sqliteTable("messages", {

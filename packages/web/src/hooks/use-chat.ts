@@ -8,6 +8,10 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   created_at: number;
+  shared_message_id?: string;
+  sender_key?: string;
+  sender_kind?: "owner" | "avatar";
+  body?: Record<string, unknown> | null;
 }
 
 export interface ChatConfig {

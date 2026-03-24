@@ -68,7 +68,7 @@ describe("initializeDatabase", () => {
     db.close();
   });
 
-  it("should create reasoning_messages table", () => {
+  it("should create direct_messages table", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
     initializeDatabase(db, 1536);
@@ -76,18 +76,34 @@ describe("initializeDatabase", () => {
       name: string;
     }[];
     const names = tables.map((t) => t.name);
-    expect(names).toContain("reasoning_messages");
-    const info = db.prepare("PRAGMA table_info(reasoning_messages)").all();
+    expect(names).toContain("direct_messages");
+    expect(names).not.toContain("reasoning_messages");
+    const info = db.prepare("PRAGMA table_info(direct_messages)").all();
     const columns = (info as { name: string }[]).map((c) => c.name);
     expect(columns).toEqual(
       expect.arrayContaining([
         "id",
-        "visitor_key",
-        "role",
-        "content",
-        "recalled_anchors",
-        "anchor_selection_strategy",
+        "shared_message_id",
+        "party_a_key",
+        "party_b_key",
+        "sender_key",
+        "sender_kind",
+        "ciphertext_a",
+        "ciphertext_b",
+        "ciphertext_c",
+        "message_hash",
+        "prev_message_hash",
         "created_at",
+        "delivered_at_a",
+        "delivered_at_b",
+        "read_at_a",
+        "read_at_b",
+        "attested_at_a",
+        "attested_at_b",
+        "sign_a",
+        "sign_b",
+        "status_reason_a",
+        "status_reason_b",
       ]),
     );
     db.close();

@@ -30,25 +30,37 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       created_at INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS reasoning_messages (
+    CREATE TABLE IF NOT EXISTS direct_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      visitor_key TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-      content TEXT NOT NULL,
-      recalled_anchors TEXT,
-      anchor_selection_strategy TEXT CHECK(anchor_selection_strategy IN ('batch-recall', 'full-injection')),
-      created_at INTEGER NOT NULL
+      shared_message_id TEXT NOT NULL,
+      party_a_key TEXT NOT NULL,
+      party_b_key TEXT NOT NULL,
+      sender_key TEXT NOT NULL,
+      sender_kind TEXT NOT NULL CHECK(sender_kind IN ('owner', 'avatar')),
+      ciphertext_a TEXT NOT NULL,
+      ciphertext_b TEXT NOT NULL,
+      ciphertext_c TEXT NOT NULL,
+      message_hash TEXT NOT NULL,
+      prev_message_hash TEXT,
+      created_at INTEGER NOT NULL,
+      delivered_at_a INTEGER,
+      delivered_at_b INTEGER,
+      read_at_a INTEGER,
+      read_at_b INTEGER,
+      attested_at_a INTEGER,
+      attested_at_b INTEGER,
+      sign_a TEXT,
+      sign_b TEXT,
+      status_reason_a TEXT,
+      status_reason_b TEXT
     );
-  `);
 
-  try {
-    db.exec(`
-      ALTER TABLE reasoning_messages
-      ADD COLUMN anchor_selection_strategy TEXT CHECK(anchor_selection_strategy IN ('batch-recall', 'full-injection'))
-    `);
-  } catch {
-    // column already exists
-  }
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_messages_shared_message_id
+      ON direct_messages(shared_message_id);
+
+    CREATE INDEX IF NOT EXISTS idx_direct_messages_parties_created
+      ON direct_messages(party_a_key, party_b_key, id DESC);
+  `);
 
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS soul_anchors_vec USING vec0(

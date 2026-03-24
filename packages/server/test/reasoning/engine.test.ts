@@ -37,7 +37,10 @@ function createMockDeps() {
     countAnchors: vi.fn().mockResolvedValue(THRESHOLD + 1),
     listAnchors: vi.fn().mockResolvedValue([]),
     getMessages: vi.fn().mockResolvedValue([]),
-    saveMessage: vi.fn().mockResolvedValue(1),
+    saveMessage: vi
+      .fn()
+      .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
+      .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" }),
     searchAnchors: vi.fn().mockResolvedValue([]),
     getCachedAnchorIds: vi.fn().mockResolvedValue([]),
     getAnchorsByIds: vi.fn().mockResolvedValue([]),
@@ -74,7 +77,7 @@ describe("ReasoningEngine", () => {
 
     const doneEvent = events.find((e) => e.type === "done");
     expect(doneEvent).toBeDefined();
-    expect((doneEvent!.data as { messageId: number }).messageId).toBe(1);
+    expect((doneEvent!.data as { messageId: number }).messageId).toBe(2);
     expect(deps.getCachedAnchorIds).toHaveBeenCalled();
   });
 
@@ -104,6 +107,10 @@ describe("ReasoningEngine", () => {
 
   it("should use full injection and skip recall at threshold", async () => {
     const deps = createMockDeps();
+    deps.saveMessage.mockReset();
+    deps.saveMessage
+      .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
+      .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
     const anchors = [createAnchor("a1", "我是谁"), createAnchor("a2", "我的风格")];
     deps.countAnchors.mockResolvedValue(THRESHOLD);
     deps.listAnchors.mockResolvedValue(anchors);
@@ -127,11 +134,17 @@ describe("ReasoningEngine", () => {
     expect(deps.embeddingClient.embed).not.toHaveBeenCalled();
     expect(deps.listAnchors).toHaveBeenCalled();
     expect(emitThinking).not.toHaveBeenCalled();
-    expect(emitDone).toHaveBeenCalledWith({ messageId: 1, recalledAnchors: ["a1", "a2"] });
+    expect(emitDone).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 2, recalledAnchors: ["a1", "a2"] }),
+    );
   });
 
   it("should allow full injection without embedding client", async () => {
     const deps = createMockDeps();
+    deps.saveMessage.mockReset();
+    deps.saveMessage
+      .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
+      .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
     deps.countAnchors.mockResolvedValue(0);
     deps.listAnchors.mockResolvedValue([createAnchor("a1", "我是谁")]);
     const depsWithoutEmbedding = { ...deps, embeddingClient: undefined };
@@ -183,6 +196,10 @@ describe("ReasoningEngine", () => {
 
   it("should persist anchor selection strategy for assistant message", async () => {
     const deps = createMockDeps();
+    deps.saveMessage.mockReset();
+    deps.saveMessage
+      .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
+      .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
     deps.countAnchors.mockResolvedValue(0);
     deps.listAnchors.mockResolvedValue([createAnchor("a1", "我是谁")]);
     const engine = new ReasoningEngine(deps);

@@ -17,7 +17,12 @@ const log = logger.child({ module: "reasoning" });
 export interface ReasoningSSEEmitter {
   emitThinking(narrative: string): void | Promise<void>;
   emitToken(content: string): void | Promise<void>;
-  emitDone(data: { messageId: number; recalledAnchors: string[] }): void | Promise<void>;
+  emitDone(data: {
+    messageId: number;
+    recalledAnchors: string[];
+    shared_message_id?: string;
+    content?: string;
+  }): void | Promise<void>;
   emitError(code: string, message: string): void | Promise<void>;
 }
 
@@ -36,7 +41,7 @@ export interface ReasoningEngineDeps {
     content: string,
     recalledAnchors?: string[],
     anchorSelectionStrategy?: ReasoningAnchorSelectionStrategy,
-  ): Promise<number>;
+  ): Promise<{ messageId: number; sharedMessageId: string }>;
   searchAnchors(embedding: number[]): Promise<SoulAnchor[]>;
   getCachedAnchorIds(visitorKey: string): Promise<string[]>;
   getAnchorsByIds(ids: string[]): Promise<SoulAnchor[]>;
@@ -74,12 +79,15 @@ export class ReasoningEngine {
     content: string,
     visitorKey: string,
     emitter: ReasoningSSEEmitter,
+    options?: { skipUserPersist?: boolean },
   ): Promise<void> {
     const startTime = Date.now();
     log.info({ visitor: shortKey(visitorKey) }, "Reasoning message flow initiated");
 
     try {
-      await this.deps.saveMessage(visitorKey, "user", content);
+      if (!options?.skipUserPersist) {
+        await this.deps.saveMessage(visitorKey, "user", content);
+      }
       const messages = await this.deps.getMessages(visitorKey, WINDOW_SIZE);
       const anchorCount = await this.deps.countAnchors();
       log.debug({ messageCount: messages.length, anchorCount }, "Reasoning context loaded");
@@ -131,7 +139,7 @@ export class ReasoningEngine {
       }
 
       const anchorIds = selectedAnchors.map((a) => a.id);
-      const messageId = await this.deps.saveMessage(
+      const savedAssistant = await this.deps.saveMessage(
         visitorKey,
         "assistant",
         fullContent,
@@ -142,7 +150,7 @@ export class ReasoningEngine {
       const ms = Date.now() - startTime;
       log.info(
         {
-          messageId,
+          messageId: savedAssistant.messageId,
           recalledAnchors: anchorIds.length,
           selectionStrategy: anchorSelectionStrategy,
           anchorCount,
@@ -153,7 +161,9 @@ export class ReasoningEngine {
       );
 
       await emitter.emitDone({
-        messageId,
+        messageId: savedAssistant.messageId,
+        shared_message_id: savedAssistant.sharedMessageId,
+        content: fullContent,
         recalledAnchors: anchorIds,
       });
     } catch (error) {

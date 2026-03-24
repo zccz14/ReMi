@@ -38,7 +38,18 @@ describe("useChat", () => {
   it("should load messages on init", async () => {
     const config = createMockConfig();
     (config.loadMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ id: 1, role: "user", content: "hello", created_at: 1000 }],
+      items: [
+        {
+          id: 1,
+          role: "user",
+          content: "hello",
+          created_at: 1000,
+          shared_message_id: "shared-1",
+          sender_key: "sender-1",
+          sender_kind: "owner",
+          body: { type: "text", version: 1, text: "hello" },
+        },
+      ],
       hasMore: false,
     });
     const { result } = renderHook(() => useChat(config));
@@ -48,6 +59,7 @@ describe("useChat", () => {
     expect(config.loadMessages).toHaveBeenCalled();
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("hello");
+    expect(result.current.messages[0].shared_message_id).toBe("shared-1");
   });
 
   it("should add user message optimistically on send", async () => {
