@@ -8,7 +8,14 @@ import {
   userEvent,
   waitFor,
 } from "../../helpers/test-utils";
-import { AvatarCropDialog } from "../../../src/components/profile/AvatarCropDialog";
+import {
+  AVATAR_MIN_CROP_SIZE,
+  AvatarCropDialog,
+  deriveCropperStateFromCanonicalCrop,
+  normalizeCropCandidate,
+  resizeCanonicalCropFromCenter,
+  toExportPixels,
+} from "../../../src/components/profile/AvatarCropDialog";
 import * as avatarEditor from "../../../src/lib/avatar-editor";
 
 type CropperArea = { x: number; y: number; width: number; height: number };
@@ -68,31 +75,100 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("AvatarCropDialog", () => {
-  it("shows selected file preview, cropper surface, slider, and disabled confirm before ready", () => {
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText("settings.avatarCropTitle")).toBeInTheDocument();
-    expect(screen.getByText("settings.avatarCropDescription")).toBeInTheDocument();
-    expect(screen.getByTestId("avatar-crop-surface")).toBeInTheDocument();
-    expect(screen.getByTestId("avatar-cropper")).toHaveAttribute(
-      "data-image",
-      "blob:avatar-preview",
-    );
-    expect(screen.getByText("avatar.png")).toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: "settings.avatarCropZoom" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "common.cancel" })).toBeInTheDocument();
+describe("AvatarCropDialog helpers", () => {
+  it("extracts the minimum crop size into a shared constant", () => {
+    expect(AVATAR_MIN_CROP_SIZE).toBe(100);
   });
 
-  it("keeps a larger viewport than the square crop box and derives min zoom from the smaller landscape crop box", () => {
+  it("normalizes crop candidates into an in-bounds square", () => {
+    for (const candidate of [
+      { x: 40, y: -30, width: 180, height: 180 },
+      { x: 40, y: 80, width: 180, height: 180 },
+      { x: -30, y: 20, width: 180, height: 180 },
+      { x: 190, y: 20, width: 180, height: 180 },
+      { x: -30, y: -20, width: 220, height: 220 },
+      { x: 180, y: -20, width: 220, height: 220 },
+      { x: -30, y: 40, width: 220, height: 220 },
+      { x: 180, y: 40, width: 220, height: 220 },
+    ]) {
+      const crop = normalizeCropCandidate({
+        candidateX: candidate.x,
+        candidateY: candidate.y,
+        candidateWidth: candidate.width,
+        candidateHeight: candidate.height,
+        imageWidth: 320,
+        imageHeight: 220,
+      });
+
+      expect(crop.x).toBeGreaterThanOrEqual(0);
+      expect(crop.y).toBeGreaterThanOrEqual(0);
+      expect(crop.size).toBeGreaterThanOrEqual(AVATAR_MIN_CROP_SIZE);
+      expect(crop.x + crop.size).toBeLessThanOrEqual(320);
+      expect(crop.y + crop.size).toBeLessThanOrEqual(220);
+    }
+  });
+
+  it("preserves center when resizing legally and applies only minimum correction near boundaries", () => {
+    const centeredCrop = { x: 90, y: 40, size: 140 };
+    const shrunk = resizeCanonicalCropFromCenter(centeredCrop, 100, {
+      width: 320,
+      height: 220,
+    });
+    const centeredBefore = {
+      x: centeredCrop.x + centeredCrop.size / 2,
+      y: centeredCrop.y + centeredCrop.size / 2,
+    };
+
+    expect(shrunk.x + shrunk.size / 2).toBeCloseTo(centeredBefore.x, 5);
+    expect(shrunk.y + shrunk.size / 2).toBeCloseTo(centeredBefore.y, 5);
+
+    const boundaryCrop = { x: 200, y: 30, size: 100 };
+    const expanded = resizeCanonicalCropFromCenter(boundaryCrop, 220, {
+      width: 320,
+      height: 220,
+    });
+
+    expect(expanded).toEqual({ x: 100, y: 0, size: 220 });
+  });
+
+  it("applies the shared export rounding rule", () => {
+    expect(toExportPixels({ x: 7.3, y: 12.4, size: 180.9 }, 320, 220)).toEqual({
+      x: 7,
+      y: 12,
+      width: 180,
+      height: 180,
+    });
+  });
+
+  it("derives cropper adapter state from canonical crop", () => {
+    expect(
+      deriveCropperStateFromCanonicalCrop({ x: 50, y: 0, size: 220 }, 320, 220),
+    ).toEqual(
+      expect.objectContaining({
+        cropSize: { width: 192, height: 192 },
+        zoom: 192 / 220,
+      }),
+    );
+  });
+});
+
+describe("AvatarCropDialog", () => {
+  it("rejects images whose short edge is smaller than the minimum crop size", async () => {
+    const smallFile = new File(["small"], "small.png", { type: "image/png" });
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 99, height: 140 });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("100 x 100");
+    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
+  });
+
+  it("initializes to the centered maximum legal square and slider range", () => {
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
 
     stubPreviewUrl();
@@ -100,359 +176,56 @@ describe("AvatarCropDialog", () => {
     renderWithProviders(
       <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
-
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
-    const confirmButton = screen.getByRole("button", { name: "common.confirm" });
-
-    expect(slider.value).toBe("1");
-    expect(confirmButton).toBeDisabled();
 
     loadPreview({ width: 320, height: 220 });
 
-    const minZoomBaseline = 192 / 220;
+    const slider = screen.getByRole("slider", {
+      name: "settings.avatarCropZoom",
+    }) as HTMLInputElement;
 
-    expect(Number(slider.min)).toBeCloseTo(minZoomBaseline, 5);
-    expect(Number(slider.value)).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
-    expect(latestCropperProps?.minZoom).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.zoom).toBeCloseTo(minZoomBaseline, 5);
+    expect(slider.min).toBe(String(AVATAR_MIN_CROP_SIZE));
+    expect(slider.max).toBe("220");
+    expect(slider.value).toBe("220");
     expect(latestCropperProps?.cropSize).toEqual({ width: 192, height: 192 });
-    expect(screen.getByTestId("avatar-crop-surface")).toHaveClass("h-64", "w-64");
-    expect(screen.getByTestId("avatar-cropper")).toHaveAttribute("data-crop-width", "192");
-    expect(screen.getByTestId("avatar-cropper")).toHaveAttribute("data-crop-height", "192");
-    expect(latestCropperProps?.objectFit).toBe("contain");
-    expect(confirmButton).toBeDisabled();
-
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
-
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
   });
 
-  it("derives the min zoom baseline from the portrait crop box and confirms using emitted portrait pixels", async () => {
-    const user = userEvent.setup();
+  it("accepts boundary-valid images and locks slider min/max to 100 when short edge is 100", () => {
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
-    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-    const onConfirm = vi.fn();
 
     stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
-    );
-
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
-
-    loadPreview({ width: 220, height: 320 });
-
-    const minZoomBaseline = 192 / 220;
-    const portraitArea = { x: 14, y: 28, width: 132, height: 132 };
-
-    expect(Number(slider.min)).toBeCloseTo(minZoomBaseline, 5);
-    expect(Number(slider.value)).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
-    expect(latestCropperProps?.minZoom).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.zoom).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.cropSize).toEqual({ width: 192, height: 192 });
-    expect(latestCropperProps?.objectFit).toBe("contain");
-
-    emitCropComplete(portraitArea);
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
-    expect(exportSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cropAreaPixels: portraitArea,
-      }),
-    );
-    expect(onConfirm).toHaveBeenCalledWith(exportedBlob);
-  });
-
-  it("changes zoom/crop state and confirms using the latest emitted croppedAreaPixels", async () => {
-    const user = userEvent.setup();
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
-    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-    const onConfirm = vi.fn();
-    const initialArea = { x: 20, y: 30, width: 180, height: 180 };
-    const zoomedArea = { x: 40, y: 50, width: 140, height: 140 };
-    const movedArea = { x: 55, y: 66, width: 140, height: 140 };
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
-    );
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete(initialArea);
-
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
-
-    fireEvent.change(slider, { target: { value: "1.75" } });
-    expect(latestCropperProps?.zoom).toBe(1.75);
-
-    emitCropComplete(zoomedArea);
-
-    emitCropChange({ x: 55, y: 66 });
-    await waitFor(() => expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 }));
-
-    emitCropComplete(movedArea);
-
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
-    expect(exportSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cropAreaPixels: movedArea,
-        size: 512,
-        maxBytes: 2 * 1024 * 1024,
-      }),
-    );
-    expect(onConfirm).toHaveBeenCalledWith(exportedBlob);
-  });
-
-  it("preserves user-selected crop and zoom when the export image finishes loading late", async () => {
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const initialArea = { x: 20, y: 30, width: 180, height: 180 };
-    const editedArea = { x: 55, y: 66, width: 140, height: 140 };
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
-
-    emitCropComplete(initialArea);
-    fireEvent.change(slider, { target: { value: "1.75" } });
-    emitCropChange({ x: 55, y: 66 });
-    emitCropComplete(editedArea);
-
-    await waitFor(() => {
-      expect(latestCropperProps?.zoom).toBe(1.75);
-      expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 });
-      expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
-    });
-
-    loadPreview({ width: 800, height: 400 });
-
-    await waitFor(() => {
-      expect(latestCropperProps?.zoom).toBe(1.75);
-      expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 });
-      expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
-    });
-  });
-
-  it("caps the exported square to the source image short edge when the preview loads after interaction", async () => {
-    const user = userEvent.setup();
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
-    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-
-    emitCropChange({ x: 12, y: 18 });
-    emitCropComplete({ x: 12, y: 18, width: 192, height: 192 });
-
-    loadPreview({ width: 320, height: 120 });
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
-    });
-
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
-    expect(exportSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cropAreaPixels: expect.objectContaining({ width: 120, height: 120 }),
-      }),
-    );
-  });
-
-  it("resets confirm readiness on dialog reopen and file change", () => {
-    const firstFile = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const secondFile = new File(["avatar-2"], "avatar-2.png", { type: "image/png" });
-    const revokeObjectURL = stubPreviewUrl().revokeObjectURL;
 
     const { rerender } = renderWithProviders(
-      <AvatarCropDialog open file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
 
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
+    loadPreview({ width: 100, height: 100 });
+    let slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    expect(slider.min).toBe("100");
+    expect(slider.max).toBe("100");
+    expect(slider.value).toBe("100");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
 
-    rerender(
-      <AvatarCropDialog open={false} file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:avatar-preview");
+    rerender(<AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    loadPreview({ width: 100, height: 160 });
+    slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    expect(slider.min).toBe("100");
+    expect(slider.max).toBe("100");
 
-    rerender(<AvatarCropDialog open file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
-
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 11, y: 22, width: 170, height: 170 });
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
-
-    rerender(<AvatarCropDialog open file={secondFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
-    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    rerender(<AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    loadPreview({ width: 160, height: 100 });
+    slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    expect(slider.min).toBe("100");
+    expect(slider.max).toBe("100");
   });
 
-  it("keeps confirm locked while async parent submit is still running", async () => {
+  it("normalizes library crop pixels before export", async () => {
     const user = userEvent.setup();
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
     const exportedBlob = new Blob(["webp"], { type: "image/webp" });
     const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-    let resolveConfirm: (() => void) | undefined;
-    const onConfirm = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveConfirm = resolve;
-        }),
-    );
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
-    );
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
-
-    const confirmButton = screen.getByRole("button", { name: "common.confirm" });
-    const cancelButton = screen.getByRole("button", { name: "common.cancel" });
-
-    await user.click(confirmButton);
-
-    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
-    expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(confirmButton).toBeDisabled();
-    expect(cancelButton).toBeDisabled();
-    expect(screen.getByRole("button", { name: "settings.avatarCropSubmitting" })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "settings.avatarCropSubmitting" }));
-    expect(onConfirm).toHaveBeenCalledTimes(1);
-
-    expect(resolveConfirm).toBeDefined();
-    resolveConfirm!();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "common.cancel" })).toBeEnabled();
-    });
-  });
-
-  it("does not close from overlay or escape while async submit is running", async () => {
-    const user = userEvent.setup();
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
-    const onCancel = vi.fn();
-    let resolveConfirm: (() => void) | undefined;
-
-    vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog
-        open
-        file={file}
-        onConfirm={() =>
-          new Promise<void>((resolve) => {
-            resolveConfirm = resolve;
-          })
-        }
-        onCancel={onCancel}
-      />,
-    );
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
-
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "settings.avatarCropSubmitting" })).toBeDisabled();
-    });
-
-    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
-    expect(overlay).not.toBeNull();
-    if (overlay) {
-      fireEvent.click(overlay);
-    }
-    fireEvent.keyDown(document, { key: "Escape" });
-
-    expect(onCancel).not.toHaveBeenCalled();
-
-    expect(resolveConfirm).toBeDefined();
-    resolveConfirm!();
-  });
-
-  it("shows a user-visible error when avatar export fails", async () => {
-    const user = userEvent.setup();
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const onConfirm = vi.fn();
-
-    vi.spyOn(avatarEditor, "exportCroppedAvatar").mockRejectedValue(new Error("export failed"));
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
-    );
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
-
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarCropExportError");
-    expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it("shows a user-visible submit error when parent submit rejects after export succeeds", async () => {
-    const user = userEvent.setup();
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
-    const submitError = new Error("submit failed");
-    const onConfirm = vi.fn().mockRejectedValue(submitError);
-
-    vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
-    );
-
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
-
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
-
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(exportedBlob));
-    expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarUploadError");
-  });
-
-  it("shows a visible error and clears readiness when the hidden export image fails to load", async () => {
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
 
     stubPreviewUrl();
 
@@ -460,15 +233,88 @@ describe("AvatarCropDialog", () => {
       <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
 
-    loadPreview({ width: 800, height: 400 });
-    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
+    loadPreview({ width: 320, height: 220 });
+    emitCropComplete({ x: 7.3, y: 12.4, width: 180.9, height: 220.2 });
 
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
+    expect(exportSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cropAreaPixels: { x: 7, y: 32, width: 180, height: 180 },
+      }),
+    );
+  });
+
+  it("resizes from the current center and applies only minimal overflow correction", async () => {
+    const user = userEvent.setup();
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
+    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 320, height: 220 });
+    emitCropComplete({ x: 200, y: 30, width: 100, height: 100 });
+
+    const slider = screen.getByRole("slider", {
+      name: "settings.avatarCropZoom",
+    }) as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: "220" } });
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
+    expect(exportSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cropAreaPixels: { x: 100, y: 0, width: 220, height: 220 },
+      }),
+    );
+  });
+
+  it("clears an undersized-image error after reloading a valid image in the same dialog", async () => {
+    const smallFile = new File(["small"], "small.png", { type: "image/png" });
+    const validFile = new File(["valid"], "valid.png", { type: "image/png" });
+
+    stubPreviewUrl();
+
+    const { rerender } = renderWithProviders(
+      <AvatarCropDialog open file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 99, height: 140 });
+    expect(await screen.findByRole("alert")).toHaveTextContent("100 x 100");
+
+    rerender(<AvatarCropDialog open file={validFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    loadPreview({ width: 320, height: 220 });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+  });
 
-    fireEvent.error(screen.getByTestId("avatar-export-source"));
+  it("clears an undersized-image error after closing and reopening with a valid image", async () => {
+    const smallFile = new File(["small"], "small.png", { type: "image/png" });
+    const validFile = new File(["valid"], "valid.png", { type: "image/png" });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarFileUnsupported");
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
+    stubPreviewUrl();
+
+    const { rerender } = renderWithProviders(
+      <AvatarCropDialog open file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 99, height: 140 });
+    expect(await screen.findByRole("alert")).toHaveTextContent("100 x 100");
+
+    rerender(<AvatarCropDialog open={false} file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    rerender(<AvatarCropDialog open file={validFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    loadPreview({ width: 320, height: 220 });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
   });
 });
 
@@ -496,8 +342,4 @@ function loadPreview({ width, height }: { width: number; height: number }) {
 function emitCropComplete(area: CropperArea) {
   pendingCropCompleteArea = area;
   fireEvent.click(screen.getByRole("button", { name: "emit crop complete" }));
-}
-
-function emitCropChange(crop: { x: number; y: number }) {
-  latestCropperProps?.onCropChange(crop);
 }

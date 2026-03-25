@@ -99,7 +99,8 @@
     "importConfirm": "Importing will overwrite your current key. Continue?",
     "import": "Import",
     "language": "Language",
-    "about": "About"
+    "about": "About",
+    "avatarCropTooSmall": "Image is too small. Avatar requires at least {{size}} x {{size}} pixels."
   },
   "share": {
     "title": "Share Avatar",

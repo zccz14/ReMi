@@ -99,7 +99,8 @@
     "importConfirm": "导入将覆盖当前密钥，确定继续？",
     "import": "导入",
     "language": "语言",
-    "about": "关于"
+    "about": "关于",
+    "avatarCropTooSmall": "图片尺寸过小，头像至少需要 {{size}} x {{size}} 像素。"
   },
   "share": {
     "title": "分享分身",

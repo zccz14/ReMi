@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import { useTranslation } from "react-i18next";
 
@@ -20,39 +20,47 @@ type Props = {
   onCancel: () => void;
 };
 
+type CanonicalCrop = {
+  x: number;
+  y: number;
+  size: number;
+};
+
+type ImageBounds = {
+  width: number;
+  height: number;
+};
+
 const DEFAULT_CROP: Point = { x: 0, y: 0 };
+const DEFAULT_BOUNDS: ImageBounds = { width: 0, height: 0 };
 const EXPORT_SIZE = 512;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-const DEFAULT_MAX_ZOOM = 3;
-const DEFAULT_MIN_ZOOM = 1;
 const DEFAULT_CROP_BOX_SIZE = 192;
 const CROP_BOX_SIZE = {
   width: DEFAULT_CROP_BOX_SIZE,
   height: DEFAULT_CROP_BOX_SIZE,
 } as const;
 
+export const AVATAR_MIN_CROP_SIZE = 100;
+
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
-  const cropAreaPixelsRef = useRef<Area | null>(null);
-  const hasUserInteractedRef = useRef(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
-  const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
-  const [zoom, setZoom] = useState(DEFAULT_MIN_ZOOM);
-  const [minZoom, setMinZoom] = useState(DEFAULT_MIN_ZOOM);
-  const [cropAreaPixels, setCropAreaPixels] = useState<Area | null>(null);
+  const [imageBounds, setImageBounds] = useState<ImageBounds>(DEFAULT_BOUNDS);
+  const [canonicalCrop, setCanonicalCrop] = useState<CanonicalCrop | null>(null);
+  const [cropperCrop, setCropperCrop] = useState<Point>(DEFAULT_CROP);
+  const [cropperZoom, setCropperZoom] = useState(1);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     setPreviewUrl(null);
     setExportSource(null);
-    setCrop(DEFAULT_CROP);
-    setZoom(DEFAULT_MIN_ZOOM);
-    setMinZoom(DEFAULT_MIN_ZOOM);
-    setCropAreaPixels(null);
-    cropAreaPixelsRef.current = null;
-    hasUserInteractedRef.current = false;
+    setImageBounds(DEFAULT_BOUNDS);
+    setCanonicalCrop(null);
+    setCropperCrop(DEFAULT_CROP);
+    setCropperZoom(1);
     setErrorMessage(null);
 
     if (!file || !open) {
@@ -67,34 +75,21 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     };
   }, [file, open]);
 
-  const maxZoom = Math.max(DEFAULT_MAX_ZOOM, minZoom);
-  const clampedZoom = clamp(zoom, minZoom, maxZoom);
-  const isReady = exportSource !== null && cropAreaPixels !== null;
-
-  useEffect(() => {
-    if (zoom !== clampedZoom) {
-      setZoom(clampedZoom);
-    }
-  }, [clampedZoom, zoom]);
-
   if (!open || !file) {
     return null;
   }
 
+  const shortEdge = getShortEdge(imageBounds.width, imageBounds.height);
+  const sliderMin = AVATAR_MIN_CROP_SIZE;
+  const sliderMax = Math.max(shortEdge, AVATAR_MIN_CROP_SIZE);
+  const sliderValue = canonicalCrop?.size ?? sliderMax;
+  const isReady = exportSource !== null && canonicalCrop !== null;
+
   const handleConfirm = async () => {
-    const latestCropAreaPixels = cropAreaPixelsRef.current;
-    if (!exportSource || !latestCropAreaPixels || isSubmitting) {
+    if (!exportSource || !canonicalCrop || isSubmitting) {
       return;
     }
 
-    const boundedCropAreaPixels = clampCropAreaToImageBounds({
-      cropAreaPixels: latestCropAreaPixels,
-      imageWidth: exportSource.naturalWidth,
-      imageHeight: exportSource.naturalHeight,
-    });
-
-    cropAreaPixelsRef.current = boundedCropAreaPixels;
-    setCropAreaPixels(boundedCropAreaPixels);
     setErrorMessage(null);
     setIsSubmitting(true);
 
@@ -104,7 +99,11 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       try {
         blob = await exportCroppedAvatar({
           image: exportSource,
-          cropAreaPixels: boundedCropAreaPixels,
+          cropAreaPixels: toExportPixels(
+            canonicalCrop,
+            exportSource.naturalWidth,
+            exportSource.naturalHeight,
+          ),
           size: EXPORT_SIZE,
           maxBytes: MAX_UPLOAD_BYTES,
         });
@@ -146,28 +145,45 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
             {previewUrl ? (
               <Cropper
                 image={previewUrl}
-                crop={crop}
+                crop={cropperCrop}
                 cropSize={CROP_BOX_SIZE}
-                zoom={clampedZoom}
-                minZoom={minZoom}
-                maxZoom={maxZoom}
+                zoom={cropperZoom}
+                minZoom={CROP_BOX_SIZE.width / sliderMax}
+                maxZoom={CROP_BOX_SIZE.width / sliderMin}
                 aspect={1}
                 objectFit="contain"
                 restrictPosition
                 onCropChange={(nextCrop) => {
-                  hasUserInteractedRef.current = true;
                   setErrorMessage(null);
-                  setCrop(nextCrop);
+                  setCropperCrop(nextCrop);
                 }}
                 onZoomChange={(nextZoom) => {
-                  hasUserInteractedRef.current = true;
                   setErrorMessage(null);
-                  setZoom(nextZoom);
+                  setCropperZoom(nextZoom);
                 }}
-                onCropComplete={(_, nextCropAreaPixels) => {
+                onCropComplete={(_, croppedAreaPixels) => {
+                  if (imageBounds.width <= 0 || imageBounds.height <= 0) {
+                    return;
+                  }
+
+                  const nextCanonicalCrop = normalizeCropCandidate({
+                    candidateX: croppedAreaPixels.x,
+                    candidateY: croppedAreaPixels.y,
+                    candidateWidth: croppedAreaPixels.width,
+                    candidateHeight: croppedAreaPixels.height,
+                    imageWidth: imageBounds.width,
+                    imageHeight: imageBounds.height,
+                  });
+                  const nextCropperState = deriveCropperStateFromCanonicalCrop(
+                    nextCanonicalCrop,
+                    imageBounds.width,
+                    imageBounds.height,
+                  );
+
                   setErrorMessage(null);
-                  cropAreaPixelsRef.current = nextCropAreaPixels;
-                  setCropAreaPixels(nextCropAreaPixels);
+                  setCanonicalCrop(nextCanonicalCrop);
+                  setCropperCrop(nextCropperState.crop);
+                  setCropperZoom(nextCropperState.zoom);
                 }}
               />
             ) : null}
@@ -182,39 +198,50 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
               className="hidden"
               onLoad={(event) => {
                 const target = event.currentTarget;
-                const nextMinZoom = getMinZoomBaseline({
-                  imageWidth: target.naturalWidth,
-                  imageHeight: target.naturalHeight,
-                  cropWidth: CROP_BOX_SIZE.width,
-                  cropHeight: CROP_BOX_SIZE.height,
-                });
+                const nextBounds = {
+                  width: target.naturalWidth,
+                  height: target.naturalHeight,
+                };
+                const nextShortEdge = getShortEdge(nextBounds.width, nextBounds.height);
 
-                const nextCropAreaPixels = cropAreaPixelsRef.current
-                  ? clampCropAreaToImageBounds({
-                      cropAreaPixels: cropAreaPixelsRef.current,
-                      imageWidth: target.naturalWidth,
-                      imageHeight: target.naturalHeight,
-                    })
-                  : null;
-
-                cropAreaPixelsRef.current = nextCropAreaPixels;
-                setCropAreaPixels(nextCropAreaPixels);
+                setImageBounds(nextBounds);
                 setErrorMessage(null);
-                setExportSource(target);
-                setMinZoom(nextMinZoom);
 
-                if (!hasUserInteractedRef.current) {
-                  setCrop(DEFAULT_CROP);
-                  setZoom(nextMinZoom);
+                if (nextShortEdge < AVATAR_MIN_CROP_SIZE) {
+                  setExportSource(null);
+                  setCanonicalCrop(null);
+                  setCropperCrop(DEFAULT_CROP);
+                  setCropperZoom(1);
+                  setErrorMessage(
+                    t("settings.avatarCropTooSmall", {
+                      size: AVATAR_MIN_CROP_SIZE,
+                      defaultValue: `Image is too small. Avatar requires at least ${AVATAR_MIN_CROP_SIZE} x ${AVATAR_MIN_CROP_SIZE} pixels.`,
+                    }),
+                  );
+                  return;
                 }
+
+                const nextCanonicalCrop = createCenteredCanonicalCrop(
+                  nextBounds.width,
+                  nextBounds.height,
+                );
+                const nextCropperState = deriveCropperStateFromCanonicalCrop(
+                  nextCanonicalCrop,
+                  nextBounds.width,
+                  nextBounds.height,
+                );
+
+                setExportSource(target);
+                setCanonicalCrop(nextCanonicalCrop);
+                setCropperCrop(nextCropperState.crop);
+                setCropperZoom(nextCropperState.zoom);
               }}
               onError={() => {
-                cropAreaPixelsRef.current = null;
+                setImageBounds(DEFAULT_BOUNDS);
                 setExportSource(null);
-                setCropAreaPixels(null);
-                setCrop(DEFAULT_CROP);
-                setMinZoom(DEFAULT_MIN_ZOOM);
-                setZoom(DEFAULT_MIN_ZOOM);
+                setCanonicalCrop(null);
+                setCropperCrop(DEFAULT_CROP);
+                setCropperZoom(1);
                 setErrorMessage(t("settings.avatarFileUnsupported"));
               }}
             />
@@ -227,14 +254,31 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
             <input
               aria-label={t("settings.avatarCropZoom")}
               type="range"
-              min={minZoom}
-              max={maxZoom}
-              step="0.01"
-              value={clampedZoom}
+              min={sliderMin}
+              max={sliderMax}
+              step="1"
+              value={sliderValue}
+              disabled={!canonicalCrop}
               onChange={(event) => {
-                hasUserInteractedRef.current = true;
+                if (!canonicalCrop) {
+                  return;
+                }
+
+                const nextCanonicalCrop = resizeCanonicalCropFromCenter(
+                  canonicalCrop,
+                  Number(event.target.value),
+                  imageBounds,
+                );
+                const nextCropperState = deriveCropperStateFromCanonicalCrop(
+                  nextCanonicalCrop,
+                  imageBounds.width,
+                  imageBounds.height,
+                );
+
                 setErrorMessage(null);
-                setZoom(Number(event.target.value));
+                setCanonicalCrop(nextCanonicalCrop);
+                setCropperCrop(nextCropperState.crop);
+                setCropperZoom(nextCropperState.zoom);
               }}
             />
           </label>
@@ -259,45 +303,96 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   );
 }
 
-function getMinZoomBaseline({
-  imageWidth,
-  imageHeight,
-  cropWidth,
-  cropHeight,
-}: {
-  imageWidth: number;
-  imageHeight: number;
-  cropWidth: number;
-  cropHeight: number;
-}) {
-  if (imageWidth <= 0 || imageHeight <= 0 || cropWidth <= 0 || cropHeight <= 0) {
-    return DEFAULT_MIN_ZOOM;
-  }
-
-  return Math.max(cropWidth / imageWidth, cropHeight / imageHeight);
-}
-
-function clampCropAreaToImageBounds({
-  cropAreaPixels,
-  imageWidth,
-  imageHeight,
-}: {
-  cropAreaPixels: Area;
-  imageWidth: number;
-  imageHeight: number;
-}) {
-  if (imageWidth <= 0 || imageHeight <= 0) {
-    return cropAreaPixels;
-  }
-
-  const sideLength = Math.min(cropAreaPixels.width, cropAreaPixels.height, imageWidth, imageHeight);
+function createCenteredCanonicalCrop(imageWidth: number, imageHeight: number): CanonicalCrop {
+  const size = getShortEdge(imageWidth, imageHeight);
 
   return {
-    x: clamp(cropAreaPixels.x, 0, Math.max(imageWidth - sideLength, 0)),
-    y: clamp(cropAreaPixels.y, 0, Math.max(imageHeight - sideLength, 0)),
-    width: sideLength,
-    height: sideLength,
+    x: (imageWidth - size) / 2,
+    y: (imageHeight - size) / 2,
+    size,
   };
+}
+
+export function normalizeCropCandidate(input: {
+  candidateX: number;
+  candidateY: number;
+  candidateWidth: number;
+  candidateHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+}): CanonicalCrop {
+  const shortEdge = getShortEdge(input.imageWidth, input.imageHeight);
+  const size = clamp(
+    Math.min(input.candidateWidth, input.candidateHeight),
+    AVATAR_MIN_CROP_SIZE,
+    shortEdge,
+  );
+  const x = clamp(input.candidateX + (input.candidateWidth - size) / 2, 0, input.imageWidth - size);
+  const y = clamp(
+    input.candidateY + (input.candidateHeight - size) / 2,
+    0,
+    input.imageHeight - size,
+  );
+
+  return { x, y, size };
+}
+
+export function resizeCanonicalCropFromCenter(
+  crop: CanonicalCrop,
+  nextSize: number,
+  bounds: ImageBounds,
+): CanonicalCrop {
+  const centerX = crop.x + crop.size / 2;
+  const centerY = crop.y + crop.size / 2;
+
+  return normalizeCropCandidate({
+    candidateX: centerX - nextSize / 2,
+    candidateY: centerY - nextSize / 2,
+    candidateWidth: nextSize,
+    candidateHeight: nextSize,
+    imageWidth: bounds.width,
+    imageHeight: bounds.height,
+  });
+}
+
+export function toExportPixels(crop: CanonicalCrop, imageWidth: number, imageHeight: number): Area {
+  const size = Math.max(1, Math.min(Math.floor(crop.size), getShortEdge(imageWidth, imageHeight)));
+
+  return {
+    x: clamp(Math.round(crop.x), 0, imageWidth - size),
+    y: clamp(Math.round(crop.y), 0, imageHeight - size),
+    width: size,
+    height: size,
+  };
+}
+
+export function deriveCropperStateFromCanonicalCrop(
+  crop: CanonicalCrop,
+  imageWidth: number,
+  imageHeight: number,
+) {
+  const zoom = CROP_BOX_SIZE.width / crop.size;
+  const imageCenterX = imageWidth / 2;
+  const imageCenterY = imageHeight / 2;
+  const cropCenterX = crop.x + crop.size / 2;
+  const cropCenterY = crop.y + crop.size / 2;
+
+  return {
+    cropSize: CROP_BOX_SIZE,
+    zoom,
+    crop: {
+      x: (imageCenterX - cropCenterX) * zoom,
+      y: (imageCenterY - cropCenterY) * zoom,
+    },
+  };
+}
+
+function getShortEdge(width: number, height: number) {
+  if (width <= 0 || height <= 0) {
+    return 0;
+  }
+
+  return Math.min(width, height);
 }
 
 function clamp(value: number, min: number, max: number) {
