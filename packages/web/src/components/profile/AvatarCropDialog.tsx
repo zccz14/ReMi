@@ -25,14 +25,17 @@ const EXPORT_SIZE = 512;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ZOOM = 3;
 const DEFAULT_MIN_ZOOM = 1;
+const DEFAULT_CROP_VIEWPORT_SIZE = 256;
 
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
   const cropAreaPixelsRef = useRef<Area | null>(null);
+  const cropViewportRef = useRef<HTMLDivElement | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
   const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(DEFAULT_MIN_ZOOM);
+  const [minZoom, setMinZoom] = useState(DEFAULT_MIN_ZOOM);
   const [cropAreaPixels, setCropAreaPixels] = useState<Area | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,7 +44,8 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     setPreviewUrl(null);
     setExportSource(null);
     setCrop(DEFAULT_CROP);
-    setZoom(1);
+    setZoom(DEFAULT_MIN_ZOOM);
+    setMinZoom(DEFAULT_MIN_ZOOM);
     setCropAreaPixels(null);
     cropAreaPixelsRef.current = null;
     setErrorMessage(null);
@@ -58,7 +62,6 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     };
   }, [file, open]);
 
-  const minZoom = DEFAULT_MIN_ZOOM;
   const maxZoom = Math.max(DEFAULT_MAX_ZOOM, minZoom);
   const clampedZoom = clamp(zoom, minZoom, maxZoom);
   const isReady = exportSource !== null && cropAreaPixels !== null;
@@ -123,6 +126,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
 
         <div className="space-y-4">
           <div
+            ref={cropViewportRef}
             data-testid="avatar-crop-surface"
             className="relative h-64 w-64 overflow-hidden rounded-xl border border-border bg-muted/30"
           >
@@ -162,9 +166,18 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
               className="hidden"
               onLoad={(event) => {
                 const target = event.currentTarget;
+                const cropViewportSize = getCropViewportSize(cropViewportRef.current);
+                const nextMinZoom = getMinZoomBaseline({
+                  imageWidth: target.naturalWidth,
+                  imageHeight: target.naturalHeight,
+                  cropWidth: cropViewportSize.width,
+                  cropHeight: cropViewportSize.height,
+                });
+
                 setExportSource(target);
                 setCrop(DEFAULT_CROP);
-                setZoom(DEFAULT_MIN_ZOOM);
+                setMinZoom(nextMinZoom);
+                setZoom(nextMinZoom);
               }}
             />
           ) : null}
@@ -205,6 +218,31 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function getCropViewportSize(element: HTMLElement | null) {
+  return {
+    width: element?.clientWidth || DEFAULT_CROP_VIEWPORT_SIZE,
+    height: element?.clientHeight || DEFAULT_CROP_VIEWPORT_SIZE,
+  };
+}
+
+function getMinZoomBaseline({
+  imageWidth,
+  imageHeight,
+  cropWidth,
+  cropHeight,
+}: {
+  imageWidth: number;
+  imageHeight: number;
+  cropWidth: number;
+  cropHeight: number;
+}) {
+  if (imageWidth <= 0 || imageHeight <= 0 || cropWidth <= 0 || cropHeight <= 0) {
+    return DEFAULT_MIN_ZOOM;
+  }
+
+  return Math.max(cropWidth / imageWidth, cropHeight / imageHeight);
 }
 
 function clamp(value: number, min: number, max: number) {
