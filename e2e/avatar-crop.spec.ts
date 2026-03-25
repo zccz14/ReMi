@@ -11,6 +11,20 @@ type ImageFixtureOptions = {
   name: string;
 };
 
+const QUADRANT_COLORS = {
+  topLeft: [220, 60, 60] as const,
+  topRight: [60, 190, 90] as const,
+  bottomLeft: [60, 110, 220] as const,
+  bottomRight: [240, 210, 60] as const,
+};
+
+const CORNER_MARKERS = {
+  topLeft: [16, 16, 16] as const,
+  topRight: [245, 245, 245] as const,
+  bottomLeft: [235, 0, 235] as const,
+  bottomRight: [0, 235, 235] as const,
+};
+
 type DecodedUpload = {
   width: number;
   height: number;
@@ -35,10 +49,10 @@ test.describe("avatar crop flow", () => {
     const decoded = await decodeUploadedWebp(page, uploaded.bytes);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
-    expectColor(decoded.samples.topLeft, [220, 60, 60], 36);
-    expectColor(decoded.samples.topRight, [220, 60, 60], 36);
-    expectColor(decoded.samples.bottomLeft, [60, 110, 220], 36);
-    expectColor(decoded.samples.bottomRight, [60, 110, 220], 36);
+    expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
+    expectColor(decoded.samples.bottomLeftMarker, CORNER_MARKERS.bottomLeft, 32);
+    expectColor(decoded.samples.topRightMarker, QUADRANT_COLORS.topLeft, 36);
+    expectColor(decoded.samples.bottomRightMarker, QUADRANT_COLORS.bottomLeft, 36);
     expect(decoded.samples.center[0]).toBeLessThan(160);
     expect(decoded.samples.center[2]).toBeGreaterThan(120);
     await expect(page.getByText(/avatar updated|头像已更新/i)).toBeVisible();
@@ -61,10 +75,10 @@ test.describe("avatar crop flow", () => {
     const decoded = await decodeUploadedWebp(page, uploaded.bytes);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
-    expectColor(decoded.samples.topLeft, [220, 60, 60], 36);
-    expectColor(decoded.samples.topRight, [60, 190, 90], 36);
-    expectColor(decoded.samples.bottomLeft, [220, 60, 60], 36);
-    expectColor(decoded.samples.bottomRight, [60, 190, 90], 36);
+    expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
+    expectColor(decoded.samples.topRightMarker, CORNER_MARKERS.topRight, 32);
+    expectColor(decoded.samples.bottomLeftMarker, QUADRANT_COLORS.topLeft, 36);
+    expectColor(decoded.samples.bottomRightMarker, QUADRANT_COLORS.topRight, 36);
     expect(decoded.samples.center[1]).toBeGreaterThan(120);
     expect(decoded.samples.center[2]).toBeLessThan(120);
     await expect(page.getByText(/avatar updated|头像已更新/i)).toBeVisible();
@@ -85,14 +99,14 @@ test.describe("avatar crop flow", () => {
     const decoded = await decodeUploadedWebp(page, uploaded.bytes);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
-    expectColor(decoded.samples.topLeft, [220, 60, 60], 36);
-    expectColor(decoded.samples.topRight, [60, 190, 90], 36);
-    expectColor(decoded.samples.bottomLeft, [60, 110, 220], 36);
-    expectColor(decoded.samples.bottomRight, [240, 210, 60], 36);
-    expect(decoded.samples.topLeft[3]).toBe(255);
-    expect(decoded.samples.topRight[3]).toBe(255);
-    expect(decoded.samples.bottomLeft[3]).toBe(255);
-    expect(decoded.samples.bottomRight[3]).toBe(255);
+    expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
+    expectColor(decoded.samples.topRightMarker, CORNER_MARKERS.topRight, 32);
+    expectColor(decoded.samples.bottomLeftMarker, CORNER_MARKERS.bottomLeft, 32);
+    expectColor(decoded.samples.bottomRightMarker, CORNER_MARKERS.bottomRight, 32);
+    expect(decoded.samples.topLeftMarker[3]).toBe(255);
+    expect(decoded.samples.topRightMarker[3]).toBe(255);
+    expect(decoded.samples.bottomLeftMarker[3]).toBe(255);
+    expect(decoded.samples.bottomRightMarker[3]).toBe(255);
     expect(decoded.samples.center[3]).toBe(255);
     await expect(page.getByText(/avatar updated|头像已更新/i)).toBeVisible();
   });
@@ -177,7 +191,7 @@ async function uploadAvatarFixture(page: Page, options: ImageFixtureOptions) {
 
 async function createQuadrantImageBuffer(page: Page, width: number, height: number) {
   const bytes = await page.evaluate(
-    async ({ width, height }) => {
+    async ({ width, height, quadrantColors, cornerMarkers }) => {
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
@@ -188,14 +202,24 @@ async function createQuadrantImageBuffer(page: Page, width: number, height: numb
 
       const halfWidth = width / 2;
       const halfHeight = height / 2;
-      context.fillStyle = "rgb(220,60,60)";
+      context.fillStyle = `rgb(${quadrantColors.topLeft.join(",")})`;
       context.fillRect(0, 0, halfWidth, halfHeight);
-      context.fillStyle = "rgb(60,190,90)";
+      context.fillStyle = `rgb(${quadrantColors.topRight.join(",")})`;
       context.fillRect(halfWidth, 0, halfWidth, halfHeight);
-      context.fillStyle = "rgb(60,110,220)";
+      context.fillStyle = `rgb(${quadrantColors.bottomLeft.join(",")})`;
       context.fillRect(0, halfHeight, halfWidth, halfHeight);
-      context.fillStyle = "rgb(240,210,60)";
+      context.fillStyle = `rgb(${quadrantColors.bottomRight.join(",")})`;
       context.fillRect(halfWidth, halfHeight, halfWidth, halfHeight);
+
+      const markerSize = Math.max(8, Math.round(Math.min(width, height) * 0.18));
+      context.fillStyle = `rgb(${cornerMarkers.topLeft.join(",")})`;
+      context.fillRect(0, 0, markerSize, markerSize);
+      context.fillStyle = `rgb(${cornerMarkers.topRight.join(",")})`;
+      context.fillRect(width - markerSize, 0, markerSize, markerSize);
+      context.fillStyle = `rgb(${cornerMarkers.bottomLeft.join(",")})`;
+      context.fillRect(0, height - markerSize, markerSize, markerSize);
+      context.fillStyle = `rgb(${cornerMarkers.bottomRight.join(",")})`;
+      context.fillRect(width - markerSize, height - markerSize, markerSize, markerSize);
 
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!blob) {
@@ -204,7 +228,7 @@ async function createQuadrantImageBuffer(page: Page, width: number, height: numb
 
       return Array.from(new Uint8Array(await blob.arrayBuffer()));
     },
-    { width, height },
+    { width, height, quadrantColors: QUADRANT_COLORS, cornerMarkers: CORNER_MARKERS },
   );
 
   return Buffer.from(bytes);
@@ -256,17 +280,17 @@ async function decodeUploadedWebp(page: Page, bytes: number[]): Promise<DecodedU
       return [pixel[0], pixel[1], pixel[2], pixel[3]] as [number, number, number, number];
     };
 
-    const edge = 32;
+    const edge = 48;
     const center = Math.floor(bitmap.width / 2);
 
     return {
       width: bitmap.width,
       height: bitmap.height,
       samples: {
-        topLeft: sampleAt(edge, edge),
-        topRight: sampleAt(bitmap.width - edge, edge),
-        bottomLeft: sampleAt(edge, bitmap.height - edge),
-        bottomRight: sampleAt(bitmap.width - edge, bitmap.height - edge),
+        topLeftMarker: sampleAt(edge, edge),
+        topRightMarker: sampleAt(bitmap.width - edge, edge),
+        bottomLeftMarker: sampleAt(edge, bitmap.height - edge),
+        bottomRightMarker: sampleAt(bitmap.width - edge, bitmap.height - edge),
         center: sampleAt(center, center),
       },
     };
@@ -275,7 +299,7 @@ async function decodeUploadedWebp(page: Page, bytes: number[]): Promise<DecodedU
 
 function expectColor(
   actual: [number, number, number, number],
-  expected: [number, number, number],
+  expected: readonly [number, number, number],
   tolerance: number,
 ) {
   expect(actual[0]).toBeGreaterThanOrEqual(expected[0] - tolerance);
