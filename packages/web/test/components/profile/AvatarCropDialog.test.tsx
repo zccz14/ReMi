@@ -221,8 +221,7 @@ describe("AvatarCropDialog", () => {
   it("resets confirm readiness on dialog reopen and file change", () => {
     const firstFile = new File(["avatar"], "avatar.png", { type: "image/png" });
     const secondFile = new File(["avatar-2"], "avatar-2.png", { type: "image/png" });
-
-    stubPreviewUrl();
+    const revokeObjectURL = stubPreviewUrl().revokeObjectURL;
 
     const { rerender } = renderWithProviders(
       <AvatarCropDialog open file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
@@ -235,6 +234,8 @@ describe("AvatarCropDialog", () => {
     rerender(
       <AvatarCropDialog open={false} file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:avatar-preview");
+
     rerender(<AvatarCropDialog open file={firstFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
@@ -245,6 +246,7 @@ describe("AvatarCropDialog", () => {
 
     rerender(<AvatarCropDialog open file={secondFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
   });
 
   it("keeps confirm locked while async parent submit is still running", async () => {
@@ -359,7 +361,7 @@ describe("AvatarCropDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("does not show the export error when parent submit rejects after export succeeds", async () => {
+  it("shows a user-visible submit error when parent submit rejects after export succeeds", async () => {
     const user = userEvent.setup();
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
     const exportedBlob = new Blob(["webp"], { type: "image/webp" });
@@ -380,16 +382,39 @@ describe("AvatarCropDialog", () => {
     await user.click(screen.getByRole("button", { name: "common.confirm" }));
 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(exportedBlob));
-    expect(screen.queryByText("settings.avatarCropExportError")).not.toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarUploadError");
+  });
+
+  it("shows a visible error and clears readiness when the hidden export image fails to load", async () => {
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    loadPreview({ width: 800, height: 400 });
+    emitCropComplete({ x: 10, y: 20, width: 180, height: 180 });
+
+    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+
+    fireEvent.error(screen.getByTestId("avatar-export-source"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("settings.avatarFileUnsupported");
+    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
   });
 });
 
 function stubPreviewUrl() {
-  vi.stubGlobal("URL", {
+  const previewUrl = {
     createObjectURL: vi.fn(() => "blob:avatar-preview"),
     revokeObjectURL: vi.fn(),
-  });
+  };
+
+  vi.stubGlobal("URL", previewUrl);
+
+  return previewUrl;
 }
 
 function loadPreview({ width, height }: { width: number; height: number }) {

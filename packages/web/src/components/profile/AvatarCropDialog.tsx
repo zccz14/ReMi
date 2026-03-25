@@ -106,6 +106,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       try {
         await onConfirm(blob);
       } catch {
+        setErrorMessage(t("settings.avatarUploadError"));
         return;
       }
     } finally {
@@ -176,10 +177,20 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
                   cropHeight: CROP_BOX_SIZE.height,
                 });
 
+                setErrorMessage(null);
                 setExportSource(target);
                 setCrop(DEFAULT_CROP);
                 setMinZoom(nextMinZoom);
                 setZoom(nextMinZoom);
+              }}
+              onError={() => {
+                cropAreaPixelsRef.current = null;
+                setExportSource(null);
+                setCropAreaPixels(null);
+                setCrop(DEFAULT_CROP);
+                setMinZoom(DEFAULT_MIN_ZOOM);
+                setZoom(DEFAULT_MIN_ZOOM);
+                setErrorMessage(t("settings.avatarFileUnsupported"));
               }}
             />
           ) : null}
