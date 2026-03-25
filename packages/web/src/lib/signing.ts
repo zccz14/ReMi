@@ -2,7 +2,8 @@ import { base58Encode } from "./base58";
 
 export async function hashBody(body?: Uint8Array): Promise<string> {
   const data = body ?? new Uint8Array(0);
-  const hash = await crypto.subtle.digest("SHA-256", data);
+  const digestInput = new Uint8Array(data);
+  const hash = await crypto.subtle.digest("SHA-256", digestInput);
   return base58Encode(new Uint8Array(hash));
 }
 
