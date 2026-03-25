@@ -93,6 +93,60 @@ afterEach(() => {
 });
 
 describe("AvatarChatPage", () => {
+  it("uses owner profile data for the current user's message avatar", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    mockPublicProfileFetch(createProfile({ displayName: "Nova" }));
+
+    const get = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/profile") {
+        return Promise.resolve({
+          data: createProfile({ displayName: "Owner", hasAvatar: true, avatarVersion: 7 }),
+        });
+      }
+
+      if (path.includes("/reasoning/messages")) {
+        return Promise.resolve({
+          data: {
+            items: [{ id: 1, role: "user", content: "hello", created_at: 1 }],
+            hasMore: false,
+          },
+        });
+      }
+
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
+        <Route path="/profile/:pubKey" element={<div>profile-route</div>} />
+      </Routes>,
+      {
+        route: "/chat/abcdef1234567890",
+        authState: {
+          apiClient: {
+            get,
+            post: vi.fn(),
+            put: vi.fn(),
+            del: vi.fn(),
+            streamPost: vi.fn(),
+            ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+          } as any,
+        },
+      },
+    );
+
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "Owner" })).toHaveAttribute(
+      "src",
+      `${API_BASE}/api/public/mock-public-key/profile/avatar?v=7`,
+    );
+  });
+
   it("shows public nickname and avatar in the chat header", async () => {
     mockPublicProfileFetch(
       createProfile({ displayName: "Nova", hasAvatar: true, avatarVersion: 3 }),
@@ -158,6 +212,10 @@ describe("AvatarChatPage", () => {
     );
 
     const get = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/profile") {
+        return Promise.resolve({ data: createProfile({ displayName: "Owner" }) });
+      }
+
       if (path.includes("firstpub1234567890")) {
         return Promise.resolve({
           data: {
@@ -257,7 +315,13 @@ describe("AvatarChatPage", () => {
         route: "/chat/firstpub1234567890",
         authState: {
           apiClient: {
-            get: vi.fn().mockResolvedValue({ data: { items: [], hasMore: false } }),
+            get: vi.fn((path: string) => {
+              if (path === "/api/mock-public-key/profile") {
+                return Promise.resolve({ data: createProfile({ displayName: "Owner" }) });
+              }
+
+              return Promise.resolve({ data: { items: [], hasMore: false } });
+            }),
             post: vi.fn(),
             put: vi.fn(),
             del: vi.fn(),

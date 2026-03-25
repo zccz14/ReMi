@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { FullScreenLayout } from "../components/layout/FullScreenLayout";
@@ -6,11 +6,15 @@ import { ChatView } from "../components/chat/ChatView";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
 import { useChat, type ChatConfig, type ChatMessage } from "../hooks/use-chat";
 import { useAuth } from "../hooks/use-auth";
+import { emptyPublicProfile, resolveProfileSummary } from "../lib/profile";
 
 export function RemiChatPage() {
   const { t } = useTranslation();
   const { apiClient, publicKey } = useAuth();
   const coldStartRef = useRef(false);
+  const [mySummary, setMySummary] = useState(() =>
+    resolveProfileSummary(publicKey, emptyPublicProfile),
+  );
 
   const config: ChatConfig = {
     loadMessages: async (params) => {
@@ -48,9 +52,39 @@ export function RemiChatPage() {
         coldStartRef.current = false;
         toast.error(err.message ?? "Failed to start interview");
       });
-  }, [chat.loaded, chat.messages.length]);
+  }, [apiClient, chat.loaded, chat.messages.length, chat.reload, chat.streaming]);
 
-  const myAvatar = <ChatAvatar pubKey={publicKey} size="sm" />;
+  useEffect(() => {
+    let active = true;
+
+    setMySummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+
+    void apiClient
+      .get<{ data: typeof emptyPublicProfile }>(apiClient.ownerPath("/profile"))
+      .then((res) => {
+        if (active) {
+          setMySummary(resolveProfileSummary(publicKey, res.data ?? emptyPublicProfile));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMySummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiClient, publicKey]);
+
+  const myAvatar = (
+    <ChatAvatar
+      pubKey={publicKey}
+      name={mySummary.displayName}
+      src={mySummary.avatarUrl ?? undefined}
+      size="sm"
+    />
+  );
   const theirAvatar = <ChatAvatar pubKey="remi" size="sm" />;
 
   return (

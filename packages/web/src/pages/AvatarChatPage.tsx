@@ -18,6 +18,8 @@ interface AvatarChatPageContentProps {
   apiClient: ReturnType<typeof useAuth>["apiClient"];
   counterpartName: string;
   counterpartAvatarUrl: string | null;
+  myName: string;
+  myAvatarUrl: string | null;
   navigateToProfile: () => void;
   placeholder: string;
 }
@@ -28,6 +30,8 @@ function AvatarChatPageContent({
   apiClient,
   counterpartName,
   counterpartAvatarUrl,
+  myName,
+  myAvatarUrl,
   navigateToProfile,
   placeholder,
 }: AvatarChatPageContentProps) {
@@ -52,7 +56,14 @@ function AvatarChatPageContent({
   };
 
   const chat = useChat(config);
-  const myAvatar = <ChatAvatar pubKey={publicKey} size="sm" />;
+  const myAvatar = (
+    <ChatAvatar
+      pubKey={publicKey}
+      name={myName}
+      src={myAvatarUrl ?? undefined}
+      size="sm"
+    />
+  );
   const theirAvatar = (
     <ChatAvatar
       pubKey={pubKey}
@@ -88,11 +99,18 @@ export function AvatarChatPage() {
   const [loadedSummary, setLoadedSummary] = useState(() =>
     resolveProfileSummary(pubKey ?? "", emptyPublicProfile),
   );
+  const [myLoadedSummary, setMyLoadedSummary] = useState(() =>
+    resolveProfileSummary(publicKey, emptyPublicProfile),
+  );
   const activePubKey = pubKey ?? "";
   const summary =
     loadedSummary.pubKey === activePubKey
       ? loadedSummary
       : resolveProfileSummary(activePubKey, emptyPublicProfile);
+  const mySummary =
+    myLoadedSummary.pubKey === publicKey
+      ? myLoadedSummary
+      : resolveProfileSummary(publicKey, emptyPublicProfile);
 
   useEffect(() => {
     setLoadedSummary(resolveProfileSummary(activePubKey, emptyPublicProfile));
@@ -113,6 +131,29 @@ export function AvatarChatPage() {
       active = false;
     };
   }, [activePubKey, pubKey]);
+
+  useEffect(() => {
+    let active = true;
+
+    setMyLoadedSummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+
+    void apiClient
+      .get<{ data: typeof emptyPublicProfile }>(apiClient.ownerPath("/profile"))
+      .then((res) => {
+        if (active) {
+          setMyLoadedSummary(resolveProfileSummary(publicKey, res.data ?? emptyPublicProfile));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMyLoadedSummary(resolveProfileSummary(publicKey, emptyPublicProfile));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiClient, publicKey]);
 
   const title = useMemo(
     () => (
@@ -139,6 +180,8 @@ export function AvatarChatPage() {
         apiClient={apiClient}
         counterpartName={summary.displayName}
         counterpartAvatarUrl={summary.avatarUrl}
+        myName={mySummary.displayName}
+        myAvatarUrl={mySummary.avatarUrl}
         navigateToProfile={() => navigate(`/profile/${pubKey}`)}
         placeholder={t("chat.placeholder")}
       />
