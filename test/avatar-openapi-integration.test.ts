@@ -11,6 +11,7 @@ import type {
   ChatOptions,
   ChatResponse,
 } from "../packages/server/src/llm/client.js";
+import type { EmbeddingClient } from "../packages/server/src/embedding/client.js";
 
 function createRecordingChatClient(options?: {
   responseText?: string;
@@ -67,6 +68,37 @@ function parseSseData(text: string) {
     .flat();
 }
 
+function createRecallAwareEmbeddingClient() {
+  let gate: Promise<void> | null = null;
+  let failRecall = false;
+
+  const client: EmbeddingClient = {
+    async embed(texts: string[]) {
+      if (gate) {
+        await gate;
+      }
+      if (failRecall) {
+        throw new Error("recall exploded");
+      }
+      return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+    },
+  };
+
+  return {
+    client,
+    blockRecall(nextGate: Promise<void>) {
+      gate = nextGate;
+    },
+    failRecall() {
+      failRecall = true;
+    },
+    clearRecallControls() {
+      gate = null;
+      failRecall = false;
+    },
+  };
+}
+
 describe("avatar openapi integration", () => {
   let tmpDir: string;
   let app: Hono;
@@ -117,6 +149,12 @@ describe("avatar openapi integration", () => {
       JSON.stringify({ question, answer, source: "manual" }),
     );
     expect(res.status).toBe(201);
+  }
+
+  async function seedOwnerAnchors(count: number) {
+    for (let index = 0; index < count; index += 1) {
+      await seedOwnerAnchor(`Question ${index}`, `Answer ${index}`);
+    }
   }
 
   beforeEach(async () => {
@@ -460,26 +498,28 @@ describe("avatar openapi integration", () => {
     expect(chunks[2]).toBe("[DONE]");
   });
 
-  it("POST /ai/v1/chat/completions starts SSE before the first upstream token arrives", async () => {
-    let releaseFirstToken!: () => void;
-    const firstTokenGate = new Promise<void>((resolve) => {
-      releaseFirstToken = resolve;
+  it("POST /ai/v1/chat/completions starts SSE before recall finishes", async () => {
+    let releaseRecall!: () => void;
+    const recallGate = new Promise<void>((resolve) => {
+      releaseRecall = resolve;
     });
+    const embedding = createRecallAwareEmbeddingClient();
     const recording = createRecordingChatClient({
       streamTokens: ["hello", " world"],
-      waitForFirstStreamToken: firstTokenGate,
     });
     const result = createApp({
       dataDir: tmpDir,
       embeddingDimensions: 4,
       chatClient: recording.client,
-      embeddingClient: null,
+      embeddingClient: embedding.client,
     });
     app = result.app;
     cleanup = () => result.connMgr.closeAll();
 
     await signedOwnerRequest("GET", `/api/${ownerPubKey}/health`);
+    await seedOwnerAnchors(21);
     const token = await createOwnerToken();
+    embedding.blockRecall(recallGate);
 
     const resPromise = app.request("/ai/v1/chat/completions", {
       method: "POST",
@@ -502,7 +542,7 @@ describe("avatar openapi integration", () => {
     const res = await resPromise;
     expect(res.headers.get("content-type")).toContain("text/event-stream");
 
-    releaseFirstToken();
+    releaseRecall();
 
     const chunks = parseSseData(await res.text());
     expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
@@ -511,6 +551,54 @@ describe("avatar openapi integration", () => {
     expect(JSON.parse(chunks[1] ?? "{}")).toMatchObject({
       choices: [{ delta: { content: "hello" }, finish_reason: null }],
     });
+  });
+
+  it("POST /ai/v1/chat/completions reports recall failures in-stream after SSE starts", async () => {
+    const embedding = createRecallAwareEmbeddingClient();
+    const recording = createRecordingChatClient();
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: recording.client,
+      embeddingClient: embedding.client,
+    });
+    app = result.app;
+    cleanup = () => result.connMgr.closeAll();
+
+    await signedOwnerRequest("GET", `/api/${ownerPubKey}/health`);
+    await seedOwnerAnchors(21);
+    const token = await createOwnerToken();
+    embedding.failRecall();
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.id}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const chunks = parseSseData(await res.text());
+
+    expect(chunks).toHaveLength(3);
+    expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
+      choices: [{ delta: { role: "assistant" }, finish_reason: null }],
+    });
+    expect(JSON.parse(chunks[1] ?? "{}")).toMatchObject({
+      error: {
+        code: "upstream_model_error",
+        message: "recall exploded",
+      },
+    });
+    expect(chunks[2]).toBe("[DONE]");
   });
 
   it("POST /ai/v1/chat/completions preserves platform avatar caller recall ordering", async () => {

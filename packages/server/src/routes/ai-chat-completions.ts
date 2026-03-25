@@ -168,20 +168,19 @@ export function aiChatCompletionsRoute(deps: {
 
     const id = createCompletionId();
     const created = Math.floor(Date.now() / 1000);
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn,
+      chatClient: deps.chatClient,
+      embeddingClient: deps.embeddingClient,
+    });
 
     try {
-      const runtime = new AvatarInferenceRuntime({
-        ownerConn,
-        chatClient: deps.chatClient,
-        embeddingClient: deps.embeddingClient,
-      });
-      const request = await runtime.createRequest({
-        avatarTarget: { publicKey: parsedModel.publicKey },
-        conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
-        stream: parsedBody.data.stream,
-      });
-
       if (!parsedBody.data.stream) {
+        const request = await runtime.createRequest({
+          avatarTarget: { publicKey: parsedModel.publicKey },
+          conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
+          stream: parsedBody.data.stream,
+        });
         const response = await runtime.run(request);
         return c.json({
           id,
@@ -205,7 +204,25 @@ export function aiChatCompletionsRoute(deps: {
 
       return streamSSE(c, async (stream) => {
         try {
+          await stream.writeSSE({
+            data: buildChunkData({
+              id,
+              created,
+              model: parsedBody.data.model,
+              event: { type: "message_start", message: { role: "assistant" } },
+            }),
+          });
+
+          const request = await runtime.createRequest({
+            avatarTarget: { publicKey: parsedModel.publicKey },
+            conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
+            stream: parsedBody.data.stream,
+          });
+
           for await (const event of runtime.runStream(request)) {
+            if (event.type === "message_start") {
+              continue;
+            }
             await stream.writeSSE({
               data: buildChunkData({
                 id,
