@@ -25,12 +25,15 @@ const EXPORT_SIZE = 512;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ZOOM = 3;
 const DEFAULT_MIN_ZOOM = 1;
-const DEFAULT_CROP_VIEWPORT_SIZE = 256;
+const DEFAULT_CROP_BOX_SIZE = 192;
+const CROP_BOX_SIZE = {
+  width: DEFAULT_CROP_BOX_SIZE,
+  height: DEFAULT_CROP_BOX_SIZE,
+} as const;
 
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
   const cropAreaPixelsRef = useRef<Area | null>(null);
-  const cropViewportRef = useRef<HTMLDivElement | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
   const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
@@ -126,14 +129,14 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
 
         <div className="space-y-4">
           <div
-            ref={cropViewportRef}
             data-testid="avatar-crop-surface"
-            className="relative h-64 w-64 overflow-hidden rounded-xl border border-border bg-muted/30"
+            className="relative flex h-64 w-64 items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/30"
           >
             {previewUrl ? (
               <Cropper
                 image={previewUrl}
                 crop={crop}
+                cropSize={CROP_BOX_SIZE}
                 zoom={clampedZoom}
                 minZoom={minZoom}
                 maxZoom={maxZoom}
@@ -166,12 +169,11 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
               className="hidden"
               onLoad={(event) => {
                 const target = event.currentTarget;
-                const cropViewportSize = getCropViewportSize(cropViewportRef.current);
                 const nextMinZoom = getMinZoomBaseline({
                   imageWidth: target.naturalWidth,
                   imageHeight: target.naturalHeight,
-                  cropWidth: cropViewportSize.width,
-                  cropHeight: cropViewportSize.height,
+                  cropWidth: CROP_BOX_SIZE.width,
+                  cropHeight: CROP_BOX_SIZE.height,
                 });
 
                 setExportSource(target);
@@ -218,13 +220,6 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       </DialogContent>
     </Dialog>
   );
-}
-
-function getCropViewportSize(element: HTMLElement | null) {
-  return {
-    width: element?.clientWidth || DEFAULT_CROP_VIEWPORT_SIZE,
-    height: element?.clientHeight || DEFAULT_CROP_VIEWPORT_SIZE,
-  };
 }
 
 function getMinZoomBaseline({

@@ -18,6 +18,7 @@ type MockCropperProps = {
   zoom: number;
   minZoom?: number;
   maxZoom?: number;
+  cropSize?: { width: number; height: number };
   objectFit?: string;
   onCropChange: (crop: { x: number; y: number }) => void;
   onZoomChange: (zoom: number) => void;
@@ -26,7 +27,6 @@ type MockCropperProps = {
 
 let latestCropperProps: MockCropperProps | null = null;
 let pendingCropCompleteArea: CropperArea | null = null;
-let loadedImageDimensions: { width: number; height: number } | null = null;
 
 vi.mock("react-easy-crop", () => ({
   default: (props: MockCropperProps) => {
@@ -40,6 +40,8 @@ vi.mock("react-easy-crop", () => ({
           data-zoom={String(props.zoom)}
           data-min-zoom={String(props.minZoom ?? "")}
           data-max-zoom={String(props.maxZoom ?? "")}
+          data-crop-width={String(props.cropSize?.width ?? "")}
+          data-crop-height={String(props.cropSize?.height ?? "")}
           data-object-fit={props.objectFit ?? ""}
         />
         <button
@@ -62,7 +64,6 @@ afterEach(() => {
   cleanup();
   latestCropperProps = null;
   pendingCropCompleteArea = null;
-  loadedImageDimensions = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -91,7 +92,7 @@ describe("AvatarCropDialog", () => {
     expect(screen.getByRole("button", { name: "common.cancel" })).toBeInTheDocument();
   });
 
-  it("derives the min zoom baseline from the landscape image and only becomes ready after source load plus first crop result", () => {
+  it("keeps a larger viewport than the square crop box and derives min zoom from the smaller landscape crop box", () => {
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
 
     stubPreviewUrl();
@@ -110,13 +111,17 @@ describe("AvatarCropDialog", () => {
 
     loadPreview({ width: 320, height: 220 });
 
-    const minZoomBaseline = 256 / 220;
+    const minZoomBaseline = 192 / 220;
 
     expect(Number(slider.min)).toBeCloseTo(minZoomBaseline, 5);
     expect(Number(slider.value)).toBeCloseTo(minZoomBaseline, 5);
     expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
     expect(latestCropperProps?.minZoom).toBeCloseTo(minZoomBaseline, 5);
     expect(latestCropperProps?.zoom).toBeCloseTo(minZoomBaseline, 5);
+    expect(latestCropperProps?.cropSize).toEqual({ width: 192, height: 192 });
+    expect(screen.getByTestId("avatar-crop-surface")).toHaveClass("h-64", "w-64");
+    expect(screen.getByTestId("avatar-cropper")).toHaveAttribute("data-crop-width", "192");
+    expect(screen.getByTestId("avatar-cropper")).toHaveAttribute("data-crop-height", "192");
     expect(latestCropperProps?.objectFit).toBe("contain");
     expect(confirmButton).toBeDisabled();
 
@@ -125,32 +130,7 @@ describe("AvatarCropDialog", () => {
     expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
   });
 
-  it("derives the min zoom baseline from the portrait image", () => {
-    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
-
-    stubPreviewUrl();
-
-    renderWithProviders(
-      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
-
-    loadPreview({ width: 220, height: 320 });
-
-    const minZoomBaseline = 256 / 220;
-
-    expect(Number(slider.min)).toBeCloseTo(minZoomBaseline, 5);
-    expect(Number(slider.value)).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
-    expect(latestCropperProps?.minZoom).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.zoom).toBeCloseTo(minZoomBaseline, 5);
-    expect(latestCropperProps?.objectFit).toBe("contain");
-  });
-
-  it("changes zoom state from the slider and confirms using the latest cropper-derived croppedAreaPixels", async () => {
+  it("derives the min zoom baseline from the portrait crop box and confirms using emitted portrait pixels", async () => {
     const user = userEvent.setup();
     const file = new File(["avatar"], "avatar.png", { type: "image/png" });
     const exportedBlob = new Blob(["webp"], { type: "image/webp" });
@@ -163,38 +143,74 @@ describe("AvatarCropDialog", () => {
       <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
     );
 
+    const slider = screen.getByRole("slider", {
+      name: "settings.avatarCropZoom",
+    }) as HTMLInputElement;
+
+    loadPreview({ width: 220, height: 320 });
+
+    const minZoomBaseline = 192 / 220;
+    const portraitArea = { x: 14, y: 28, width: 132, height: 132 };
+
+    expect(Number(slider.min)).toBeCloseTo(minZoomBaseline, 5);
+    expect(Number(slider.value)).toBeCloseTo(minZoomBaseline, 5);
+    expect(latestCropperProps?.crop).toEqual({ x: 0, y: 0 });
+    expect(latestCropperProps?.minZoom).toBeCloseTo(minZoomBaseline, 5);
+    expect(latestCropperProps?.zoom).toBeCloseTo(minZoomBaseline, 5);
+    expect(latestCropperProps?.cropSize).toEqual({ width: 192, height: 192 });
+    expect(latestCropperProps?.objectFit).toBe("contain");
+
+    emitCropComplete(portraitArea);
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
+    expect(exportSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cropAreaPixels: portraitArea,
+      }),
+    );
+    expect(onConfirm).toHaveBeenCalledWith(exportedBlob);
+  });
+
+  it("changes zoom/crop state and confirms using the latest emitted croppedAreaPixels", async () => {
+    const user = userEvent.setup();
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
+    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
+    const onConfirm = vi.fn();
+    const initialArea = { x: 20, y: 30, width: 180, height: 180 };
+    const zoomedArea = { x: 40, y: 50, width: 140, height: 140 };
+    const movedArea = { x: 55, y: 66, width: 140, height: 140 };
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={onConfirm} onCancel={vi.fn()} />,
+    );
+
     loadPreview({ width: 800, height: 400 });
-    emitDerivedCropComplete();
+    emitCropComplete(initialArea);
 
     const slider = screen.getByRole("slider", {
       name: "settings.avatarCropZoom",
     }) as HTMLInputElement;
-    const initialExportArea = getLatestDerivedCropArea();
 
     fireEvent.change(slider, { target: { value: "1.75" } });
     expect(latestCropperProps?.zoom).toBe(1.75);
 
-    emitDerivedCropComplete();
-    const zoomedExportArea = getLatestDerivedCropArea();
-
-    expect(zoomedExportArea.width).toBeLessThan(initialExportArea.width);
-    expect(zoomedExportArea.height).toBeLessThan(initialExportArea.height);
+    emitCropComplete(zoomedArea);
 
     emitCropChange({ x: 55, y: 66 });
     await waitFor(() => expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 }));
 
-    emitDerivedCropComplete();
-    const movedExportArea = getLatestDerivedCropArea();
-
-    expect(movedExportArea.x).not.toBe(zoomedExportArea.x);
-    expect(movedExportArea.y).not.toBe(zoomedExportArea.y);
+    emitCropComplete(movedArea);
 
     await user.click(screen.getByRole("button", { name: "common.confirm" }));
 
     await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
     expect(exportSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        cropAreaPixels: movedExportArea,
+        cropAreaPixels: movedArea,
         size: 512,
         maxBytes: 2 * 1024 * 1024,
       }),
@@ -381,7 +397,6 @@ function loadPreview({ width, height }: { width: number; height: number }) {
 
   Object.defineProperty(preview, "naturalWidth", { configurable: true, value: width });
   Object.defineProperty(preview, "naturalHeight", { configurable: true, value: height });
-  loadedImageDimensions = { width, height };
   fireEvent.load(preview);
 
   return preview as HTMLImageElement;
@@ -394,33 +409,4 @@ function emitCropComplete(area: CropperArea) {
 
 function emitCropChange(crop: { x: number; y: number }) {
   latestCropperProps?.onCropChange(crop);
-}
-
-function emitDerivedCropComplete() {
-  emitCropComplete(getLatestDerivedCropArea());
-}
-
-function getLatestDerivedCropArea(): CropperArea {
-  if (!latestCropperProps || !loadedImageDimensions) {
-    throw new Error("Cropper props or loaded image dimensions are unavailable");
-  }
-
-  const viewportSize = 256;
-  const minDimension = Math.min(loadedImageDimensions.width, loadedImageDimensions.height);
-  const visibleSize = Math.min(minDimension, viewportSize / latestCropperProps.zoom);
-  const maxX = loadedImageDimensions.width - visibleSize;
-  const maxY = loadedImageDimensions.height - visibleSize;
-  const centeredX = maxX / 2;
-  const centeredY = maxY / 2;
-
-  return {
-    x: clamp(Math.round(centeredX + latestCropperProps.crop.x), 0, Math.round(maxX)),
-    y: clamp(Math.round(centeredY + latestCropperProps.crop.y), 0, Math.round(maxY)),
-    width: Math.round(visibleSize),
-    height: Math.round(visibleSize),
-  };
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
 }
