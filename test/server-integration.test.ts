@@ -12,21 +12,33 @@ describe("server integration", () => {
   let cleanup: () => void;
   let privKey: string;
   let pubKey: string;
+  let visitorPrivKey: string;
+  let visitorPubKey: string;
 
-  async function signedRequest(method: string, urlPath: string, body?: string) {
+  async function signedRequestWithKey(
+    signerPrivKey: string,
+    signerPubKey: string,
+    method: string,
+    urlPath: string,
+    body?: string,
+  ) {
     const timestamp = String(Date.now());
     const bodyBytes = body ? new TextEncoder().encode(body) : undefined;
     const sts = await buildStringToSign(method, urlPath, timestamp, bodyBytes);
-    const signature = await sign(new TextEncoder().encode(sts), privKey);
+    const signature = await sign(new TextEncoder().encode(sts), signerPrivKey);
 
     const headers: Record<string, string> = {
-      "X-Public-Key": pubKey,
+      "X-Public-Key": signerPubKey,
       "X-Timestamp": timestamp,
       "X-Signature": signature,
     };
     if (body) headers["Content-Type"] = "application/json";
 
     return app.request(urlPath, { method, headers, body: body ?? undefined });
+  }
+
+  async function signedRequest(method: string, urlPath: string, body?: string) {
+    return signedRequestWithKey(privKey, pubKey, method, urlPath, body);
   }
 
   beforeEach(() => {
@@ -37,6 +49,8 @@ describe("server integration", () => {
     cleanup = () => result.connMgr.closeAll();
     privKey = generateKeyPair();
     pubKey = getPublicKey(privKey);
+    visitorPrivKey = generateKeyPair();
+    visitorPubKey = getPublicKey(visitorPrivKey);
   });
 
   afterEach(() => {
@@ -139,6 +153,63 @@ describe("server integration", () => {
     expect(listAfterDeleteRes.status).toBe(200);
     const listAfterDeleteJson = await listAfterDeleteRes.json();
     expect(listAfterDeleteJson.items).toHaveLength(0);
+  });
+
+  it("signed visitor is forbidden from api token create before validation", async () => {
+    const seedRes = await signedRequest(
+      "POST",
+      `/api/${pubKey}/api-tokens`,
+      JSON.stringify({ note: "Seed token" }),
+    );
+    expect(seedRes.status).toBe(201);
+
+    const res = await signedRequestWithKey(
+      visitorPrivKey,
+      visitorPubKey,
+      "POST",
+      `/api/${pubKey}/api-tokens`,
+      JSON.stringify({}),
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "FORBIDDEN",
+      message: "Owner access required",
+    });
+  });
+
+  it("signed visitor is forbidden from api token list and delete", async () => {
+    const createRes = await signedRequest(
+      "POST",
+      `/api/${pubKey}/api-tokens`,
+      JSON.stringify({ note: "Owner token" }),
+    );
+    expect(createRes.status).toBe(201);
+    const createJson = await createRes.json();
+
+    const listRes = await signedRequestWithKey(
+      visitorPrivKey,
+      visitorPubKey,
+      "GET",
+      `/api/${pubKey}/api-tokens`,
+    );
+    expect(listRes.status).toBe(403);
+    await expect(listRes.json()).resolves.toEqual({
+      error: "FORBIDDEN",
+      message: "Owner access required",
+    });
+
+    const deleteRes = await signedRequestWithKey(
+      visitorPrivKey,
+      visitorPubKey,
+      "DELETE",
+      `/api/${pubKey}/api-tokens/${createJson.id}`,
+    );
+    expect(deleteRes.status).toBe(403);
+    await expect(deleteRes.json()).resolves.toEqual({
+      error: "FORBIDDEN",
+      message: "Owner access required",
+    });
   });
 
   it("unauthenticated request returns 401", async () => {

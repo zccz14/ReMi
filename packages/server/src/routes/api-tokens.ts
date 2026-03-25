@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { createMiddleware } from "hono/factory";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
@@ -38,18 +39,21 @@ function getPubKey(c: Context) {
 
 export function apiTokensRoutes() {
   const routes = new Hono();
+  const requireOwnerMiddleware = createMiddleware(async (c, next) => {
+    const forbidden = requireOwner(c);
+    if (forbidden) return forbidden;
+    await next();
+  });
 
   routes.post(
     "/",
+    requireOwnerMiddleware,
     zValidator("json", createApiTokenSchema, (result, c) => {
       if (!result.success) {
         return c.json({ error: "VALIDATION_ERROR", message: result.error.message }, 422);
       }
     }),
     (c) => {
-      const forbidden = requireOwner(c);
-      if (forbidden) return forbidden;
-
       const conn = c.get("connMgr").getConnection(getPubKey(c));
       const createdAt = new Date().toISOString();
       const id = generateApiTokenId();
