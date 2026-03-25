@@ -34,6 +34,7 @@ const CROP_BOX_SIZE = {
 export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
   const { t } = useTranslation();
   const cropAreaPixelsRef = useRef<Area | null>(null);
+  const hasUserInteractedRef = useRef(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [exportSource, setExportSource] = useState<HTMLImageElement | null>(null);
   const [crop, setCrop] = useState<Point>(DEFAULT_CROP);
@@ -51,6 +52,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
     setMinZoom(DEFAULT_MIN_ZOOM);
     setCropAreaPixels(null);
     cropAreaPixelsRef.current = null;
+    hasUserInteractedRef.current = false;
     setErrorMessage(null);
 
     if (!file || !open) {
@@ -145,10 +147,12 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
                 objectFit="contain"
                 restrictPosition
                 onCropChange={(nextCrop) => {
+                  hasUserInteractedRef.current = true;
                   setErrorMessage(null);
                   setCrop(nextCrop);
                 }}
                 onZoomChange={(nextZoom) => {
+                  hasUserInteractedRef.current = true;
                   setErrorMessage(null);
                   setZoom(nextZoom);
                 }}
@@ -179,9 +183,12 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
 
                 setErrorMessage(null);
                 setExportSource(target);
-                setCrop(DEFAULT_CROP);
                 setMinZoom(nextMinZoom);
-                setZoom(nextMinZoom);
+
+                if (!hasUserInteractedRef.current) {
+                  setCrop(DEFAULT_CROP);
+                  setZoom(nextMinZoom);
+                }
               }}
               onError={() => {
                 cropAreaPixelsRef.current = null;
@@ -207,6 +214,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
               step="0.01"
               value={clampedZoom}
               onChange={(event) => {
+                hasUserInteractedRef.current = true;
                 setErrorMessage(null);
                 setZoom(Number(event.target.value));
               }}

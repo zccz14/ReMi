@@ -218,6 +218,41 @@ describe("AvatarCropDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith(exportedBlob);
   });
 
+  it("preserves user-selected crop and zoom when the export image finishes loading late", async () => {
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    const initialArea = { x: 20, y: 30, width: 180, height: 180 };
+    const editedArea = { x: 55, y: 66, width: 140, height: 140 };
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    const slider = screen.getByRole("slider", {
+      name: "settings.avatarCropZoom",
+    }) as HTMLInputElement;
+
+    emitCropComplete(initialArea);
+    fireEvent.change(slider, { target: { value: "1.75" } });
+    emitCropChange({ x: 55, y: 66 });
+    emitCropComplete(editedArea);
+
+    await waitFor(() => {
+      expect(latestCropperProps?.zoom).toBe(1.75);
+      expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 });
+      expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
+    });
+
+    loadPreview({ width: 800, height: 400 });
+
+    await waitFor(() => {
+      expect(latestCropperProps?.zoom).toBe(1.75);
+      expect(latestCropperProps?.crop).toEqual({ x: 55, y: 66 });
+      expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    });
+  });
+
   it("resets confirm readiness on dialog reopen and file change", () => {
     const firstFile = new File(["avatar"], "avatar.png", { type: "image/png" });
     const secondFile = new File(["avatar-2"], "avatar-2.png", { type: "image/png" });
