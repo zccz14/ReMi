@@ -253,6 +253,37 @@ describe("AvatarCropDialog", () => {
     });
   });
 
+  it("caps the exported square to the source image short edge when the preview loads after interaction", async () => {
+    const user = userEvent.setup();
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    const exportedBlob = new Blob(["webp"], { type: "image/webp" });
+    const exportSpy = vi.spyOn(avatarEditor, "exportCroppedAvatar").mockResolvedValue(exportedBlob);
+
+    stubPreviewUrl();
+
+    renderWithProviders(
+      <AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    emitCropChange({ x: 12, y: 18 });
+    emitCropComplete({ x: 12, y: 18, width: 192, height: 192 });
+
+    loadPreview({ width: 320, height: 120 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
+    expect(exportSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cropAreaPixels: expect.objectContaining({ width: 120, height: 120 }),
+      }),
+    );
+  });
+
   it("resets confirm readiness on dialog reopen and file change", () => {
     const firstFile = new File(["avatar"], "avatar.png", { type: "image/png" });
     const secondFile = new File(["avatar-2"], "avatar-2.png", { type: "image/png" });

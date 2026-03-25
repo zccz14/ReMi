@@ -87,6 +87,14 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       return;
     }
 
+    const boundedCropAreaPixels = clampCropAreaToImageBounds({
+      cropAreaPixels: latestCropAreaPixels,
+      imageWidth: exportSource.naturalWidth,
+      imageHeight: exportSource.naturalHeight,
+    });
+
+    cropAreaPixelsRef.current = boundedCropAreaPixels;
+    setCropAreaPixels(boundedCropAreaPixels);
     setErrorMessage(null);
     setIsSubmitting(true);
 
@@ -96,7 +104,7 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
       try {
         blob = await exportCroppedAvatar({
           image: exportSource,
-          cropAreaPixels: latestCropAreaPixels,
+          cropAreaPixels: boundedCropAreaPixels,
           size: EXPORT_SIZE,
           maxBytes: MAX_UPLOAD_BYTES,
         });
@@ -181,6 +189,16 @@ export function AvatarCropDialog({ open, file, onConfirm, onCancel }: Props) {
                   cropHeight: CROP_BOX_SIZE.height,
                 });
 
+                const nextCropAreaPixels = cropAreaPixelsRef.current
+                  ? clampCropAreaToImageBounds({
+                      cropAreaPixels: cropAreaPixelsRef.current,
+                      imageWidth: target.naturalWidth,
+                      imageHeight: target.naturalHeight,
+                    })
+                  : null;
+
+                cropAreaPixelsRef.current = nextCropAreaPixels;
+                setCropAreaPixels(nextCropAreaPixels);
                 setErrorMessage(null);
                 setExportSource(target);
                 setMinZoom(nextMinZoom);
@@ -257,6 +275,29 @@ function getMinZoomBaseline({
   }
 
   return Math.max(cropWidth / imageWidth, cropHeight / imageHeight);
+}
+
+function clampCropAreaToImageBounds({
+  cropAreaPixels,
+  imageWidth,
+  imageHeight,
+}: {
+  cropAreaPixels: Area;
+  imageWidth: number;
+  imageHeight: number;
+}) {
+  if (imageWidth <= 0 || imageHeight <= 0) {
+    return cropAreaPixels;
+  }
+
+  const sideLength = Math.min(cropAreaPixels.width, cropAreaPixels.height, imageWidth, imageHeight);
+
+  return {
+    x: clamp(cropAreaPixels.x, 0, Math.max(imageWidth - sideLength, 0)),
+    y: clamp(cropAreaPixels.y, 0, Math.max(imageHeight - sideLength, 0)),
+    width: sideLength,
+    height: sideLength,
+  };
 }
 
 function clamp(value: number, min: number, max: number) {
