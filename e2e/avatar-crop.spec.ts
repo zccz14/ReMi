@@ -11,6 +11,11 @@ type ImageFixtureOptions = {
   name: string;
 };
 
+type CropDragDirection = {
+  x: -1 | 1;
+  y: -1 | 1;
+};
+
 const QUADRANT_COLORS = {
   topLeft: [220, 60, 60] as const,
   topRight: [60, 190, 90] as const,
@@ -38,15 +43,16 @@ test.describe("avatar crop flow", () => {
     await page.goto("/settings");
     await page.waitForURL(/\/settings/);
 
-    await uploadAvatarFixture(page, { width: 480, height: 240, name: "landscape.png" });
+    const fixture = { width: 480, height: 240, name: "landscape.png" } as const;
+    await uploadAvatarFixture(page, fixture);
     await setZoomToMax(page);
-    await dragCrop(page, { dx: 88, dy: 88 });
+    await dragCrop(page, { x: 1, y: 1 });
     await page.getByRole("button", { name: /confirm|确认/i }).click();
 
     const uploaded = await upload.finished;
     expect(uploaded.contentType).toBe("image/webp");
 
-    const decoded = await decodeUploadedWebp(page, uploaded.bytes);
+    const decoded = await decodeUploadedWebp(page, uploaded.bytes, fixture);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
     expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
@@ -64,15 +70,16 @@ test.describe("avatar crop flow", () => {
     await page.goto("/settings");
     await page.waitForURL(/\/settings/);
 
-    await uploadAvatarFixture(page, { width: 240, height: 480, name: "portrait.png" });
+    const fixture = { width: 240, height: 480, name: "portrait.png" } as const;
+    await uploadAvatarFixture(page, fixture);
     await setZoomToMax(page);
-    await dragCrop(page, { dx: -88, dy: -88 });
+    await dragCrop(page, { x: -1, y: -1 });
     await page.getByRole("button", { name: /confirm|确认/i }).click();
 
     const uploaded = await upload.finished;
     expect(uploaded.contentType).toBe("image/webp");
 
-    const decoded = await decodeUploadedWebp(page, uploaded.bytes);
+    const decoded = await decodeUploadedWebp(page, uploaded.bytes, fixture);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
     expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
@@ -90,13 +97,14 @@ test.describe("avatar crop flow", () => {
     await page.goto("/settings");
     await page.waitForURL(/\/settings/);
 
-    await uploadAvatarFixture(page, { width: 40, height: 40, name: "tiny.png" });
+    const fixture = { width: 40, height: 40, name: "tiny.png" } as const;
+    await uploadAvatarFixture(page, fixture);
     await page.getByRole("button", { name: /confirm|确认/i }).click();
 
     const uploaded = await upload.finished;
     expect(uploaded.contentType).toBe("image/webp");
 
-    const decoded = await decodeUploadedWebp(page, uploaded.bytes);
+    const decoded = await decodeUploadedWebp(page, uploaded.bytes, fixture);
     expect(decoded.width).toBe(512);
     expect(decoded.height).toBe(512);
     expectColor(decoded.samples.topLeftMarker, CORNER_MARKERS.topLeft, 32);
@@ -245,7 +253,7 @@ async function setZoomToMax(page: Page) {
   }, max);
 }
 
-async function dragCrop(page: Page, { dx, dy }: { dx: number; dy: number }) {
+async function dragCrop(page: Page, direction: CropDragDirection) {
   const cropper = page.locator(".reactEasyCrop_Container");
   const box = await cropper.boundingBox();
   if (!box) {
@@ -254,47 +262,69 @@ async function dragCrop(page: Page, { dx, dy }: { dx: number; dy: number }) {
 
   const startX = box.x + box.width / 2;
   const startY = box.y + box.height / 2;
+  const dragDistance = Math.max(48, Math.round(Math.min(box.width, box.height) * 0.34));
 
   await page.mouse.move(startX, startY);
   await page.mouse.down();
-  await page.mouse.move(startX + dx, startY + dy, { steps: 16 });
+  await page.mouse.move(startX + dragDistance * direction.x, startY + dragDistance * direction.y, {
+    steps: 16,
+  });
   await page.mouse.up();
 }
 
-async function decodeUploadedWebp(page: Page, bytes: number[]): Promise<DecodedUpload> {
-  return page.evaluate(async (uploadedBytes) => {
-    const blob = new Blob([new Uint8Array(uploadedBytes)], { type: "image/webp" });
-    const bitmap = await createImageBitmap(blob);
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Missing 2d context");
-    }
+async function decodeUploadedWebp(
+  page: Page,
+  bytes: number[],
+  fixture: ImageFixtureOptions,
+): Promise<DecodedUpload> {
+  return page.evaluate(
+    async ({ uploadedBytes, fixture }) => {
+      const blob = new Blob([new Uint8Array(uploadedBytes)], { type: "image/webp" });
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Missing 2d context");
+      }
 
-    context.drawImage(bitmap, 0, 0);
+      context.drawImage(bitmap, 0, 0);
 
-    const sampleAt = (x: number, y: number) => {
-      const pixel = context.getImageData(x, y, 1, 1).data;
-      return [pixel[0], pixel[1], pixel[2], pixel[3]] as [number, number, number, number];
-    };
+      const sampleAt = (x: number, y: number) => {
+        const pixel = context.getImageData(x, y, 1, 1).data;
+        return [pixel[0], pixel[1], pixel[2], pixel[3]] as [number, number, number, number];
+      };
 
-    const edge = 48;
-    const center = Math.floor(bitmap.width / 2);
+      const sourceMarkerSize = Math.max(
+        8,
+        Math.round(Math.min(fixture.width, fixture.height) * 0.18),
+      );
+      const markerRatio = sourceMarkerSize / Math.min(fixture.width, fixture.height);
+      const markerSize = Math.max(
+        8,
+        Math.round(Math.min(bitmap.width, bitmap.height) * markerRatio),
+      );
+      const markerSampleOffset = Math.max(1, Math.floor(markerSize / 2));
+      const center = Math.floor(bitmap.width / 2);
 
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      samples: {
-        topLeftMarker: sampleAt(edge, edge),
-        topRightMarker: sampleAt(bitmap.width - edge, edge),
-        bottomLeftMarker: sampleAt(edge, bitmap.height - edge),
-        bottomRightMarker: sampleAt(bitmap.width - edge, bitmap.height - edge),
-        center: sampleAt(center, center),
-      },
-    };
-  }, bytes);
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        samples: {
+          topLeftMarker: sampleAt(markerSampleOffset, markerSampleOffset),
+          topRightMarker: sampleAt(bitmap.width - markerSampleOffset, markerSampleOffset),
+          bottomLeftMarker: sampleAt(markerSampleOffset, bitmap.height - markerSampleOffset),
+          bottomRightMarker: sampleAt(
+            bitmap.width - markerSampleOffset,
+            bitmap.height - markerSampleOffset,
+          ),
+          center: sampleAt(center, center),
+        },
+      };
+    },
+    { uploadedBytes: bytes, fixture },
+  );
 }
 
 function expectColor(
