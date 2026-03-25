@@ -107,6 +107,40 @@ describe("server integration", () => {
     expect(delRes.status).toBe(204);
   });
 
+  it("owner api token create list delete lifecycle", async () => {
+    const createRes = await signedRequest(
+      "POST",
+      `/api/${pubKey}/api-tokens`,
+      JSON.stringify({ note: "Cursor local" }),
+    );
+    expect(createRes.status).toBe(201);
+    const createJson = await createRes.json();
+    expect(createJson).toMatchObject({
+      id: expect.stringMatching(/^sk-/),
+      note: "Cursor local",
+      createdAt: expect.any(String),
+    });
+
+    const listRes = await signedRequest("GET", `/api/${pubKey}/api-tokens`);
+    expect(listRes.status).toBe(200);
+    const listJson = await listRes.json();
+    expect(listJson.items).toHaveLength(1);
+    expect(listJson.items[0]).toMatchObject({
+      id: createJson.id,
+      tokenPrefix: `${createJson.id.slice(0, 6)}...`,
+      note: "Cursor local",
+      createdAt: createJson.createdAt,
+    });
+
+    const deleteRes = await signedRequest("DELETE", `/api/${pubKey}/api-tokens/${createJson.id}`);
+    expect(deleteRes.status).toBe(204);
+
+    const listAfterDeleteRes = await signedRequest("GET", `/api/${pubKey}/api-tokens`);
+    expect(listAfterDeleteRes.status).toBe(200);
+    const listAfterDeleteJson = await listAfterDeleteRes.json();
+    expect(listAfterDeleteJson.items).toHaveLength(0);
+  });
+
   it("unauthenticated request returns 401", async () => {
     const res = await app.request(`/api/${pubKey}/anchors`);
     expect(res.status).toBe(401);

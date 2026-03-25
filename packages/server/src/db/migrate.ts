@@ -68,6 +68,12 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id TEXT PRIMARY KEY,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_messages_shared_message_id
       ON direct_messages(shared_message_id);
 

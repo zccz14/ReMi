@@ -64,3 +64,9 @@ export const publicProfileAvatar = sqliteTable("public_profile_avatar", {
   blob: blob("blob", { mode: "buffer" }).notNull(),
   updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });
+
+export const apiTokens = sqliteTable("api_tokens", {
+  id: text("id").primaryKey(),
+  note: text("note").notNull(),
+  createdAt: text("created_at").notNull(),
+});
