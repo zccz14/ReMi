@@ -17,6 +17,7 @@ function createRecordingChatClient(options?: {
   streamTokens?: string[];
   failChat?: boolean;
   failStream?: boolean;
+  waitForFirstStreamToken?: Promise<void>;
 }) {
   const recordedCalls: ChatMessage[][] = [];
 
@@ -36,6 +37,9 @@ function createRecordingChatClient(options?: {
 
     async *chatStream(request: ChatOptions) {
       recordedCalls.push(request.messages);
+      if (options?.waitForFirstStreamToken) {
+        await options.waitForFirstStreamToken;
+      }
       if (options?.failStream) {
         throw new Error("upstream exploded");
       }
@@ -413,7 +417,7 @@ describe("avatar openapi integration", () => {
     });
   });
 
-  it("POST /ai/v1/chat/completions returns 502 before starting SSE when the upstream stream fails immediately", async () => {
+  it("POST /ai/v1/chat/completions keeps SSE open when the upstream stream fails before the first token", async () => {
     const recording = createRecordingChatClient({ failStream: true });
     const result = createApp({
       dataDir: tmpDir,
@@ -440,10 +444,72 @@ describe("avatar openapi integration", () => {
       }),
     });
 
-    expect(res.status).toBe(502);
-    expect(res.headers.get("content-type")).not.toContain("text/event-stream");
-    await expect(res.json()).resolves.toMatchObject({
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const body = await res.text();
+    const chunks = parseSseData(body);
+
+    expect(chunks).toHaveLength(3);
+    expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
+      choices: [{ delta: { role: "assistant" }, finish_reason: null }],
+    });
+    await expect(JSON.parse(chunks[1] ?? "{}")).toMatchObject({
       error: { code: "upstream_model_error" },
+    });
+    expect(chunks[2]).toBe("[DONE]");
+  });
+
+  it("POST /ai/v1/chat/completions starts SSE before the first upstream token arrives", async () => {
+    let releaseFirstToken!: () => void;
+    const firstTokenGate = new Promise<void>((resolve) => {
+      releaseFirstToken = resolve;
+    });
+    const recording = createRecordingChatClient({
+      streamTokens: ["hello", " world"],
+      waitForFirstStreamToken: firstTokenGate,
+    });
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: recording.client,
+      embeddingClient: null,
+    });
+    app = result.app;
+    cleanup = () => result.connMgr.closeAll();
+
+    await signedOwnerRequest("GET", `/api/${ownerPubKey}/health`);
+    const token = await createOwnerToken();
+
+    const resPromise = app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.id}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true,
+      }),
+    });
+
+    await expect(resPromise).resolves.toMatchObject({
+      status: 200,
+      headers: expect.objectContaining({}),
+    });
+
+    const res = await resPromise;
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    releaseFirstToken();
+
+    const chunks = parseSseData(await res.text());
+    expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
+      choices: [{ delta: { role: "assistant" }, finish_reason: null }],
+    });
+    expect(JSON.parse(chunks[1] ?? "{}")).toMatchObject({
+      choices: [{ delta: { content: "hello" }, finish_reason: null }],
     });
   });
 

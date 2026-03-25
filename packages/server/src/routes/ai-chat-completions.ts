@@ -62,6 +62,53 @@ function buildStreamChunk(params: {
   });
 }
 
+function buildChunkData(params: {
+  id: string;
+  created: number;
+  model: string;
+  event:
+    | {
+        type: "message_start";
+        message: { role: string };
+      }
+    | {
+        type: "text_delta";
+        text: string;
+      }
+    | {
+        type: "message_end";
+        finishReason: string;
+      };
+}) {
+  if (params.event.type === "message_start") {
+    return buildStreamChunk({
+      id: params.id,
+      created: params.created,
+      model: params.model,
+      delta: { role: params.event.message.role },
+      finishReason: null,
+    });
+  }
+
+  if (params.event.type === "text_delta") {
+    return buildStreamChunk({
+      id: params.id,
+      created: params.created,
+      model: params.model,
+      delta: { content: params.event.text },
+      finishReason: null,
+    });
+  }
+
+  return buildStreamChunk({
+    id: params.id,
+    created: params.created,
+    model: params.model,
+    delta: {},
+    finishReason: params.event.finishReason,
+  });
+}
+
 export function aiChatCompletionsRoute(deps: {
   connMgr: ConnectionManager;
   chatClient: ChatClient | null;
@@ -156,74 +203,15 @@ export function aiChatCompletionsRoute(deps: {
         });
       }
 
-      const events = runtime.runStream(request);
-      const firstEvent = await events.next();
-
       return streamSSE(c, async (stream) => {
         try {
-          if (!firstEvent.done) {
+          for await (const event of runtime.runStream(request)) {
             await stream.writeSSE({
-              data:
-                firstEvent.value.type === "message_start"
-                  ? buildStreamChunk({
-                      id,
-                      created,
-                      model: parsedBody.data.model,
-                      delta: { role: firstEvent.value.message.role },
-                      finishReason: null,
-                    })
-                  : firstEvent.value.type === "text_delta"
-                    ? buildStreamChunk({
-                        id,
-                        created,
-                        model: parsedBody.data.model,
-                        delta: { content: firstEvent.value.text },
-                        finishReason: null,
-                      })
-                    : buildStreamChunk({
-                        id,
-                        created,
-                        model: parsedBody.data.model,
-                        delta: {},
-                        finishReason: firstEvent.value.finishReason,
-                      }),
-            });
-          }
-
-          for await (const event of events) {
-            if (event.type === "message_start") {
-              await stream.writeSSE({
-                data: buildStreamChunk({
-                  id,
-                  created,
-                  model: parsedBody.data.model,
-                  delta: { role: event.message.role },
-                  finishReason: null,
-                }),
-              });
-              continue;
-            }
-
-            if (event.type === "text_delta") {
-              await stream.writeSSE({
-                data: buildStreamChunk({
-                  id,
-                  created,
-                  model: parsedBody.data.model,
-                  delta: { content: event.text },
-                  finishReason: null,
-                }),
-              });
-              continue;
-            }
-
-            await stream.writeSSE({
-              data: buildStreamChunk({
+              data: buildChunkData({
                 id,
                 created,
                 model: parsedBody.data.model,
-                delta: {},
-                finishReason: event.finishReason,
+                event,
               }),
             });
           }

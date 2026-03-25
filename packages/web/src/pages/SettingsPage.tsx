@@ -11,7 +11,6 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { validateAvatarFile } from "../lib/avatar-editor";
 import {
-  buildApiTokenPrefix,
   createOwnerApiToken,
   deleteOwnerApiToken,
   listOwnerApiTokens,
@@ -260,7 +259,7 @@ export function SettingsPage() {
       setApiTokens((current) => [
         {
           id: createdToken.id,
-          tokenPrefix: buildApiTokenPrefix(createdToken.id),
+          tokenPrefix: createdToken.id,
           note: createdToken.note,
           createdAt: createdToken.createdAt,
         },
@@ -280,6 +279,7 @@ export function SettingsPage() {
     try {
       await deleteOwnerApiToken(apiClient, id);
       setApiTokens((current) => current.filter((item) => item.id !== id));
+      setCreatedApiTokenId((current) => (current === id ? null : current));
       toast.success(t("settings.apiTokenDeleted"));
     } catch {
       toast.error(t("settings.apiTokenDeleteError"));
@@ -459,9 +459,7 @@ export function SettingsPage() {
                 >
                   <div className="space-y-1 min-w-0">
                     <div className="text-sm font-medium break-words">{token.note}</div>
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {token.tokenPrefix}
-                    </div>
+                    <div className="font-mono text-xs text-muted-foreground">{token.id}</div>
                     <time
                       className="block text-xs text-muted-foreground"
                       dateTime={token.createdAt}

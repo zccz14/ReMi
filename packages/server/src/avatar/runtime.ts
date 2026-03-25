@@ -168,13 +168,8 @@ export class AvatarInferenceRuntime {
     const upstream = this.deps.chatClient.chatStream({
       messages: this.buildMessages(request),
     });
-    const firstToken = await upstream.next();
 
     yield { type: "message_start", message: { role: "assistant" } };
-
-    if (!firstToken.done) {
-      yield { type: "text_delta", text: firstToken.value };
-    }
 
     for await (const token of upstream) {
       yield { type: "text_delta", text: token };

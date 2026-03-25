@@ -475,7 +475,7 @@ describe("SettingsPage", () => {
     expect(toast.success).toHaveBeenCalledWith("settings.avatarDeleteSuccess");
   });
 
-  it("loads existing api tokens without exposing the full secret in the list", async () => {
+  it("loads existing api tokens and shows the full token id in the list", async () => {
     const mockGet = vi.fn((path: string) => {
       if (path === "/api/mock-public-key/profile") {
         return Promise.resolve({ data: createProfile() });
@@ -513,12 +513,11 @@ describe("SettingsPage", () => {
 
     expect(await findByText("settings.apiTokens")).toBeInTheDocument();
     expect(await findByText("Cursor local")).toBeInTheDocument();
-    expect(queryByText("sk-secret-token")).not.toBeInTheDocument();
-    expect(await findByText("sk-sec...")).toBeInTheDocument();
+    expect(await findByText("sk-secret-token")).toBeInTheDocument();
     expect(await findByText("2026-03-25T00:00:00.000Z")).toBeInTheDocument();
   });
 
-  it("creates an api token, shows the full secret once, and deletes it from the local list", async () => {
+  it("creates an api token, keeps the full token visible, and deletes it from the local list", async () => {
     const mockGet = vi.fn((path: string) => {
       if (path === "/api/mock-public-key/profile") {
         return Promise.resolve({ data: createProfile() });
@@ -537,28 +536,33 @@ describe("SettingsPage", () => {
     });
     const mockDelete = vi.fn().mockResolvedValue(undefined);
 
-    const { findByRole, getByLabelText, findByText, queryByText, queryByDisplayValue } =
-      renderWithProviders(<SettingsPage />, {
-        authState: {
-          apiClient: {
-            get: mockGet,
-            post: mockPost,
-            put: vi.fn(),
-            putBinary: vi.fn(),
-            del: mockDelete,
-            streamPost: vi.fn(),
-            ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-          } as unknown as ApiClient,
-        },
-      });
+    const {
+      findByRole,
+      getByLabelText,
+      findAllByText,
+      findByText,
+      queryByText,
+      queryByDisplayValue,
+    } = renderWithProviders(<SettingsPage />, {
+      authState: {
+        apiClient: {
+          get: mockGet,
+          post: mockPost,
+          put: vi.fn(),
+          putBinary: vi.fn(),
+          del: mockDelete,
+          streamPost: vi.fn(),
+          ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+        } as unknown as ApiClient,
+      },
+    });
 
     const user = userEvent.setup();
     await user.type(await getByLabelText("settings.apiTokenNote"), "CLI");
     await user.click(await findByRole("button", { name: "settings.createApiToken" }));
 
     expect(mockPost).toHaveBeenCalledWith("/api/mock-public-key/api-tokens", { note: "CLI" });
-    expect(await findByText("sk-created-secret")).toBeInTheDocument();
-    expect(await findByText("sk-cre...")).toBeInTheDocument();
+    expect(await findAllByText("sk-created-secret")).toHaveLength(2);
     expect(await findByText("CLI")).toBeInTheDocument();
     expect(queryByDisplayValue("CLI")).not.toBeInTheDocument();
 
@@ -566,7 +570,7 @@ describe("SettingsPage", () => {
 
     expect(mockDelete).toHaveBeenCalledWith("/api/mock-public-key/api-tokens/sk-created-secret");
     await waitFor(() => {
-      expect(queryByText("sk-cre...")).not.toBeInTheDocument();
+      expect(queryByText("sk-created-secret")).not.toBeInTheDocument();
     });
   });
 
