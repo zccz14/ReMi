@@ -40,11 +40,13 @@ export function createApp(config: AppConfig) {
   if (corsOrigins.length > 0) {
     const corsMiddleware = cors({
       origin: corsOrigins,
-      allowHeaders: ["Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
+      allowHeaders: ["Authorization", "Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
       allowMethods: ["GET", "POST", "PUT", "DELETE"],
     });
     app.use("/api/*", corsMiddleware);
     app.use("/api", corsMiddleware);
+    app.use("/ai/*", corsMiddleware);
+    app.use("/ai", corsMiddleware);
   }
 
   // Request logging middleware

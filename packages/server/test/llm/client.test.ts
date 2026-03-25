@@ -298,6 +298,76 @@ describe("ChatClient", () => {
       expect(tokens).toEqual(["final answer"]);
     });
 
+    it("should ignore streamed chunks without choices before valid content arrives", async () => {
+      const sseData = [
+        'data: {"object":"chat.completion.chunk"}\n\n',
+        'data: {"choices":[]}\n\n',
+        'data: {"choices":[{"delta":{"content":"final answer"}}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join("");
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sseData));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      const tokens: string[] = [];
+      for await (const token of client.chatStream({
+        messages: [{ role: "user", content: "Hi" }],
+      })) {
+        tokens.push(token);
+      }
+
+      expect(tokens).toEqual(["final answer"]);
+    });
+
+    it("should surface streamed error payloads as meaningful errors", async () => {
+      const sseData = [
+        'data: {"error":{"message":"upstream exploded","type":"upstream_model_error","code":"upstream_model_error"}}\n\n',
+      ].join("");
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sseData));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const client = createChatClient({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "gpt-4",
+      });
+
+      const generator = client.chatStream({
+        messages: [{ role: "user", content: "Hi" }],
+      });
+
+      await expect(generator.next()).rejects.toThrow(
+        "Chat API stream error upstream_model_error: upstream exploded",
+      );
+    });
+
     it("should preserve ordered system messages before sending stream request", async () => {
       const sseData = [
         'data: {"choices":[{"delta":{"content":"done"}}]}\n\n',

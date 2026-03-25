@@ -272,6 +272,49 @@ describe("avatar openapi integration", () => {
     });
   });
 
+  it("POST /ai/v1/chat/completions maps missing or empty model to invalid_model", async () => {
+    const recording = createRecordingChatClient();
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: recording.client,
+      embeddingClient: null,
+    });
+    app = result.app;
+    cleanup = () => result.connMgr.closeAll();
+
+    for (const body of [
+      {
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false,
+      },
+      {
+        model: "",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false,
+      },
+      {
+        model: 42,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false,
+      },
+    ]) {
+      const res = await app.request("/ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sk-invalid",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: { code: "invalid_model" },
+      });
+    }
+  });
+
   it("POST /ai/v1/chat/completions returns 404 when the target soul is missing", async () => {
     const missingPubKey = getPublicKey(generateKeyPair());
     const recording = createRecordingChatClient();
@@ -365,6 +408,40 @@ describe("avatar openapi integration", () => {
     });
 
     expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "upstream_model_error" },
+    });
+  });
+
+  it("POST /ai/v1/chat/completions returns 502 before starting SSE when the upstream stream fails immediately", async () => {
+    const recording = createRecordingChatClient({ failStream: true });
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: recording.client,
+      embeddingClient: null,
+    });
+    app = result.app;
+    cleanup = () => result.connMgr.closeAll();
+
+    await signedOwnerRequest("GET", `/api/${ownerPubKey}/health`);
+    const token = await createOwnerToken();
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.id}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("content-type")).not.toContain("text/event-stream");
     await expect(res.json()).resolves.toMatchObject({
       error: { code: "upstream_model_error" },
     });

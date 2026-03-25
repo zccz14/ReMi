@@ -99,7 +99,7 @@ describe("createApp proxy mode", () => {
     connMgr.closeAll();
   });
 
-  it("applies CORS only to /api routes, not proxied frontend responses", async () => {
+  it("applies CORS to /api and /ai routes, but not proxied frontend responses", async () => {
     process.env.CORS_ORIGIN = "http://localhost:5173";
 
     const fetchMock = vi.fn().mockResolvedValue(
@@ -122,11 +122,21 @@ describe("createApp proxy mode", () => {
     const apiRes = await app.request("/api/health", {
       headers: { Origin: "http://localhost:5173" },
     });
+    const aiPreflightRes = await app.request("/ai/v1/chat/completions", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Authorization, Content-Type",
+      },
+    });
     const pageRes = await app.request("/messages", {
       headers: { Origin: "http://localhost:5173" },
     });
 
     expect(apiRes.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+    expect(aiPreflightRes.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+    expect(aiPreflightRes.headers.get("access-control-allow-headers")).toContain("Authorization");
     expect(pageRes.headers.get("access-control-allow-origin")).toBeNull();
     connMgr.closeAll();
   });

@@ -10,7 +10,7 @@ import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import { parseAvatarModel, type AvatarInferenceMessage } from "../avatar/model.js";
 
 const openAiChatSchema = z.object({
-  model: z.string().min(1),
+  model: z.string(),
   messages: z.array(
     z.object({
       role: z.enum(["system", "user", "assistant"]),
@@ -46,6 +46,22 @@ function createCompletionId() {
   return `chatcmpl_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
+function buildStreamChunk(params: {
+  id: string;
+  created: number;
+  model: string;
+  delta: Record<string, unknown>;
+  finishReason: string | null;
+}) {
+  return JSON.stringify({
+    id: params.id,
+    object: "chat.completion.chunk",
+    created: params.created,
+    model: params.model,
+    choices: [{ index: 0, delta: params.delta, finish_reason: params.finishReason }],
+  });
+}
+
 export function aiChatCompletionsRoute(deps: {
   connMgr: ConnectionManager;
   chatClient: ChatClient | null;
@@ -67,6 +83,11 @@ export function aiChatCompletionsRoute(deps: {
     const extraKey = Object.keys(rawBody).find((key) => !supportedKeys.has(key));
     if (extraKey) {
       return errorJson("unsupported_parameter", `Unsupported parameter: ${extraKey}`, 400);
+    }
+
+    const rawModel = rawBody.model;
+    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
+      return errorJson("invalid_model", "Model must be ReMi-<pubKey>", 400);
     }
 
     const parsedBody = openAiChatSchema.safeParse(rawBody);
@@ -135,17 +156,49 @@ export function aiChatCompletionsRoute(deps: {
         });
       }
 
+      const events = runtime.runStream(request);
+      const firstEvent = await events.next();
+
       return streamSSE(c, async (stream) => {
         try {
-          for await (const event of runtime.runStream(request)) {
+          if (!firstEvent.done) {
+            await stream.writeSSE({
+              data:
+                firstEvent.value.type === "message_start"
+                  ? buildStreamChunk({
+                      id,
+                      created,
+                      model: parsedBody.data.model,
+                      delta: { role: firstEvent.value.message.role },
+                      finishReason: null,
+                    })
+                  : firstEvent.value.type === "text_delta"
+                    ? buildStreamChunk({
+                        id,
+                        created,
+                        model: parsedBody.data.model,
+                        delta: { content: firstEvent.value.text },
+                        finishReason: null,
+                      })
+                    : buildStreamChunk({
+                        id,
+                        created,
+                        model: parsedBody.data.model,
+                        delta: {},
+                        finishReason: firstEvent.value.finishReason,
+                      }),
+            });
+          }
+
+          for await (const event of events) {
             if (event.type === "message_start") {
               await stream.writeSSE({
-                data: JSON.stringify({
+                data: buildStreamChunk({
                   id,
-                  object: "chat.completion.chunk",
                   created,
                   model: parsedBody.data.model,
-                  choices: [{ index: 0, delta: { role: event.message.role }, finish_reason: null }],
+                  delta: { role: event.message.role },
+                  finishReason: null,
                 }),
               });
               continue;
@@ -153,24 +206,24 @@ export function aiChatCompletionsRoute(deps: {
 
             if (event.type === "text_delta") {
               await stream.writeSSE({
-                data: JSON.stringify({
+                data: buildStreamChunk({
                   id,
-                  object: "chat.completion.chunk",
                   created,
                   model: parsedBody.data.model,
-                  choices: [{ index: 0, delta: { content: event.text }, finish_reason: null }],
+                  delta: { content: event.text },
+                  finishReason: null,
                 }),
               });
               continue;
             }
 
             await stream.writeSSE({
-              data: JSON.stringify({
+              data: buildStreamChunk({
                 id,
-                object: "chat.completion.chunk",
                 created,
                 model: parsedBody.data.model,
-                choices: [{ index: 0, delta: {}, finish_reason: event.finishReason }],
+                delta: {},
+                finishReason: event.finishReason,
               }),
             });
           }

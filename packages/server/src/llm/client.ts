@@ -33,6 +33,12 @@ export interface ChatClient {
   chatStream(options: ChatOptions): AsyncGenerator<string, void, unknown>;
 }
 
+function formatStreamError(error: { message?: string; type?: string; code?: string }) {
+  const label = error.code ?? error.type ?? "unknown_error";
+  const message = error.message ?? "Unknown upstream error";
+  return `Chat API stream error ${label}: ${message}`;
+}
+
 function normalizeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     role: message.role,
@@ -185,10 +191,18 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           }
 
           const parsed = JSON.parse(data) as {
-            choices: { delta: { content?: string; reasoning_content?: string } }[];
+            choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+            error?: { message?: string; type?: string; code?: string };
           };
 
-          const delta = parsed.choices[0]?.delta;
+          if (parsed.error) {
+            const detail = formatStreamError(parsed.error);
+            const ms = Date.now() - start;
+            log.error({ model: config.model, ms, detail }, "LLM stream payload error");
+            throw new Error(detail);
+          }
+
+          const delta = parsed.choices?.[0]?.delta;
           const content = delta?.content;
           if (content) {
             tokenCount++;
