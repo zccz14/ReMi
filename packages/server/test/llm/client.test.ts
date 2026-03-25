@@ -135,7 +135,7 @@ describe("ChatClient", () => {
       expect(result.content).toBe("");
     });
 
-    it("should filter out system role before sending chat request", async () => {
+    it("should preserve ordered system messages before sending chat request", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -163,7 +163,10 @@ describe("ChatClient", () => {
       });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.messages).toEqual([{ role: "user", content: "you are helpful\n\nhello" }]);
+      expect(body.messages).toEqual([
+        { role: "system", content: "you are helpful" },
+        { role: "user", content: "hello" },
+      ]);
     });
   });
 
@@ -295,7 +298,7 @@ describe("ChatClient", () => {
       expect(tokens).toEqual(["final answer"]);
     });
 
-    it("should filter out system role before sending stream request", async () => {
+    it("should preserve ordered system messages before sending stream request", async () => {
       const sseData = [
         'data: {"choices":[{"delta":{"content":"done"}}]}\n\n',
         "data: [DONE]\n\n",
@@ -334,7 +337,7 @@ describe("ChatClient", () => {
       expect(tokens).toEqual(["done"]);
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.messages).toEqual([
-        { role: "user", content: "system prompt" },
+        { role: "system", content: "system prompt" },
         { role: "assistant", content: "history" },
         { role: "user", content: "question" },
       ]);

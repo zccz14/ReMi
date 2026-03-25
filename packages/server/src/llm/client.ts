@@ -34,33 +34,10 @@ export interface ChatClient {
 }
 
 function normalizeMessages(messages: ChatMessage[]): ChatMessage[] {
-  const systemContents = messages
-    .filter((m) => m.role === "system")
-    .map((m) => m.content.trim())
-    .filter(Boolean);
-  const nonSystem = messages.filter((m) => m.role !== "system");
-
-  if (systemContents.length === 0) {
-    return messages;
-  }
-
-  const systemPrompt = systemContents.join("\n\n");
-
-  if (nonSystem.length === 0) {
-    return [{ role: "user", content: systemPrompt }];
-  }
-
-  if (nonSystem[0].role === "user") {
-    return [
-      {
-        role: "user",
-        content: `${systemPrompt}\n\n${nonSystem[0].content}`,
-      },
-      ...nonSystem.slice(1),
-    ];
-  }
-
-  return [{ role: "user", content: systemPrompt }, ...nonSystem];
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
 }
 
 export function createChatClient(config: ChatClientConfig): ChatClient {

@@ -13,6 +13,7 @@ import { interviewRoutes } from "./routes/interview.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { apiTokensRoutes } from "./routes/api-tokens.js";
+import { aiChatCompletionsRoute } from "./routes/ai-chat-completions.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
 import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
@@ -128,6 +129,10 @@ export function createApp(config: AppConfig) {
   app.route("/api", reasoningRoutes);
   app.route("/api", conversationRoutes);
   app.route("/api/:pubKey/api-tokens", apiTokensRoutes());
+  app.route(
+    "/ai/v1/chat/completions",
+    aiChatCompletionsRoute({ connMgr, chatClient, embeddingClient }),
+  );
 
   if (config.web?.mode === "proxy") {
     app.all("*", async (c) => {
