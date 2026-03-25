@@ -388,7 +388,7 @@ describe("avatar openapi integration", () => {
     });
   });
 
-  it("POST /ai/v1/chat/completions rejects unsupported top-level fields", async () => {
+  it("POST /ai/v1/chat/completions ignores unsupported top-level fields", async () => {
     const recording = createRecordingChatClient();
     const result = createApp({
       dataDir: tmpDir,
@@ -413,12 +413,19 @@ describe("avatar openapi integration", () => {
         messages: [{ role: "user", content: "Hello" }],
         stream: false,
         temperature: 0,
+        max_tokens: 256,
       }),
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
-      error: { code: "unsupported_parameter" },
+      object: "chat.completion",
+      choices: [
+        {
+          message: { role: "assistant", content: "avatar answer" },
+          finish_reason: "stop",
+        },
+      ],
     });
   });
 
@@ -638,19 +645,19 @@ describe("avatar openapi integration", () => {
     expect(recording.recordedCalls).toHaveLength(1);
     expect(recording.recordedCalls[0]?.map((message) => message.role)).toEqual([
       "system",
-      "system",
-      "system",
       "assistant",
       "user",
-      "system",
+      "user",
     ]);
     expect(recording.recordedCalls[0]?.map((message) => message.content)).toEqual([
-      expect.stringContaining("ReMi"),
-      expect.stringContaining(ownerPubKey),
-      "Caller system context",
+      expect.stringContaining("ReMi avatar inference runtime."),
       "Earlier answer",
       "caller message",
       expect.stringContaining("Favorite workflow"),
     ]);
+
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain(ownerPubKey);
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain("Avatar identity:");
+    expect(recording.recordedCalls[0]?.[0]?.content).not.toContain("Caller system context");
   });
 });

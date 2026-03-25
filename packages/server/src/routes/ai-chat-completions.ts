@@ -126,12 +126,6 @@ export function aiChatCompletionsRoute(deps: {
       return errorJson("invalid_request", "Request body must be a JSON object", 400);
     }
 
-    const supportedKeys = new Set(["model", "messages", "stream"]);
-    const extraKey = Object.keys(rawBody).find((key) => !supportedKeys.has(key));
-    if (extraKey) {
-      return errorJson("unsupported_parameter", `Unsupported parameter: ${extraKey}`, 400);
-    }
-
     const rawModel = rawBody.model;
     if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
       return errorJson("invalid_model", "Model must be ReMi-<pubKey>", 400);
