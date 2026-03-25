@@ -10,6 +10,13 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { validateAvatarFile } from "../lib/avatar-editor";
+import {
+  buildApiTokenPrefix,
+  createOwnerApiToken,
+  deleteOwnerApiToken,
+  listOwnerApiTokens,
+  type OwnerApiToken,
+} from "../lib/api-tokens";
 import { buildAvatarUrl, emptyPublicProfile, type PublicProfile } from "../lib/profile";
 import {
   Select,
@@ -35,9 +42,18 @@ export function SettingsPage() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isDeletingAvatar, setIsDeletingAvatar] = useState(false);
+  const [apiTokens, setApiTokens] = useState<OwnerApiToken[]>([]);
+  const [apiTokenNote, setApiTokenNote] = useState("");
+  const [createdApiTokenId, setCreatedApiTokenId] = useState<string | null>(null);
+  const [hasLoadedApiTokens, setHasLoadedApiTokens] = useState(false);
+  const [hasApiTokenLoadFailed, setHasApiTokenLoadFailed] = useState(false);
+  const [isRetryingApiTokenLoad, setIsRetryingApiTokenLoad] = useState(false);
+  const [isCreatingApiToken, setIsCreatingApiToken] = useState(false);
+  const [deletingApiTokenId, setDeletingApiTokenId] = useState<string | null>(null);
   const displayNameId = useId();
   const bioId = useId();
   const avatarInputId = useId();
+  const apiTokenNoteId = useId();
 
   const profilePath = apiClient.ownerPath("/profile");
   const avatarPath = apiClient.ownerPath("/profile/avatar");
@@ -46,6 +62,10 @@ export function SettingsPage() {
 
   useEffect(() => {
     void refreshProfile();
+  }, []);
+
+  useEffect(() => {
+    void refreshApiTokens();
   }, []);
 
   const refreshProfile = async ({
@@ -73,6 +93,34 @@ export function SettingsPage() {
       await refreshProfile();
     } finally {
       setIsRetryingProfileLoad(false);
+    }
+  };
+
+  const refreshApiTokens = async ({
+    showErrorToast = true,
+  }: { showErrorToast?: boolean } = {}): Promise<boolean> => {
+    try {
+      const items = await listOwnerApiTokens(apiClient);
+      setApiTokens(items);
+      setHasLoadedApiTokens(true);
+      setHasApiTokenLoadFailed(false);
+      return true;
+    } catch {
+      setHasApiTokenLoadFailed(true);
+      if (showErrorToast) {
+        toast.error(t("settings.apiTokenLoadError"));
+      }
+      return false;
+    }
+  };
+
+  const handleRetryApiTokenLoad = async () => {
+    setIsRetryingApiTokenLoad(true);
+
+    try {
+      await refreshApiTokens();
+    } finally {
+      setIsRetryingApiTokenLoad(false);
     }
   };
 
@@ -197,6 +245,49 @@ export function SettingsPage() {
     }
   };
 
+  const handleCreateApiToken = async () => {
+    const note = apiTokenNote.trim();
+    if (!note) {
+      return;
+    }
+
+    setIsCreatingApiToken(true);
+
+    try {
+      const createdToken = await createOwnerApiToken(apiClient, { note });
+      setCreatedApiTokenId(createdToken.id);
+      setApiTokenNote("");
+      setApiTokens((current) => [
+        {
+          id: createdToken.id,
+          tokenPrefix: buildApiTokenPrefix(createdToken.id),
+          note: createdToken.note,
+          createdAt: createdToken.createdAt,
+        },
+        ...current,
+      ]);
+      toast.success(t("settings.apiTokenCreated"));
+    } catch {
+      toast.error(t("settings.apiTokenCreateError"));
+    } finally {
+      setIsCreatingApiToken(false);
+    }
+  };
+
+  const handleDeleteApiToken = async (id: string) => {
+    setDeletingApiTokenId(id);
+
+    try {
+      await deleteOwnerApiToken(apiClient, id);
+      setApiTokens((current) => current.filter((item) => item.id !== id));
+      toast.success(t("settings.apiTokenDeleted"));
+    } catch {
+      toast.error(t("settings.apiTokenDeleteError"));
+    } finally {
+      setDeletingApiTokenId((current) => (current === id ? null : current));
+    }
+  };
+
   return (
     <FullScreenLayout title={t("settings.title")}>
       <div className="p-4 space-y-6 overflow-y-auto h-full">
@@ -294,6 +385,101 @@ export function SettingsPage() {
             >
               {t("settings.saveProfile")}
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{t("settings.apiTokens")}</div>
+              <div className="text-xs text-muted-foreground">
+                {t("settings.apiTokensDescription")}
+              </div>
+            </div>
+
+            {hasApiTokenLoadFailed && !hasLoadedApiTokens ? (
+              <div className="space-y-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+                <p className="text-sm text-destructive">{t("settings.apiTokenLoadError")}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleRetryApiTokenLoad()}
+                  disabled={isRetryingApiTokenLoad}
+                >
+                  {t("settings.retryApiTokenLoad")}
+                </Button>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <label htmlFor={apiTokenNoteId} className="text-sm font-medium">
+                {t("settings.apiTokenNote")}
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  id={apiTokenNoteId}
+                  value={apiTokenNote}
+                  placeholder={t("settings.apiTokenNotePlaceholder")}
+                  onChange={(event) => setApiTokenNote(event.target.value)}
+                  disabled={isCreatingApiToken}
+                />
+                <Button
+                  type="button"
+                  onClick={handleCreateApiToken}
+                  disabled={!apiTokenNote.trim() || isCreatingApiToken}
+                >
+                  {t("settings.createApiToken")}
+                </Button>
+              </div>
+            </div>
+
+            {createdApiTokenId ? (
+              <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <div className="text-sm font-medium">{t("settings.apiTokenCreatedTitle")}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t("settings.apiTokenCreatedDescription")}
+                </div>
+                <div className="break-all rounded bg-muted p-2 font-mono text-xs">
+                  {createdApiTokenId}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              {hasLoadedApiTokens && apiTokens.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                  {t("settings.apiTokensEmpty")}
+                </div>
+              ) : null}
+
+              {apiTokens.map((token) => (
+                <div
+                  key={token.id}
+                  className="flex items-start justify-between gap-3 rounded-lg border p-3"
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="text-sm font-medium break-words">{token.note}</div>
+                    <div className="font-mono text-xs text-muted-foreground">
+                      {token.tokenPrefix}
+                    </div>
+                    <time
+                      className="block text-xs text-muted-foreground"
+                      dateTime={token.createdAt}
+                    >
+                      {token.createdAt}
+                    </time>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => void handleDeleteApiToken(token.id)}
+                    disabled={deletingApiTokenId === token.id}
+                  >
+                    {t("settings.deleteApiToken")}
+                  </Button>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 

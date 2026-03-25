@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { toast } from "sonner";
 import { renderWithProviders, cleanup, userEvent, waitFor } from "../helpers/test-utils";
 import { SettingsPage } from "../../src/pages/SettingsPage";
+import type { ApiClient } from "../../src/lib/api-client";
 
 let avatarConfirmResult: unknown = null;
 
@@ -108,7 +109,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -132,7 +133,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -146,12 +147,26 @@ describe("SettingsPage", () => {
   });
 
   it("allows retrying profile bootstrap after an initial load failure", async () => {
-    const mockGet = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("load failed"))
-      .mockResolvedValueOnce({
-        data: createProfile({ displayName: "Recovered", bio: "hello" }),
-      });
+    let profileCalls = 0;
+    const mockGet = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/api-tokens") {
+        return Promise.resolve({ items: [] });
+      }
+
+      if (path === "/api/mock-public-key/profile") {
+        profileCalls += 1;
+
+        if (profileCalls === 1) {
+          return Promise.reject(new Error("load failed"));
+        }
+
+        return Promise.resolve({
+          data: createProfile({ displayName: "Recovered", bio: "hello" }),
+        });
+      }
+
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
 
     const { findByRole, findByDisplayValue, queryByRole } = renderWithProviders(<SettingsPage />, {
       authState: {
@@ -163,7 +178,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -193,7 +208,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -219,7 +234,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -252,7 +267,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -284,7 +299,7 @@ describe("SettingsPage", () => {
           del: mockDelete,
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -295,14 +310,26 @@ describe("SettingsPage", () => {
   });
 
   it("uploads a cropped avatar and refreshes preview version", async () => {
-    const mockGet = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: createProfile({ displayName: "Z", bio: "hello", hasAvatar: true, avatarVersion: 1 }),
-      })
-      .mockResolvedValueOnce({
-        data: createProfile({ displayName: "Z", bio: "hello", hasAvatar: true, avatarVersion: 2 }),
-      });
+    let profileCalls = 0;
+    const mockGet = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/api-tokens") {
+        return Promise.resolve({ items: [] });
+      }
+
+      if (path === "/api/mock-public-key/profile") {
+        profileCalls += 1;
+        return Promise.resolve({
+          data: createProfile({
+            displayName: "Z",
+            bio: "hello",
+            hasAvatar: true,
+            avatarVersion: profileCalls === 1 ? 1 : 2,
+          }),
+        });
+      }
+
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
     const mockPutBinary = vi.fn().mockResolvedValue(undefined);
 
     const { getByLabelText, getByRole, findByAltText } = renderWithProviders(<SettingsPage />, {
@@ -315,7 +342,7 @@ describe("SettingsPage", () => {
           del: vi.fn(),
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -369,7 +396,7 @@ describe("SettingsPage", () => {
             del: vi.fn(),
             streamPost: vi.fn(),
             ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-          } as any,
+          } as unknown as ApiClient,
         },
       },
     );
@@ -395,19 +422,29 @@ describe("SettingsPage", () => {
   });
 
   it("shows delete avatar CTA, deletes avatar, and refreshes preview version", async () => {
-    const mockGet = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: createProfile({ displayName: "Z", bio: "hello", hasAvatar: true, avatarVersion: 1 }),
-      })
-      .mockResolvedValueOnce({
-        data: createProfile({
-          displayName: "Z",
-          bio: "hello",
-          hasAvatar: false,
-          avatarVersion: null,
-        }),
-      });
+    let profileCalls = 0;
+    const mockGet = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/api-tokens") {
+        return Promise.resolve({ items: [] });
+      }
+
+      if (path === "/api/mock-public-key/profile") {
+        profileCalls += 1;
+        return Promise.resolve({
+          data:
+            profileCalls === 1
+              ? createProfile({ displayName: "Z", bio: "hello", hasAvatar: true, avatarVersion: 1 })
+              : createProfile({
+                  displayName: "Z",
+                  bio: "hello",
+                  hasAvatar: false,
+                  avatarVersion: null,
+                }),
+        });
+      }
+
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
     const mockDelete = vi.fn().mockResolvedValue(undefined);
 
     const { findByRole, queryByAltText, queryByRole } = renderWithProviders(<SettingsPage />, {
@@ -420,7 +457,7 @@ describe("SettingsPage", () => {
           del: mockDelete,
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
@@ -436,6 +473,101 @@ describe("SettingsPage", () => {
       expect(queryByRole("button", { name: "settings.deleteAvatar" })).not.toBeInTheDocument();
     });
     expect(toast.success).toHaveBeenCalledWith("settings.avatarDeleteSuccess");
+  });
+
+  it("loads existing api tokens without exposing the full secret in the list", async () => {
+    const mockGet = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/profile") {
+        return Promise.resolve({ data: createProfile() });
+      }
+
+      if (path === "/api/mock-public-key/api-tokens") {
+        return Promise.resolve({
+          items: [
+            {
+              id: "sk-secret-token",
+              tokenPrefix: "sk-sec...",
+              note: "Cursor local",
+              createdAt: "2026-03-25T00:00:00.000Z",
+            },
+          ],
+        });
+      }
+
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
+
+    const { findByText, queryByText } = renderWithProviders(<SettingsPage />, {
+      authState: {
+        apiClient: {
+          get: mockGet,
+          post: vi.fn(),
+          put: vi.fn(),
+          putBinary: vi.fn(),
+          del: vi.fn(),
+          streamPost: vi.fn(),
+          ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+        } as unknown as ApiClient,
+      },
+    });
+
+    expect(await findByText("settings.apiTokens")).toBeInTheDocument();
+    expect(await findByText("Cursor local")).toBeInTheDocument();
+    expect(queryByText("sk-secret-token")).not.toBeInTheDocument();
+    expect(await findByText("sk-sec...")).toBeInTheDocument();
+    expect(await findByText("2026-03-25T00:00:00.000Z")).toBeInTheDocument();
+  });
+
+  it("creates an api token, shows the full secret once, and deletes it from the local list", async () => {
+    const mockGet = vi.fn((path: string) => {
+      if (path === "/api/mock-public-key/profile") {
+        return Promise.resolve({ data: createProfile() });
+      }
+
+      if (path === "/api/mock-public-key/api-tokens") {
+        return Promise.resolve({ items: [] });
+      }
+
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
+    const mockPost = vi.fn().mockResolvedValue({
+      id: "sk-created-secret",
+      note: "CLI",
+      createdAt: "2026-03-25T00:00:00.000Z",
+    });
+    const mockDelete = vi.fn().mockResolvedValue(undefined);
+
+    const { findByRole, getByLabelText, findByText, queryByText, queryByDisplayValue } =
+      renderWithProviders(<SettingsPage />, {
+        authState: {
+          apiClient: {
+            get: mockGet,
+            post: mockPost,
+            put: vi.fn(),
+            putBinary: vi.fn(),
+            del: mockDelete,
+            streamPost: vi.fn(),
+            ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+          } as unknown as ApiClient,
+        },
+      });
+
+    const user = userEvent.setup();
+    await user.type(await getByLabelText("settings.apiTokenNote"), "CLI");
+    await user.click(await findByRole("button", { name: "settings.createApiToken" }));
+
+    expect(mockPost).toHaveBeenCalledWith("/api/mock-public-key/api-tokens", { note: "CLI" });
+    expect(await findByText("sk-created-secret")).toBeInTheDocument();
+    expect(await findByText("sk-cre...")).toBeInTheDocument();
+    expect(await findByText("CLI")).toBeInTheDocument();
+    expect(queryByDisplayValue("CLI")).not.toBeInTheDocument();
+
+    await user.click(await findByRole("button", { name: "settings.deleteApiToken" }));
+
+    expect(mockDelete).toHaveBeenCalledWith("/api/mock-public-key/api-tokens/sk-created-secret");
+    await waitFor(() => {
+      expect(queryByText("sk-cre...")).not.toBeInTheDocument();
+    });
   });
 
   it("does not show avatar delete success if the refresh fails", async () => {
@@ -457,7 +589,7 @@ describe("SettingsPage", () => {
           del: mockDelete,
           streamPost: vi.fn(),
           ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-        } as any,
+        } as unknown as ApiClient,
       },
     });
 
