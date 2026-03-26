@@ -20,6 +20,13 @@ describe("buildExtractionPrompt", () => {
     const system = messages[0]?.content ?? "";
 
     expect(system).toContain("自解释");
+    expect(system).toContain("至少显式包含一个边界要素");
+    expect(system).toContain("语境范围");
+    expect(system).toContain("成立条件");
+    expect(system).toContain("术语语义");
+    expect(system).toContain("如果三者都没有");
+    expect(system).toContain("宽泛槽位名");
+    expect(system).toContain("就不合格");
     expect(system).toContain("当前用户消息为准");
     expect(system).toContain("recentMessages");
     expect(system).toContain("仅可用于解析代词/省略");
@@ -51,6 +58,7 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("forbidden");
     expect(system).toContain("X 就是");
     expect(system).toContain("我说的 X 指的是");
+    expect(system).toContain("这里的 X 不是……而是……");
     expect(system).toContain("解释性同位语");
     expect(system).toContain("释义短语");
     expect(system).toContain("独立判断/偏好/用途表达");
@@ -83,7 +91,7 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("项目名/术语名/缩写/专有概念");
     expect(system).toContain("不得只保留裸术语名");
     expect(system).toContain("必须补足语义对象");
-    expect(system).toContain("否则按术语定义锚点规则处理");
+    expect(system).toContain("或额外生成术语定义锚点");
     expect(system).toContain("answer 保持短而聚焦");
     expect(system).toContain("不要用一个长 answer 覆盖多个条件分支、多个对象或多个术语解释");
     expect(system).toContain("该拆就拆");
