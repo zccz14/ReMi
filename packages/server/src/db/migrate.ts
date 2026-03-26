@@ -74,11 +74,31 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS goal_nodes (
+      id TEXT PRIMARY KEY,
+      parent_id TEXT,
+      type TEXT NOT NULL CHECK(type IN ('goal', 'session')),
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('todo', 'running', 'blocked', 'done', 'cancelled')),
+      dependency_ids TEXT NOT NULL CHECK(json_valid(dependency_ids) AND json_type(dependency_ids) = 'array'),
+      execution_base_url TEXT,
+      external_session_id TEXT,
+      CHECK(
+        (type = 'goal' AND status != 'running' AND execution_base_url IS NULL AND external_session_id IS NULL)
+        OR
+        (type = 'session' AND execution_base_url IS NOT NULL AND external_session_id IS NOT NULL)
+      )
+    );
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_messages_shared_message_id
       ON direct_messages(shared_message_id);
 
     CREATE INDEX IF NOT EXISTS idx_direct_messages_parties_created
       ON direct_messages(party_a_key, party_b_key, id DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_goal_nodes_parent_id
+      ON goal_nodes(parent_id);
   `);
 
   db.exec(`

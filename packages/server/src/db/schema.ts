@@ -70,3 +70,15 @@ export const apiTokens = sqliteTable("api_tokens", {
   note: text("note").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+export const goalNodes = sqliteTable("goal_nodes", {
+  id: text("id").primaryKey(),
+  parent_id: text("parent_id"),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  objective: text("objective").notNull(),
+  status: text("status").notNull(),
+  dependency_ids: text("dependency_ids").notNull(),
+  execution_base_url: text("execution_base_url"),
+  external_session_id: text("external_session_id"),
+});
