@@ -471,6 +471,137 @@ function insertGoalNode(
 }
 
 export function createGoalsService(conn: GoalsServiceConnection) {
+  function createGoalNodeInternal(input: CreateGoalNodeInput) {
+    const id = input.id ?? crypto.randomUUID();
+    const status = input.status ?? "todo";
+    const parent_id = input.parent_id ?? null;
+    const dependency_ids = input.dependency_ids ?? [];
+
+    assertGoalStatus(status);
+    assertGoalNodeDoesNotUseSessionFields(input);
+
+    if (parent_id === null) {
+      if (dependency_ids.length > 0) {
+        throw asValidationError("root goals cannot declare dependencies");
+      }
+
+      return insertGoalNode(conn, {
+        id,
+        parent_id: null,
+        type: "goal",
+        title: input.title,
+        objective: input.objective,
+        status,
+        dependency_ids: [],
+      });
+    }
+
+    assertGoalParent(conn, parent_id);
+    makeRoomIfNeeded(conn, parent_id, input);
+    assertDependencies(conn, { id, parent_id, dependency_ids });
+
+    return insertGoalNode(conn, {
+      id,
+      parent_id,
+      type: "goal",
+      title: input.title,
+      objective: input.objective,
+      status,
+      dependency_ids,
+    });
+  }
+
+  function createSessionNodeInternal(input: CreateActivationSessionNodeInput) {
+    const id = input.id ?? crypto.randomUUID();
+    const status = input.status ?? "todo";
+    const dependency_ids = input.dependency_ids ?? [];
+
+    assertSessionLocalStatus(status);
+    assertSessionFields(input);
+    assertGoalParent(conn, input.parent_id);
+    makeRoomIfNeeded(conn, input.parent_id, input);
+    assertDependencies(conn, { id, parent_id: input.parent_id, dependency_ids });
+
+    return insertGoalNode(conn, {
+      id,
+      parent_id: input.parent_id,
+      type: "session",
+      title: input.title,
+      objective: input.objective,
+      status,
+      dependency_ids,
+      execution_base_url: input.execution_base_url,
+      external_session_id: input.external_session_id,
+    });
+  }
+
+  function updateNodeStatusInternal(id: string, status: GoalStatus | SessionLocalStatus) {
+    const row = getRowById(conn, id);
+    if (!row) {
+      throw asNotFoundError(`goal node ${id} not found`);
+    }
+
+    if (row.type === "goal") {
+      assertGoalStatus(status);
+    } else {
+      assertSessionLocalStatus(status);
+    }
+
+    const dependencyIds = deserializeDependencyIds(row.dependency_ids);
+    const satisfied = dependenciesSatisfied(conn, dependencyIds);
+
+    if (status === "blocked" && satisfied) {
+      throw asValidationError("blocked status requires unmet dependencies");
+    }
+
+    if (status === "done" && !satisfied) {
+      throw asValidationError(
+        row.type === "goal"
+          ? "goal dependencies must be done before completion"
+          : "dependencies must be done before completion",
+      );
+    }
+
+    return persistStatus(conn, row, status);
+  }
+
+  function updateNodeDependenciesInternal(input: { id: string; dependency_ids: string[] }) {
+    const row = getRowById(conn, input.id);
+    if (!row) {
+      throw asNotFoundError(`goal node ${input.id} not found`);
+    }
+
+    if (row.parent_id === null && input.dependency_ids.length > 0) {
+      throw asValidationError("root goals cannot declare dependencies");
+    }
+
+    assertDependencies(conn, {
+      id: row.id,
+      parent_id: row.parent_id,
+      dependency_ids: input.dependency_ids,
+    });
+
+    conn.raw
+      .prepare("UPDATE goal_nodes SET dependency_ids = ? WHERE id = ?")
+      .run(serializeDependencyIds(input.dependency_ids), row.id);
+
+    const updatedRow = getRowById(conn, row.id);
+    if (!updatedRow) {
+      throw asNotFoundError(`goal node ${row.id} not found`);
+    }
+
+    const nextStatus = recomputeStoredStatus(conn, updatedRow);
+    conn.raw.prepare("UPDATE goal_nodes SET status = ? WHERE id = ?").run(nextStatus, row.id);
+    propagateDependentStatuses(conn, row.id);
+
+    const refreshedRow = getRowById(conn, row.id);
+    if (!refreshedRow) {
+      throw asNotFoundError(`goal node ${row.id} not found`);
+    }
+
+    return mapGoalNode(refreshedRow);
+  }
+
   return {
     createRootGoal(input: CreateRootGoalInput) {
       return withImmediateTransaction(conn, () => {
@@ -497,48 +628,14 @@ export function createGoalsService(conn: GoalsServiceConnection) {
     },
 
     createGoalNode(input: CreateGoalNodeInput) {
-      return withImmediateTransaction(conn, () => {
-        const id = input.id ?? crypto.randomUUID();
-        const status = input.status ?? "todo";
-        const parent_id = input.parent_id ?? null;
-        const dependency_ids = input.dependency_ids ?? [];
-
-        assertGoalStatus(status);
-        assertGoalNodeDoesNotUseSessionFields(input);
-
-        if (parent_id === null) {
-          if (dependency_ids.length > 0) {
-            throw asValidationError("root goals cannot declare dependencies");
-          }
-
-          return insertGoalNode(conn, {
-            id,
-            parent_id: null,
-            type: "goal",
-            title: input.title,
-            objective: input.objective,
-            status,
-            dependency_ids: [],
-          });
-        }
-
-        assertGoalParent(conn, parent_id);
-        makeRoomIfNeeded(conn, parent_id, input);
-        assertDependencies(conn, { id, parent_id, dependency_ids });
-
-        return insertGoalNode(conn, {
-          id,
-          parent_id,
-          type: "goal",
-          title: input.title,
-          objective: input.objective,
-          status,
-          dependency_ids,
-        });
-      });
+      return withImmediateTransaction(conn, () => createGoalNodeInternal(input));
     },
 
     createSessionNode(input: CreateActivationSessionNodeInput) {
+      return withImmediateTransaction(conn, () => createSessionNodeInternal(input));
+    },
+
+    validateSessionNodeCreation(input: CreateActivationSessionNodeInput) {
       return withImmediateTransaction(conn, () => {
         const id = input.id ?? crypto.randomUUID();
         const status = input.status ?? "todo";
@@ -547,20 +644,15 @@ export function createGoalsService(conn: GoalsServiceConnection) {
         assertSessionLocalStatus(status);
         assertSessionFields(input);
         assertGoalParent(conn, input.parent_id);
-        makeRoomIfNeeded(conn, input.parent_id, input);
-        assertDependencies(conn, { id, parent_id: input.parent_id, dependency_ids });
 
-        return insertGoalNode(conn, {
-          id,
-          parent_id: input.parent_id,
-          type: "session",
-          title: input.title,
-          objective: input.objective,
-          status,
-          dependency_ids,
-          execution_base_url: input.execution_base_url,
-          external_session_id: input.external_session_id,
-        });
+        if (countActiveChildren(conn, input.parent_id) >= GOAL_NODE_CHILD_LIMIT) {
+          throw asValidationError("parent already has maximum children");
+        }
+
+        assertDependencies(conn, { id, parent_id: input.parent_id, dependency_ids });
+        deriveInitialStatus(conn, status, dependency_ids);
+
+        return { id, status, dependency_ids };
       });
     },
 
@@ -574,73 +666,53 @@ export function createGoalsService(conn: GoalsServiceConnection) {
     },
 
     updateNodeStatus(id: string, status: GoalStatus | SessionLocalStatus) {
-      return withImmediateTransaction(conn, () => {
-        const row = getRowById(conn, id);
-        if (!row) {
-          throw asNotFoundError(`goal node ${id} not found`);
-        }
-
-        if (row.type === "goal") {
-          assertGoalStatus(status);
-        } else {
-          assertSessionLocalStatus(status);
-        }
-
-        const dependencyIds = deserializeDependencyIds(row.dependency_ids);
-        const satisfied = dependenciesSatisfied(conn, dependencyIds);
-
-        if (status === "blocked" && satisfied) {
-          throw asValidationError("blocked status requires unmet dependencies");
-        }
-
-        if (status === "done" && !satisfied) {
-          throw asValidationError(
-            row.type === "goal"
-              ? "goal dependencies must be done before completion"
-              : "dependencies must be done before completion",
-          );
-        }
-
-        return persistStatus(conn, row, status);
-      });
+      return withImmediateTransaction(conn, () => updateNodeStatusInternal(id, status));
     },
 
     updateNodeDependencies(input: { id: string; dependency_ids: string[] }) {
+      return withImmediateTransaction(conn, () => updateNodeDependenciesInternal(input));
+    },
+
+    applySchedulerMutations(
+      mutations: Array<
+        | { type: "create_goal"; input: CreateGoalNodeInput }
+        | { type: "cancel_node"; nodeId: string }
+        | { type: "update_dependencies"; input: { id: string; dependency_ids: string[] } }
+      >,
+    ) {
       return withImmediateTransaction(conn, () => {
-        const row = getRowById(conn, input.id);
-        if (!row) {
-          throw asNotFoundError(`goal node ${input.id} not found`);
+        for (const mutation of mutations) {
+          if (mutation.type === "create_goal") {
+            createGoalNodeInternal(mutation.input);
+            continue;
+          }
+
+          if (mutation.type === "cancel_node") {
+            updateNodeStatusInternal(mutation.nodeId, "cancelled");
+            continue;
+          }
+
+          updateNodeDependenciesInternal(mutation.input);
         }
 
-        if (row.parent_id === null && input.dependency_ids.length > 0) {
-          throw asValidationError("root goals cannot declare dependencies");
+        return listRows(conn).map(mapGoalNode);
+      });
+    },
+
+    syncComputedStatuses(updates: Array<{ id: string; status: GoalNodeStatus }>) {
+      return withImmediateTransaction(conn, () => {
+        for (const update of updates) {
+          const row = getRowById(conn, update.id);
+          if (!row) {
+            throw asNotFoundError(`goal node ${update.id} not found`);
+          }
+
+          conn.raw
+            .prepare("UPDATE goal_nodes SET status = ? WHERE id = ?")
+            .run(update.status, update.id);
         }
 
-        assertDependencies(conn, {
-          id: row.id,
-          parent_id: row.parent_id,
-          dependency_ids: input.dependency_ids,
-        });
-
-        conn.raw
-          .prepare("UPDATE goal_nodes SET dependency_ids = ? WHERE id = ?")
-          .run(serializeDependencyIds(input.dependency_ids), row.id);
-
-        const updatedRow = getRowById(conn, row.id);
-        if (!updatedRow) {
-          throw asNotFoundError(`goal node ${row.id} not found`);
-        }
-
-        const nextStatus = recomputeStoredStatus(conn, updatedRow);
-        conn.raw.prepare("UPDATE goal_nodes SET status = ? WHERE id = ?").run(nextStatus, row.id);
-        propagateDependentStatuses(conn, row.id);
-
-        const refreshedRow = getRowById(conn, row.id);
-        if (!refreshedRow) {
-          throw asNotFoundError(`goal node ${row.id} not found`);
-        }
-
-        return mapGoalNode(refreshedRow);
+        return listRows(conn).map(mapGoalNode);
       });
     },
   };

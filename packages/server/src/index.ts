@@ -2,6 +2,14 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { createEmbeddingClient } from "./embedding/client.js";
+import { createExecutionClient } from "./goals/execution-client.js";
+import { buildDefaultSchedulerDecision, createGoalScheduler } from "./goals/scheduler.js";
+import {
+  createPlatformRunner,
+  listEligibleUsersFromDataDir,
+  parsePlatformRunnerConfig,
+} from "./goals/platform-runner.js";
+import { createGoalsService } from "./goals/service.js";
 import { createChatClient } from "./llm/client.js";
 import { logger } from "./logger.js";
 
@@ -10,6 +18,7 @@ const PORT = Number(process.env.PORT ?? 3000);
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 1536);
 const WEB_MODE = (process.env.WEB_MODE ?? "disabled") as "disabled" | "proxy";
 const VITE_DEV_ORIGIN = process.env.VITE_DEV_ORIGIN ?? "http://localhost:5173";
+const EXECUTION_ROOT_SEED = process.env.EXECUTION_ROOT_SEED;
 
 const embeddingClient = process.env.EMBEDDING_API_KEY
   ? createEmbeddingClient({
@@ -28,7 +37,7 @@ const chatClient =
     ? createChatClient({ apiBase: llmApiBase, apiKey: llmApiKey, model: llmModel })
     : null;
 
-const { app } = createApp({
+const { app, connMgr } = createApp({
   dataDir: DATA_DIR,
   embeddingDimensions: EMBEDDING_DIMENSIONS,
   embeddingClient,
@@ -51,6 +60,52 @@ logger.info(
   },
   "Starting ReMi server",
 );
+
+const platformRunnerConfig = parsePlatformRunnerConfig(process.env);
+
+if (platformRunnerConfig.enabled) {
+  if (!EXECUTION_ROOT_SEED) {
+    logger.warn("Platform scheduler enabled without EXECUTION_ROOT_SEED; runner not started");
+  } else {
+    const platformRunner = createPlatformRunner({
+      config: platformRunnerConfig,
+      listEligibleUsers: () => listEligibleUsersFromDataDir(DATA_DIR),
+      async activateUser(pubKey) {
+        const conn = connMgr.getConnection(pubKey);
+        const service = createGoalsService(conn);
+        const scheduler = createGoalScheduler({
+          userIdentityPubkey: pubKey,
+          service,
+          chooser: {
+            chooseChild(candidates) {
+              return candidates[0]?.id ?? null;
+            },
+          },
+          executionClientFactory: {
+            getClient(baseUrl) {
+              return createExecutionClient({
+                baseUrl,
+                rootSeed: EXECUTION_ROOT_SEED,
+                userIdentityPubkey: pubKey,
+              });
+            },
+          },
+          decideActivation({ nodes, selection }) {
+            return buildDefaultSchedulerDecision({ nodes, selection });
+          },
+        });
+
+        await scheduler.runCycle();
+      },
+      onError(error) {
+        logger.error({ error }, "Platform scheduler tick failed");
+      },
+    });
+
+    platformRunner.start();
+    logger.info(platformRunnerConfig, "Platform scheduler started");
+  }
+}
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   logger.info({ port: info.port }, `ReMi server listening on http://localhost:${info.port}`);
