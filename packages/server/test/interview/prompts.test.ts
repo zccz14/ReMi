@@ -20,9 +20,10 @@ describe("buildExtractionPrompt", () => {
     const system = messages[0]?.content ?? "";
 
     expect(system).toContain("自解释");
-    expect(system).toContain("只能依据当前消息文本中的可见证据");
-    expect(system).toContain("不能依赖会话历史");
-    expect(system).toContain("不能依赖模型先验");
+    expect(system).toContain("当前用户消息为准");
+    expect(system).toContain("recentMessages");
+    expect(system).toContain("仅可用于解析代词/省略");
+    expect(system).toContain("不得新增当前消息未明确给出的事实、定义或判断");
   });
 
   it("requires first-person owner questions, de-identified examples, and no context-dependent references", () => {
@@ -48,11 +49,37 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("required");
     expect(system).toContain("optional");
     expect(system).toContain("forbidden");
+    expect(system).toContain("X 就是");
+    expect(system).toContain("我说的 X 指的是");
+    expect(system).toContain("解释性同位语");
+    expect(system).toContain("释义短语");
+    expect(system).toContain("独立判断/偏好/用途表达");
+    expect(system).toContain("按消息级别拆分");
     expect(system).toContain("definition + judgment");
     expect(system).toContain("branching conditions");
-    expect(system).toContain("按消息级别拆分");
     expect(system).toContain("不把短期时间词直接写入 question");
     expect(system).toContain("question 应锚定一个稳定信息槽位");
+  });
+
+  it("requires semantic object completion for terms and focused answers", () => {
+    const messages = buildExtractionPrompt("我最近在做 ReMi，主要想把访谈记忆整理清楚。", [], []);
+    const system = messages[0]?.content ?? "";
+
+    expect(system).toContain("项目名/术语名/缩写/专有概念");
+    expect(system).toContain("不得只保留裸术语名");
+    expect(system).toContain("必须补足语义对象");
+    expect(system).toContain("否则按术语定义锚点规则处理");
+    expect(system).toContain("answer 保持短而聚焦");
+    expect(system).toContain("不要用一个长 answer 覆盖多个条件分支、多个对象或多个术语解释");
+    expect(system).toContain("该拆就拆");
+  });
+
+  it("only allows empty output when no new fact definition or judgment can be extracted", () => {
+    const messages = buildExtractionPrompt("嗯。", [], []);
+    const system = messages[0]?.content ?? "";
+
+    expect(system).toContain("仅当当前消息没有新的事实、定义或判断可独立提取时");
+    expect(system).toContain("不要输出任何 <anchor> 标签");
   });
 
   it("keeps the xml anchor output contract unchanged", () => {
