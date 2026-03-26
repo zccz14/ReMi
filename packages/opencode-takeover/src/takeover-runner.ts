@@ -61,9 +61,13 @@ export function createTakeoverRunner(input: {
       try {
         prompt = await input.avatar.nextPrompt(mirrored);
       } catch (error) {
-        anchors.set(state.anchorId, "failed");
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const incompatibilityHint =
+          /(system[- ]?message|request[- ]?validation|request validation)/i.test(errorMessage)
+            ? "; possible system-message/request-validation incompatibility"
+            : "";
         input.logger.warn(
-          `avatar request failed for anchor ${state.anchorId}: ${error instanceof Error ? error.message : String(error)}; possible system-message/request-validation incompatibility`,
+          `avatar request failed for anchor ${state.anchorId}: ${errorMessage}${incompatibilityHint}`,
         );
         return;
       }

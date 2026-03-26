@@ -123,20 +123,22 @@ describe("createTakeoverRunner", () => {
     await runner.tick();
 
     expect(opencode.writePrompt).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("avatar request failed"));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/avatar request failed.*provider rejected system message/i),
+    );
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("system-message/request-validation incompatibility"),
     );
   });
 
-  it("does not retry the same anchor after an avatar request failure", async () => {
+  it("does not add the incompatibility hint for unrelated avatar failures", async () => {
     const opencode = {
       getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),
       listMessages: vi.fn().mockResolvedValue([assistantMessage()]),
       writePrompt: vi.fn(),
     };
     const avatar = {
-      nextPrompt: vi.fn().mockRejectedValue(new Error("provider rejected system message")),
+      nextPrompt: vi.fn().mockRejectedValue(new Error("network timeout")),
     };
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
@@ -148,10 +150,14 @@ describe("createTakeoverRunner", () => {
       logger,
     });
     await runner.tick();
-    await runner.tick();
 
-    expect(avatar.nextPrompt).toHaveBeenCalledTimes(1);
     expect(opencode.writePrompt).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/avatar request failed.*network timeout/i),
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("system-message/request-validation incompatibility"),
+    );
   });
 
   it("does not process the same assistant anchor twice", async () => {
