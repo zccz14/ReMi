@@ -37,6 +37,11 @@ export interface MirroredMessage {
   content: string;
 }
 
+export interface AvatarRequestMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
 export type AnchorStatus = "write_pending" | "committed";
 
 export type TurnState =

@@ -1,4 +1,5 @@
-import type { MirroredMessage } from "./types.ts";
+import { AVATAR_SYSTEM_PROMPT } from "./avatar-system-prompt.ts";
+import type { AvatarRequestMessage, MirroredMessage } from "./types.ts";
 
 export interface AvatarClient {
   nextPrompt(messages: MirroredMessage[]): Promise<string>;
@@ -15,13 +16,18 @@ export function createAvatarClient(options: {
 
   return {
     async nextPrompt(messages) {
+      const requestMessages: AvatarRequestMessage[] = [
+        { role: "system", content: AVATAR_SYSTEM_PROMPT },
+        ...messages,
+      ];
+
       const response = await fetchImpl(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
         },
-        body: JSON.stringify({ model: options.model, messages, stream: false }),
+        body: JSON.stringify({ model: options.model, messages: requestMessages, stream: false }),
       });
       if (!response.ok) {
         throw new Error(`Avatar API request failed: ${response.status}`);
