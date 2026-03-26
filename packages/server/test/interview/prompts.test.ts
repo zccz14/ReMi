@@ -156,4 +156,49 @@ describe("buildExtractionPrompt", () => {
       "<anchor><question>锚定问题</question><answer>用户的回答</answer></anchor>",
     );
   });
+
+  describe("spec acceptance contracts", () => {
+    it("1. must put scope and condition into question when needed", () => {
+      const system =
+        buildExtractionPrompt("只有在高压项目里，我才会优先速度。", [], [])[0]?.content ?? "";
+
+      expect(system).toContain("question 优先承载语境范围、成立条件、讨论对象");
+      expect(system).toContain("当条件/范围是区分槽位、保证自解释所必需时，可以进入 question");
+    });
+
+    it("2. must not leave bare terms in the main question", () => {
+      const system = buildExtractionPrompt("我最近在做 ReMi。", [], [])[0]?.content ?? "";
+
+      expect(system).toContain("主 question 必须补足语义对象与术语语义");
+      expect(system).toContain("ReMi 不能只保留裸术语名");
+    });
+
+    it("3. must add a definition anchor for explicit definitions and split it from judgment", () => {
+      const system =
+        buildExtractionPrompt(
+          "我说的 ReMi 指的是我的访谈记忆整理项目，而且我现在对它更谨慎了。",
+          [],
+          [],
+        )[0]?.content ?? "";
+
+      expect(system).toContain("必须额外生成 1 条术语定义锚点");
+      expect(system).toContain("必须拆成 definition anchor + judgment anchor");
+    });
+
+    it("4. must split branching conditions into two anchors", () => {
+      const system =
+        buildExtractionPrompt("如果信息不完整我会先补齐，但如果时间很紧我会先保守推进。", [], [])[0]
+          ?.content ?? "";
+
+      expect(system).toContain("branching conditions");
+      expect(system).toContain("必须拆成两条");
+    });
+
+    it("5. must forbid definition anchors for unknown acronyms without evidence", () => {
+      const system = buildExtractionPrompt("XTP 先不展开。", [], [])[0]?.content ?? "";
+
+      expect(system).toContain("XTP");
+      expect(system).toContain("不得生成定义锚点");
+    });
+  });
 });
