@@ -57,8 +57,23 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("按消息级别拆分");
     expect(system).toContain("definition + judgment");
     expect(system).toContain("branching conditions");
-    expect(system).toContain("不把短期时间词直接写入 question");
-    expect(system).toContain("question 应锚定一个稳定信息槽位");
+    expect(system).toContain("显式定义句式");
+    expect(system).toContain("必须额外生成 1 条术语定义锚点");
+    expect(system).toContain("必须拆成 definition anchor + judgment anchor");
+  });
+
+  it("lets question carry scope conditions and discussion objects when needed for self-explanation", () => {
+    const messages = buildExtractionPrompt(
+      "只有在高压项目里，我才会把速度放在稳定性前面。",
+      [],
+      [],
+    );
+    const system = messages[0]?.content ?? "";
+
+    expect(system).toContain("question 优先承载语境范围、成立条件、讨论对象");
+    expect(system).toContain("只有纯临时、不可复用的时间细节");
+    expect(system).toContain("不要机械写进 question");
+    expect(system).toContain("当条件/范围是区分槽位、保证自解释所必需时，可以进入 question");
   });
 
   it("requires semantic object completion for terms and focused answers", () => {
