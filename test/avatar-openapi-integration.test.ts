@@ -659,5 +659,11 @@ describe("avatar openapi integration", () => {
     expect(recording.recordedCalls[0]?.[0]?.content).toContain(ownerPubKey);
     expect(recording.recordedCalls[0]?.[0]?.content).toContain("Avatar identity:");
     expect(recording.recordedCalls[0]?.[0]?.content).toContain("Caller system context");
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain(
+      "Do not jump into reasoning before understanding the caller's environment",
+    );
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain("minimum necessary questions");
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain("existing context");
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain("state assumptions explicitly");
   });
 });
