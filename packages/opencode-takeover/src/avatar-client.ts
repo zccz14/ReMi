@@ -36,8 +36,12 @@ export function createAvatarClient(options: {
         choices?: Array<{ message?: { content?: unknown } }>;
       };
       const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== "string") {
+      if (content == null) {
         return "";
+      }
+
+      if (typeof content !== "string") {
+        throw new Error("Avatar API returned unsupported message.content shape");
       }
 
       return content.trim() === "" ? "" : content;

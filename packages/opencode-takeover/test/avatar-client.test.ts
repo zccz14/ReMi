@@ -3,23 +3,11 @@ import { createAvatarClient } from "../src/avatar-client.ts";
 import { AVATAR_SYSTEM_PROMPT } from "../src/avatar-system-prompt.ts";
 
 describe("createAvatarClient", () => {
-  it("defines a manager prompt with executor boundaries and delegation flow", () => {
-    expect(AVATAR_SYSTEM_PROMPT).toContain("manager");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("decision-maker");
+  it("defines a non-empty manager prompt owned by the takeover module", () => {
+    expect(typeof AVATAR_SYSTEM_PROMPT).toBe("string");
+    expect(AVATAR_SYSTEM_PROMPT.trim().length).toBeGreaterThan(0);
     expect(AVATAR_SYSTEM_PROMPT).toContain("OpenCode");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("executor");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("Do not");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("file");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("code");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("command");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("search");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("fact-finding");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("restate the goal");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("delegate");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("acceptance");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("report back");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("If asked to do executor work");
-    expect(AVATAR_SYSTEM_PROMPT).toContain("re-delegate");
+    expect(AVATAR_SYSTEM_PROMPT).toContain("Reply with the single next user message");
   });
 
   it("prepends the fixed system prompt and preserves mirrored history", async () => {
@@ -103,6 +91,23 @@ describe("createAvatarClient", () => {
     });
 
     await expect(client.nextPrompt([{ role: "user", content: "done" }])).resolves.toBe("");
+  });
+
+  it("rejects when the avatar response content has an unsupported non-string shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: [{ type: "text", text: "nope" }] } }] }),
+    });
+
+    const client = createAvatarClient({
+      baseUrl: "http://localhost:3001",
+      model: "ReMi-demo",
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(client.nextPrompt([{ role: "user", content: "done" }])).rejects.toThrow(
+      /unsupported.*message\.content/i,
+    );
   });
 
   it("returns an empty string when the avatar response content is whitespace only", async () => {

@@ -53,4 +53,18 @@ describe("evaluateTurnState", () => {
 
     expect(state.kind).toBe("ambiguous");
   });
+
+  it("returns ambiguous for an already failed assistant anchor", () => {
+    const state = evaluateTurnState(
+      [
+        message({
+          info: { id: "a1", role: "assistant", time: { created: 1, completed: 2 } },
+          parts: [{ type: "text", text: "done" }],
+        }),
+      ],
+      new Map([["a1", "failed"]]),
+    );
+
+    expect(state.kind).toBe("ambiguous");
+  });
 });

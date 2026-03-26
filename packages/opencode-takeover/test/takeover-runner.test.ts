@@ -129,6 +129,31 @@ describe("createTakeoverRunner", () => {
     );
   });
 
+  it("does not retry the same anchor after an avatar request failure", async () => {
+    const opencode = {
+      getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),
+      listMessages: vi.fn().mockResolvedValue([assistantMessage()]),
+      writePrompt: vi.fn(),
+    };
+    const avatar = {
+      nextPrompt: vi.fn().mockRejectedValue(new Error("provider rejected system message")),
+    };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const runner = createTakeoverRunner({
+      sessionId: "ses_demo",
+      windowSize: 8,
+      opencode,
+      avatar,
+      logger,
+    });
+    await runner.tick();
+    await runner.tick();
+
+    expect(avatar.nextPrompt).toHaveBeenCalledTimes(1);
+    expect(opencode.writePrompt).not.toHaveBeenCalled();
+  });
+
   it("does not process the same assistant anchor twice", async () => {
     const opencode = {
       getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),

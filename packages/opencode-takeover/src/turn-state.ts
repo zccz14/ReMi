@@ -28,7 +28,7 @@ export function evaluateTurnState(
   if (!tail.info.time.completed) return { kind: "busy" };
   if (!hasVisibleContent(tail))
     return { kind: "ambiguous", reason: "assistant has no visible content" };
-  if (anchors.get(tail.info.id) === "committed") {
+  if (["committed", "failed"].includes(anchors.get(tail.info.id) ?? "")) {
     return { kind: "ambiguous", reason: "assistant already processed" };
   }
   return { kind: "idle-runnable", anchorId: tail.info.id };

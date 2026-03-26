@@ -42,7 +42,7 @@ export interface AvatarRequestMessage {
   content: string;
 }
 
-export type AnchorStatus = "write_pending" | "committed";
+export type AnchorStatus = "write_pending" | "failed" | "committed";
 
 export type TurnState =
   | { kind: "busy" }
