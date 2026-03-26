@@ -27,6 +27,9 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("如果三者都没有");
     expect(system).toContain("宽泛槽位名");
     expect(system).toContain("就不合格");
+    expect(system).toContain("稳定可复用");
+    expect(system).toContain("不能机械复述当前消息原话");
+    expect(system).toContain("不能退化成对当前一句话的机械转写");
     expect(system).toContain("当前用户消息为准");
     expect(system).toContain("recentMessages");
     expect(system).toContain("仅可用于解析代词/省略");
