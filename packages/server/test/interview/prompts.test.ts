@@ -85,6 +85,24 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("当条件/范围是区分槽位、保证自解释所必需时，可以进入 question");
   });
 
+  it("covers spec examples for scope term definitions and branching contracts", () => {
+    const messages = buildExtractionPrompt(
+      "如果信息不完整，我会先自己补齐；但如果这是高压力且独立开发的项目，我会先保守推进 ReMi。我说的 ReMi 指的是我的访谈记忆整理项目。XTP 先不展开。",
+      [],
+      [],
+    );
+    const system = messages[0]?.content ?? "";
+
+    expect(system).toContain("高压力");
+    expect(system).toContain("信息不完整");
+    expect(system).toContain("独立开发");
+    expect(system).toContain("ReMi");
+    expect(system).toContain("definition anchor + judgment anchor");
+    expect(system).toContain("如果…；但如果…");
+    expect(system).toContain("XTP");
+    expect(system).toContain("不得生成定义锚点");
+  });
+
   it("requires semantic object completion for terms and focused answers", () => {
     const messages = buildExtractionPrompt("我最近在做 ReMi，主要想把访谈记忆整理清楚。", [], []);
     const system = messages[0]?.content ?? "";
