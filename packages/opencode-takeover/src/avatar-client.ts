@@ -33,9 +33,14 @@ export function createAvatarClient(options: {
         throw new Error(`Avatar API request failed: ${response.status}`);
       }
       const body = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{ message?: { content?: unknown } }>;
       };
-      return body.choices?.[0]?.message?.content?.trim() ?? "";
+      const content = body.choices?.[0]?.message?.content;
+      if (typeof content !== "string") {
+        return "";
+      }
+
+      return content.trim() === "" ? "" : content;
     },
   };
 }

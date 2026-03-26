@@ -89,4 +89,51 @@ describe("createAvatarClient", () => {
     const reply = await client.nextPrompt([{ role: "user", content: "done" }]);
     expect(reply).toBe("next user prompt");
   });
+
+  it("returns an empty string when the avatar response content is missing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: {} }] }),
+    });
+
+    const client = createAvatarClient({
+      baseUrl: "http://localhost:3001",
+      model: "ReMi-demo",
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(client.nextPrompt([{ role: "user", content: "done" }])).resolves.toBe("");
+  });
+
+  it("returns an empty string when the avatar response content is whitespace only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "   \n\t  " } }] }),
+    });
+
+    const client = createAvatarClient({
+      baseUrl: "http://localhost:3001",
+      model: "ReMi-demo",
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(client.nextPrompt([{ role: "user", content: "done" }])).resolves.toBe("");
+  });
+
+  it("preserves non-empty avatar response content including surrounding whitespace", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "  next user prompt  " } }] }),
+    });
+
+    const client = createAvatarClient({
+      baseUrl: "http://localhost:3001",
+      model: "ReMi-demo",
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(client.nextPrompt([{ role: "user", content: "done" }])).resolves.toBe(
+      "  next user prompt  ",
+    );
+  });
 });
