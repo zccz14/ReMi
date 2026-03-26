@@ -81,6 +81,54 @@ describe("createTakeoverRunner", () => {
     expect(opencode.writePrompt).not.toHaveBeenCalled();
   });
 
+  it("preserves surrounding whitespace when writing a non-empty avatar reply", async () => {
+    const opencode = {
+      getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),
+      listMessages: vi.fn().mockResolvedValue([assistantMessage()]),
+      writePrompt: vi.fn().mockResolvedValue(undefined),
+    };
+    const avatar = { nextPrompt: vi.fn().mockResolvedValue("  continue  ") };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const runner = createTakeoverRunner({
+      sessionId: "ses_demo",
+      windowSize: 8,
+      opencode,
+      avatar,
+      logger,
+    });
+    await runner.tick();
+
+    expect(opencode.writePrompt).toHaveBeenCalledWith("ses_demo", "  continue  ");
+  });
+
+  it("logs and skips write when the avatar request fails", async () => {
+    const opencode = {
+      getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),
+      listMessages: vi.fn().mockResolvedValue([assistantMessage()]),
+      writePrompt: vi.fn(),
+    };
+    const avatar = {
+      nextPrompt: vi.fn().mockRejectedValue(new Error("provider rejected system message")),
+    };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const runner = createTakeoverRunner({
+      sessionId: "ses_demo",
+      windowSize: 8,
+      opencode,
+      avatar,
+      logger,
+    });
+    await runner.tick();
+
+    expect(opencode.writePrompt).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("avatar request failed"));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("system-message/request-validation incompatibility"),
+    );
+  });
+
   it("does not process the same assistant anchor twice", async () => {
     const opencode = {
       getSession: vi.fn().mockResolvedValue({ id: "ses_demo" }),

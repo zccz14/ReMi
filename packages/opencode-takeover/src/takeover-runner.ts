@@ -57,8 +57,16 @@ export function createTakeoverRunner(input: {
 
       anchors.set(state.anchorId, "write_pending");
       const mirrored = mirrorMessages(messages);
-      const prompt = (await input.avatar.nextPrompt(mirrored)).trim();
-      if (!prompt) {
+      let prompt: string;
+      try {
+        prompt = await input.avatar.nextPrompt(mirrored);
+      } catch (error) {
+        input.logger.warn(
+          `avatar request failed for anchor ${state.anchorId}: ${error instanceof Error ? error.message : String(error)}; possible system-message/request-validation incompatibility`,
+        );
+        return;
+      }
+      if (prompt.trim() === "") {
         input.logger.warn(`avatar returned empty reply for anchor ${state.anchorId}`);
         return;
       }
