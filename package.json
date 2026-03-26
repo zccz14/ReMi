@@ -5,8 +5,8 @@
     "packages/*"
   ],
   "scripts": {
-    "lint": "eslint packages/*/src/**/*.ts test/**/*.ts",
-    "lint:fix": "eslint --fix packages/*/src/**/*.ts test/**/*.ts",
+    "lint": "eslint packages/*/src/**/*.ts packages/*/test/**/*.ts test/**/*.ts",
+    "lint:fix": "eslint --fix packages/*/src/**/*.ts packages/*/test/**/*.ts test/**/*.ts",
     "format": "prettier --write \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "prepare": "husky",

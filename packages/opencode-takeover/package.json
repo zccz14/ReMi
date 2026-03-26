@@ -1,0 +1,12 @@
+{
+  "name": "@remi/opencode-takeover",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts"
+  }
+}
