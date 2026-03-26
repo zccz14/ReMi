@@ -20,13 +20,13 @@ describe("buildExtractionPrompt", () => {
     const system = messages[0]?.content ?? "";
 
     expect(system).toContain("自解释");
-    expect(system).toContain("至少显式包含一个边界要素");
+    expect(system).toContain("当需要区分槽位、避免歧义或术语裸奔时");
+    expect(system).toContain("必须补足边界要素");
     expect(system).toContain("语境范围");
     expect(system).toContain("成立条件");
     expect(system).toContain("术语语义");
-    expect(system).toContain("如果三者都没有");
-    expect(system).toContain("宽泛槽位名");
-    expect(system).toContain("就不合格");
+    expect(system).toContain("天然自解释的简单事实问题");
+    expect(system).toContain("不要求为了满足格式去臆造范围/条件/术语语义");
     expect(system).toContain("稳定可复用");
     expect(system).toContain("不能机械复述当前消息原话");
     expect(system).toContain("不能退化成对当前一句话的机械转写");
@@ -104,6 +104,27 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("如果…；但如果…");
     expect(system).toContain("XTP");
     expect(system).toContain("不得生成定义锚点");
+  });
+
+  it("defines split boundaries without forcing oversplitting or fake boundaries", () => {
+    const messages = buildExtractionPrompt(
+      "我独立开发时，如果信息不完整会先补齐；另外我昨天其实只是顺手提了一句背景。",
+      [],
+      [],
+    );
+    const system = messages[0]?.content ?? "";
+
+    expect(system).toContain("不拆分");
+    expect(system).toContain("同义补充");
+    expect(system).toContain("修辞重复");
+    expect(system).toContain("纯背景铺垫");
+    expect(system).toContain("删去子句后主判断不变");
+    expect(system).toContain("可拆但非必须");
+    expect(system).toContain("围绕同一对象的并列细节");
+    expect(system).toContain("可独立召回的简洁释义");
+    expect(system).toContain("不是把一句话切得越碎越好");
+    expect(system).toContain("天然自解释的简单事实问题");
+    expect(system).toContain("不要求为了满足格式去臆造范围/条件/术语语义");
   });
 
   it("requires semantic object completion for terms and focused answers", () => {
