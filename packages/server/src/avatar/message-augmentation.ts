@@ -39,12 +39,17 @@ export function buildDownstreamMessages(input: {
   callerMessages: ChatMessage[];
   recall: string;
 }): ChatMessage[] {
+  const callerSystem = input.callerMessages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
   const callerMessages = input.callerMessages.filter((message) => message.role !== "system");
-  const mergedSystem = [input.platform, input.avatar].join("\n\n");
+  const mergedSystem = [input.platform, input.avatar, callerSystem].filter(Boolean).join("\n\n");
 
   return [
     { role: "system", content: mergedSystem },
     ...callerMessages,
-    { role: "user", content: input.recall },
+    { role: "assistant", content: input.recall },
   ];
 }

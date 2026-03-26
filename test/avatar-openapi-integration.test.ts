@@ -647,7 +647,7 @@ describe("avatar openapi integration", () => {
       "system",
       "assistant",
       "user",
-      "user",
+      "assistant",
     ]);
     expect(recording.recordedCalls[0]?.map((message) => message.content)).toEqual([
       expect.stringContaining("ReMi avatar inference runtime."),
@@ -658,6 +658,6 @@ describe("avatar openapi integration", () => {
 
     expect(recording.recordedCalls[0]?.[0]?.content).toContain(ownerPubKey);
     expect(recording.recordedCalls[0]?.[0]?.content).toContain("Avatar identity:");
-    expect(recording.recordedCalls[0]?.[0]?.content).not.toContain("Caller system context");
+    expect(recording.recordedCalls[0]?.[0]?.content).toContain("Caller system context");
   });
 });
