@@ -67,6 +67,7 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("branching conditions");
     expect(system).toContain("显式定义句式");
     expect(system).toContain("必须额外生成 1 条术语定义锚点");
+    expect(system).toContain("同一术语在单条消息中最多新增 1 条术语定义锚点");
     expect(system).toContain("必须拆成 definition anchor + judgment anchor");
   });
 
