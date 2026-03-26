@@ -14,6 +14,7 @@ import { reasoningRoutes } from "./routes/reasoning.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { apiTokensRoutes } from "./routes/api-tokens.js";
 import { aiChatCompletionsRoute } from "./routes/ai-chat-completions.js";
+import { goalsRoutes } from "./routes/goals.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
 import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
@@ -41,7 +42,7 @@ export function createApp(config: AppConfig) {
     const corsMiddleware = cors({
       origin: corsOrigins,
       allowHeaders: ["Authorization", "Content-Type", "X-Public-Key", "X-Timestamp", "X-Signature"],
-      allowMethods: ["GET", "POST", "PUT", "DELETE"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     });
     app.use("/api/*", corsMiddleware);
     app.use("/api", corsMiddleware);
@@ -130,6 +131,7 @@ export function createApp(config: AppConfig) {
   app.route("/api", interviewRoutes);
   app.route("/api", reasoningRoutes);
   app.route("/api", conversationRoutes);
+  app.route("/api", goalsRoutes);
   app.route("/api/:pubKey/api-tokens", apiTokensRoutes());
   app.route(
     "/ai/v1/chat/completions",
