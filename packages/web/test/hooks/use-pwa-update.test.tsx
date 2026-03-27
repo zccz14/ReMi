@@ -3,6 +3,12 @@ import { act, cleanup, render } from "../helpers/test-utils";
 import { PwaUpdateProvider, usePwaUpdate } from "../../src/hooks/use-pwa-update";
 import { toast } from "sonner";
 
+const translations = {
+  "me.update.stale": "TRANSLATED_STALE",
+  "me.update.failed": "TRANSLATED_FAILED",
+  "me.update.timeout": "TRANSLATED_TIMEOUT",
+} as const;
+
 const { useRegisterSWMock, registrationState } = vi.hoisted(() => ({
   useRegisterSWMock: vi.fn(),
   registrationState: {
@@ -22,9 +28,18 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn() },
 }));
 
+vi.mock("react-i18next", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-i18next")>();
+
+  return {
+    ...actual,
+    useTranslation: () => ({
+      t: (key: keyof typeof translations) => translations[key],
+    }),
+  };
+});
+
 const APPLY_TIMEOUT_MS = 10_000;
-const STALE_UPDATE_MESSAGE = "This update is no longer available. Please try again.";
-const UPDATE_TIMEOUT_MESSAGE = "Update timed out. Please try again.";
 
 function TestConsumer() {
   const { hasUpdate, isApplying, applyUpdate } = usePwaUpdate();
@@ -314,7 +329,7 @@ describe("PwaUpdateProvider", () => {
 
     expect(updateServiceWorker).not.toHaveBeenCalled();
     expect(view.getByTestId("is-applying")).toHaveTextContent("false");
-    expect(toast.error).toHaveBeenCalledWith(STALE_UPDATE_MESSAGE);
+    expect(toast.error).toHaveBeenCalledWith(translations["me.update.stale"]);
   });
 
   it("times out a stuck update apply", async () => {
@@ -343,7 +358,28 @@ describe("PwaUpdateProvider", () => {
     });
 
     expect(updateServiceWorker).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledWith(UPDATE_TIMEOUT_MESSAGE);
+    expect(toast.error).toHaveBeenCalledWith(translations["me.update.timeout"]);
+    expect(view.getByTestId("is-applying")).toHaveTextContent("false");
+  });
+
+  it("shows the translated failure toast when applying the update fails", async () => {
+    const updateServiceWorker = vi.fn().mockRejectedValue(new Error("boom"));
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    expect(updateServiceWorker).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(translations["me.update.failed"]);
     expect(view.getByTestId("is-applying")).toHaveTextContent("false");
   });
 

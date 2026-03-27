@@ -9,6 +9,7 @@ describe("pwa update copy", () => {
       expect(locale).toHaveProperty("me.update.applying");
       expect(locale).toHaveProperty("me.update.stale");
       expect(locale).toHaveProperty("me.update.failed");
+      expect(locale).toHaveProperty("me.update.timeout");
     }
   });
 });

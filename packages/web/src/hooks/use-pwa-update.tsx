@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useRegisterSW } from "virtual:pwa-register/react";
 
@@ -20,9 +21,7 @@ interface PwaUpdateContextValue {
 const PwaUpdateContext = createContext<PwaUpdateContextValue | null>(null);
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 const APPLY_TIMEOUT_MS = 10_000;
-const STALE_UPDATE_MESSAGE = "This update is no longer available. Please try again.";
-const UPDATE_FAILED_MESSAGE = "Update failed. Please try again.";
-const UPDATE_TIMEOUT_MESSAGE = "Update timed out. Please try again.";
+const APPLY_TIMEOUT_ERROR_MESSAGE = "PWA apply update timed out";
 
 export function usePwaUpdate(): PwaUpdateContextValue {
   const context = useContext(PwaUpdateContext);
@@ -35,6 +34,7 @@ export function usePwaUpdate(): PwaUpdateContextValue {
 }
 
 export function PwaUpdateProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const isApplyingRef = useRef(false);
   const [isApplying, setIsApplying] = useState(false);
@@ -90,7 +90,7 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
     }
 
     if (!needRefresh[0]) {
-      toast.error(STALE_UPDATE_MESSAGE);
+      toast.error(t("me.update.stale"));
       return;
     }
 
@@ -103,15 +103,15 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
         updateServiceWorker(),
         new Promise<never>((_, reject) => {
           timeoutId = window.setTimeout(() => {
-            reject(new Error("PWA apply update timed out"));
+            reject(new Error(APPLY_TIMEOUT_ERROR_MESSAGE));
           }, APPLY_TIMEOUT_MS);
         }),
       ]);
     } catch (error) {
       toast.error(
-        error instanceof Error && error.message === "PWA apply update timed out"
-          ? UPDATE_TIMEOUT_MESSAGE
-          : UPDATE_FAILED_MESSAGE,
+        error instanceof Error && error.message === APPLY_TIMEOUT_ERROR_MESSAGE
+          ? t("me.update.timeout")
+          : t("me.update.failed"),
       );
     } finally {
       if (timeoutId !== undefined) {
@@ -120,7 +120,7 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
       isApplyingRef.current = false;
       setIsApplying(false);
     }
-  }, [needRefresh, updateServiceWorker]);
+  }, [needRefresh, t, updateServiceWorker]);
 
   const value = useMemo<PwaUpdateContextValue>(
     () => ({

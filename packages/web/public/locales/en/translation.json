@@ -29,7 +29,8 @@
       "cta": "Update now",
       "applying": "Updating...",
       "stale": "This update is no longer available. Please try again shortly.",
-      "failed": "Update failed. Please try again later."
+      "failed": "Update failed. Please try again later.",
+      "timeout": "Update timed out. Please try again shortly."
     },
     "install": {
       "cta": "Install app",
