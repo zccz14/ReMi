@@ -5,6 +5,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./packages/web/src"),
+      "virtual:pwa-register/react": path.resolve(
+        __dirname,
+        "./packages/web/test/helpers/virtual-pwa-register-react.ts",
+      ),
     },
   },
   test: {
