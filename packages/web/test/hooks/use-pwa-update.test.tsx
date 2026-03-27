@@ -36,6 +36,10 @@ function createRegistration() {
   } as unknown as ServiceWorkerRegistration;
 }
 
+function flushMicrotasks() {
+  return Promise.resolve();
+}
+
 function setVisibilityState(state: DocumentVisibilityState) {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -60,6 +64,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 describe("PwaUpdateProvider", () => {
@@ -118,6 +123,23 @@ describe("PwaUpdateProvider", () => {
     expect(registration.update).toHaveBeenCalledTimes(1);
   });
 
+  it("swallows background update check failures", async () => {
+    const registration = {
+      update: vi.fn().mockRejectedValue(new Error("update failed")),
+    } as unknown as ServiceWorkerRegistration;
+
+    renderWithProvider();
+
+    expect(() => {
+      act(() => {
+        registrationState.options?.onRegisteredSW?.("/sw.js", registration);
+      });
+    }).not.toThrow();
+
+    await expect(flushMicrotasks()).resolves.toBeUndefined();
+    expect(registration.update).toHaveBeenCalledTimes(1);
+  });
+
   it("polls for updates every 5 minutes", () => {
     vi.useFakeTimers();
     const registration = createRegistration();
@@ -163,5 +185,27 @@ describe("PwaUpdateProvider", () => {
     });
 
     expect(registration.update).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops interval and visibility checks after unmount", () => {
+    vi.useFakeTimers();
+    const registration = createRegistration();
+
+    const view = renderWithProvider();
+
+    act(() => {
+      registrationState.options?.onRegisteredSW?.("/sw.js", registration);
+    });
+
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+
+    act(() => {
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(registration.update).toHaveBeenCalledTimes(1);
   });
 });

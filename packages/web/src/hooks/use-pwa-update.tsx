@@ -39,23 +39,26 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
 
     await registration.update();
   }, []);
+  const runBackgroundUpdateCheck = useCallback(() => {
+    void checkForUpdate().catch(() => {});
+  }, [checkForUpdate]);
 
   const { needRefresh } = useRegisterSW({
     onRegisteredSW: (_swUrl: string, registration?: ServiceWorkerRegistration) => {
       registrationRef.current = registration ?? null;
-      void checkForUpdate();
+      runBackgroundUpdateCheck();
     },
   });
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      void checkForUpdate();
+      runBackgroundUpdateCheck();
     }, POLL_INTERVAL_MS);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [checkForUpdate]);
+  }, [runBackgroundUpdateCheck]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -63,7 +66,7 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      void checkForUpdate();
+      runBackgroundUpdateCheck();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -71,7 +74,7 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [checkForUpdate]);
+  }, [runBackgroundUpdateCheck]);
 
   const value = useMemo<PwaUpdateContextValue>(
     () => ({
