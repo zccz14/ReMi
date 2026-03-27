@@ -10,8 +10,10 @@
     "format": "prettier --write \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,js,mjs,json,md,yml,yaml}\"",
     "prepare": "husky",
+    "build:web": "npm run build --prefix packages/web",
     "dev": "bash dev.sh",
     "dev:public": "PUBLIC_DEV=1 bash dev.sh",
+    "deploy": "bash deploy.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
@@ -33,6 +35,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.57.1",
     "vitest": "^3.0.0"
