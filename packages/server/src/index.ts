@@ -16,7 +16,8 @@ import { logger } from "./logger.js";
 const DATA_DIR = process.env.DATA_DIR ?? "./data";
 const PORT = Number(process.env.PORT ?? 3000);
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 1536);
-const WEB_MODE = (process.env.WEB_MODE ?? "disabled") as "disabled" | "proxy";
+const WEB_MODE = (process.env.WEB_MODE ?? "disabled") as "disabled" | "proxy" | "static";
+const WEB_DIST_DIR = process.env.WEB_DIST_DIR;
 const VITE_DEV_ORIGIN = process.env.VITE_DEV_ORIGIN ?? "http://localhost:5173";
 const EXECUTION_ROOT_SEED = process.env.EXECUTION_ROOT_SEED;
 
@@ -44,6 +45,7 @@ const { app, connMgr } = createApp({
   chatClient,
   web: {
     mode: WEB_MODE,
+    distDir: WEB_DIST_DIR,
     viteOrigin: VITE_DEV_ORIGIN,
   },
 });
@@ -56,6 +58,7 @@ logger.info(
     llmConfigured: !!chatClient,
     llmModel: llmModel ?? null,
     webMode: WEB_MODE,
+    webDistDir: WEB_DIST_DIR ?? null,
     viteDevOrigin: VITE_DEV_ORIGIN,
   },
   "Starting ReMi server",

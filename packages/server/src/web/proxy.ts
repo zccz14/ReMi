@@ -1,6 +1,7 @@
 export interface WebConfig {
-  mode: "disabled" | "proxy";
+  mode: "disabled" | "proxy" | "static";
   viteOrigin?: string;
+  distDir?: string;
 }
 
 export function shouldProxyToVite(pathname: string): boolean {

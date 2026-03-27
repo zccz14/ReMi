@@ -18,6 +18,7 @@ import { goalsRoutes } from "./routes/goals.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
 import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
+import { resolveStaticDir, serveStaticRequest } from "./web/static.js";
 
 interface AppConfig {
   dataDir: string;
@@ -137,6 +138,23 @@ export function createApp(config: AppConfig) {
     "/ai/v1/chat/completions",
     aiChatCompletionsRoute({ connMgr, chatClient, embeddingClient }),
   );
+
+  if (config.web?.mode === "static") {
+    const distDir = resolveStaticDir(config.web.distDir ?? "");
+
+    app.all("*", async (c) => {
+      const url = new URL(c.req.url);
+      if (url.pathname.startsWith("/api/") || url.pathname === "/api") {
+        return c.notFound();
+      }
+
+      if (url.pathname.startsWith("/ai/") || url.pathname === "/ai") {
+        return c.notFound();
+      }
+
+      return serveStaticRequest(c.req.raw, distDir);
+    });
+  }
 
   if (config.web?.mode === "proxy") {
     app.all("*", async (c) => {
