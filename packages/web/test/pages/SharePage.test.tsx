@@ -27,11 +27,18 @@ vi.mock("sonner", () => ({
 
 import { SharePage } from "../../src/pages/SharePage";
 
-// Intentional forward-looking red-test scaffold: the production component does not
-// accept this prop yet, but the contract test pins the planned API before implementation.
-const SharePageWithFutureProps = SharePage as unknown as (props: {
+type FutureSharePageProps = {
   forceQrImageFallback?: "auto" | "logo" | "none";
-}) => ReturnType<typeof SharePage>;
+};
+
+// Intentional forward-looking red-test scaffold: the shim names the planned prop
+// contract explicitly, while today's SharePage render remains unchanged until implemented.
+function renderFutureSharePage(
+  _props: FutureSharePageProps,
+  options?: Parameters<typeof renderWithProviders>[1],
+) {
+  return renderWithProviders(<SharePage />, options);
+}
 
 afterEach(() => {
   cleanup();
@@ -158,8 +165,8 @@ describe("SharePage", () => {
   });
 
   it("falls back to a pure qr when center images are forced off", async () => {
-    const { getByTestId } = renderWithProviders(
-      <SharePageWithFutureProps forceQrImageFallback="none" />,
+    const { getByTestId } = renderFutureSharePage(
+      { forceQrImageFallback: "none" },
       {
         authState: {
           apiClient: createApiClient({
