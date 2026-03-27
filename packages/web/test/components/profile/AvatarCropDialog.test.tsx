@@ -141,9 +141,7 @@ describe("AvatarCropDialog helpers", () => {
   });
 
   it("derives cropper adapter state from canonical crop", () => {
-    expect(
-      deriveCropperStateFromCanonicalCrop({ x: 50, y: 0, size: 220 }, 320, 220),
-    ).toEqual(
+    expect(deriveCropperStateFromCanonicalCrop({ x: 50, y: 0, size: 220 }, 320, 220)).toEqual(
       expect.objectContaining({
         cropSize: { width: 192, height: 192 },
         zoom: 192 / 220,
@@ -165,7 +163,7 @@ describe("AvatarCropDialog", () => {
     loadPreview({ width: 99, height: 140 });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("100 x 100");
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "确认" })).toBeDisabled();
   });
 
   it("initializes to the centered maximum legal square and slider range", () => {
@@ -179,16 +177,14 @@ describe("AvatarCropDialog", () => {
 
     loadPreview({ width: 320, height: 220 });
 
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
+    const slider = screen.getByRole("slider", { name: "缩放" }) as HTMLInputElement;
 
     expect(slider.min).toBe(String(AVATAR_MIN_CROP_SIZE));
     expect(slider.max).toBe("220");
     expect(slider.value).toBe("220");
     expect(latestCropperProps?.cropSize).toEqual({ width: 192, height: 192 });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认" })).toBeEnabled();
   });
 
   it("accepts boundary-valid images and locks slider min/max to 100 when short edge is 100", () => {
@@ -201,22 +197,22 @@ describe("AvatarCropDialog", () => {
     );
 
     loadPreview({ width: 100, height: 100 });
-    let slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    let slider = screen.getByRole("slider", { name: "缩放" }) as HTMLInputElement;
     expect(slider.min).toBe("100");
     expect(slider.max).toBe("100");
     expect(slider.value).toBe("100");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认" })).toBeEnabled();
 
     rerender(<AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />);
     loadPreview({ width: 100, height: 160 });
-    slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    slider = screen.getByRole("slider", { name: "缩放" }) as HTMLInputElement;
     expect(slider.min).toBe("100");
     expect(slider.max).toBe("100");
 
     rerender(<AvatarCropDialog open file={file} onConfirm={vi.fn()} onCancel={vi.fn()} />);
     loadPreview({ width: 160, height: 100 });
-    slider = screen.getByRole("slider", { name: "settings.avatarCropZoom" }) as HTMLInputElement;
+    slider = screen.getByRole("slider", { name: "缩放" }) as HTMLInputElement;
     expect(slider.min).toBe("100");
     expect(slider.max).toBe("100");
   });
@@ -236,7 +232,7 @@ describe("AvatarCropDialog", () => {
     loadPreview({ width: 320, height: 220 });
     emitCropComplete({ x: 7.3, y: 12.4, width: 180.9, height: 220.2 });
 
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
     expect(exportSpy).toHaveBeenCalledWith(
@@ -261,12 +257,10 @@ describe("AvatarCropDialog", () => {
     loadPreview({ width: 320, height: 220 });
     emitCropComplete({ x: 200, y: 30, width: 100, height: 100 });
 
-    const slider = screen.getByRole("slider", {
-      name: "settings.avatarCropZoom",
-    }) as HTMLInputElement;
+    const slider = screen.getByRole("slider", { name: "缩放" }) as HTMLInputElement;
 
     fireEvent.change(slider, { target: { value: "220" } });
-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
     expect(exportSpy).toHaveBeenCalledWith(
@@ -293,7 +287,7 @@ describe("AvatarCropDialog", () => {
     loadPreview({ width: 320, height: 220 });
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认" })).toBeEnabled();
   });
 
   it("clears an undersized-image error after closing and reopening with a valid image", async () => {
@@ -309,12 +303,14 @@ describe("AvatarCropDialog", () => {
     loadPreview({ width: 99, height: 140 });
     expect(await screen.findByRole("alert")).toHaveTextContent("100 x 100");
 
-    rerender(<AvatarCropDialog open={false} file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    rerender(
+      <AvatarCropDialog open={false} file={smallFile} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
     rerender(<AvatarCropDialog open file={validFile} onConfirm={vi.fn()} onCancel={vi.fn()} />);
     loadPreview({ width: 320, height: 220 });
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认" })).toBeEnabled();
   });
 });
 

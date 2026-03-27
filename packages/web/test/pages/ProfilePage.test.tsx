@@ -114,15 +114,13 @@ describe("ProfilePage", () => {
       }),
     );
 
-    const { container } = renderProfilePage();
+    renderProfilePage();
 
     const avatarImage = await screen.findByAltText("Nova");
     fireEvent.error(avatarImage);
 
-    await waitFor(() => {
-      expect(container.querySelector("img")).toBeNull();
-    });
-    expect(screen.getByText("N")).toBeInTheDocument();
+    expect(await screen.findByText("N")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Nova" })).not.toBeInTheDocument();
   });
 
   it("falls back to truncated pubkey and ChatAvatar when profile is empty", async () => {

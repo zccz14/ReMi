@@ -9,7 +9,7 @@ describe("EphemeralWarning", () => {
     const { container } = renderWithProviders(<EphemeralWarning />);
     const view = within(container);
 
-    expect(view.getByText("临时身份警告")).toBeInTheDocument();
+    expect(view.getByText("当前使用临时身份，关闭浏览器后数据将丢失")).toBeInTheDocument();
   });
 
   it("accepts and applies className prop", () => {
