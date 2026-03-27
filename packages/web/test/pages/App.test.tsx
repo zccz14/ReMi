@@ -43,7 +43,6 @@ function mockSharedPages() {
   vi.doMock("../../src/pages/AvatarChatPage", () => ({
     AvatarChatPage: () => <div>avatar-chat-page</div>,
   }));
-  vi.doMock("../../src/pages/StatsPage", () => ({ StatsPage: () => <div>stats-page</div> }));
   vi.doMock("../../src/pages/AnchorsPage", () => ({ AnchorsPage: () => <div>anchors-page</div> }));
   vi.doMock("../../src/pages/SharePage", () => ({ SharePage: () => <div>share-page</div> }));
   vi.doMock("../../src/pages/SettingsPage", () => ({
@@ -154,5 +153,19 @@ describe("App", () => {
     expect(
       within(screen.getByTestId("pwa-install-provider")).getByText("messages-page"),
     ).toBeInTheDocument();
+  });
+
+  it("treats /stats as a retired route sample by skipping any stats page and redirecting to /messages", async () => {
+    mockAppModules(({ children }) => <div data-testid="auth-provider">{children}</div>);
+    window.history.replaceState({}, "", "/stats");
+
+    const { default: App } = await import("../../src/App");
+
+    render(<App />);
+
+    expect(await screen.findByText("messages-page")).toBeInTheDocument();
+    expect(screen.getByText("app-shell")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/messages");
+    expect(screen.queryByText("stats-page")).not.toBeInTheDocument();
   });
 });

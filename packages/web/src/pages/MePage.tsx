@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BarChart3, Anchor, Share2, Settings, ChevronRight, Download } from "lucide-react";
+import { Anchor, Share2, Settings, ChevronRight, Download } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
 import { usePwaInstall } from "../hooks/use-pwa-install";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
@@ -12,7 +12,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const menuItems = [
-  { icon: BarChart3, labelKey: "me.stats", to: "/stats" },
   { icon: Anchor, labelKey: "me.anchors", to: "/anchors" },
   { icon: Share2, labelKey: "me.share", to: "/share" },
   { icon: Settings, labelKey: "me.settings", to: "/settings" },

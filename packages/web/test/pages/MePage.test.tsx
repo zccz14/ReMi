@@ -192,6 +192,19 @@ describe("MePage", () => {
     expect(screen.queryByRole("button", { name: "安装应用" })).not.toBeInTheDocument();
   });
 
+  it("renders the remaining me menu links without any /stats entry", async () => {
+    renderResolvedMePage();
+
+    await screen.findByText("mock-p...-key");
+
+    const links = screen.getAllByRole("link");
+    const hrefs = links.map((link) => link.getAttribute("href"));
+
+    expect(hrefs).toEqual(["/anchors", "/share", "/settings"]);
+    expect(screen.queryByRole("link", { name: /数据统计/i })).not.toBeInTheDocument();
+    expect(hrefs).not.toContain("/stats");
+  });
+
   it("opens the install dialog after CTA clicked", async () => {
     const user = userEvent.setup();
     const { installOrShowGuide } = renderInteractiveInstallMePage({ platform: "ios" });

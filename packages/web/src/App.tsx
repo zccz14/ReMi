@@ -12,7 +12,6 @@ import { MePage } from "./pages/MePage";
 import { RemiChatPage } from "./pages/RemiChatPage";
 import { AvatarChatPage } from "./pages/AvatarChatPage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { StatsPage } from "./pages/StatsPage";
 import { AnchorsPage } from "./pages/AnchorsPage";
 import { SharePage } from "./pages/SharePage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -35,7 +34,6 @@ function AuthenticatedRoutes() {
         </Route>
         <Route path="/chat/remi" element={<RemiChatPage />} />
         <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
-        <Route path="/stats" element={<StatsPage />} />
         <Route path="/anchors" element={<AnchorsPage />} />
         <Route path="/share" element={<SharePage />} />
         <Route path="/settings" element={<SettingsPage />} />
