@@ -112,7 +112,7 @@ describe("SharePage", () => {
       authState: { apiClient: createApiClient({ data: createProfile() }) as any },
     });
 
-    await waitFor(() => expect(getByText("来 ReMi 链接我")).toBeInTheDocument());
+    await waitFor(() => expect(getByText("Alice")).toBeInTheDocument());
     expect(getByText("Alice")).toBeInTheDocument();
     expect(getByText("Human, builder, and friendly ReMi contact.")).toBeInTheDocument();
     expect(getByTestId("share-card")).toBeInTheDocument();
@@ -238,6 +238,20 @@ describe("SharePage", () => {
     expect(failed.queryByTestId("share-qr-wrapper")).toBeNull();
     expect(failed.queryByTestId("share-link")).toBeNull();
     expect(failed.getByRole("button", { name: "复制链接" })).toBeDisabled();
+  });
+
+  it("shows a safety error and disables sharing when the public key is unavailable", async () => {
+    const { getByRole, getByTestId, queryByTestId } = renderWithProviders(<SharePage />, {
+      authState: {
+        publicKey: "",
+        apiClient: createApiClient({ data: createProfile() }) as any,
+      },
+    });
+
+    await waitFor(() => expect(getByTestId("share-error")).toBeInTheDocument());
+    expect(getByRole("button", { name: "复制链接" })).toBeDisabled();
+    expect(queryByTestId("share-qr-wrapper")).toBeNull();
+    expect(queryByTestId("share-link")).toBeNull();
   });
 
   it("copies the share link and shows the refreshed success toast", async () => {
