@@ -13,6 +13,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       manifest: pwaManifest,
       includeAssets: ["icons/icon-192.png", "icons/icon-512.png"],
+      devOptions: {
+        enabled: true,
+      },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
         navigateFallback: "/index.html",

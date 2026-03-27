@@ -61,4 +61,10 @@ describe("pwaManifest", () => {
     expect(viteConfig).toContain('import { pwaManifest } from "./src/pwa/manifest"');
     expect(viteConfig).toContain("manifest: pwaManifest");
   });
+
+  it("keeps the manifest available during local development", () => {
+    const viteConfig = fs.readFileSync(viteConfigPath, "utf8");
+    expect(viteConfig).toContain("devOptions: {");
+    expect(viteConfig).toContain("enabled: true");
+  });
 });
