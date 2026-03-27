@@ -27,6 +27,30 @@ interface PwaInstallContextValue {
 
 const PwaInstallContext = createContext<PwaInstallContextValue | null>(null);
 
+function getBrowserSignals() {
+  if (
+    typeof window === "undefined" ||
+    typeof navigator === "undefined" ||
+    typeof document === "undefined"
+  ) {
+    return {
+      userAgent: "",
+      maxTouchPoints: 0,
+      standaloneMatch: false,
+      navigatorStandalone: false,
+      referrer: "",
+    };
+  }
+
+  return {
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    standaloneMatch: window.matchMedia?.("(display-mode: standalone)").matches ?? false,
+    navigatorStandalone: window.navigator.standalone === true,
+    referrer: document.referrer,
+  };
+}
+
 export function usePwaInstall(): PwaInstallContextValue {
   const context = useContext(PwaInstallContext);
 
@@ -41,21 +65,26 @@ export function PwaInstallProvider({ children }: { children: ReactNode }) {
   const promptEventRef = useRef<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const browserSignals = getBrowserSignals();
 
   const platform = detectInstallPlatform({
-    userAgent: navigator.userAgent,
-    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    userAgent: browserSignals.userAgent,
+    maxTouchPoints: browserSignals.maxTouchPoints,
   });
-  const shouldShowBrowserOpenHint = shouldPreferBrowserOpenHint(navigator.userAgent);
+  const shouldShowBrowserOpenHint = shouldPreferBrowserOpenHint(browserSignals.userAgent);
   const isPwaMode =
     installed ||
     detectPwaMode({
-      standaloneMatch: window.matchMedia("(display-mode: standalone)").matches,
-      navigatorStandalone: window.navigator.standalone === true,
-      referrer: document.referrer,
+      standaloneMatch: browserSignals.standaloneMatch,
+      navigatorStandalone: browserSignals.navigatorStandalone,
+      referrer: browserSignals.referrer,
     });
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     const handleBeforeInstallPrompt = (event: Event) => {
       const installEvent = event as BeforeInstallPromptEvent;
       installEvent.preventDefault();
