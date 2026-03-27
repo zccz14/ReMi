@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Anchor, Share2, Settings, ChevronRight, Download } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
 import { usePwaInstall } from "../hooks/use-pwa-install";
+import { usePwaUpdate } from "../hooks/use-pwa-update";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
 import { PwaInstallDialog } from "../components/pwa/PwaInstallDialog";
 import { emptyPublicProfile, resolveProfileSummary } from "../lib/profile";
@@ -28,6 +29,7 @@ export function MePage() {
     installOrShowGuide,
     closeGuide,
   } = usePwaInstall();
+  const { hasUpdate, isApplying, applyUpdate } = usePwaUpdate();
   const [summary, setSummary] = useState(() =>
     resolveProfileSummary(publicKey, emptyPublicProfile),
   );
@@ -96,12 +98,24 @@ export function MePage() {
           ))}
         </div>
 
-        {!isPwaMode ? (
-          <div>
-            <Button className="w-full" type="button" onClick={() => void installOrShowGuide()}>
-              <Download className="h-4 w-4" />
-              {t("me.install.cta")}
-            </Button>
+        {!isPwaMode || hasUpdate ? (
+          <div className="space-y-2">
+            {hasUpdate ? (
+              <Button
+                className="w-full"
+                type="button"
+                disabled={isApplying}
+                onClick={() => void applyUpdate()}
+              >
+                {isApplying ? t("me.update.applying") : t("me.update.cta")}
+              </Button>
+            ) : null}
+            {!isPwaMode ? (
+              <Button className="w-full" type="button" onClick={() => void installOrShowGuide()}>
+                <Download className="h-4 w-4" />
+                {t("me.install.cta")}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

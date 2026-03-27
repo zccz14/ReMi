@@ -14,9 +14,14 @@ import { MePage } from "../../src/pages/MePage";
 import { emptyPublicProfile } from "../../src/lib/profile";
 
 const usePwaInstallMock = vi.fn();
+const usePwaUpdateMock = vi.fn();
 
 vi.mock("../../src/hooks/use-pwa-install", () => ({
   usePwaInstall: () => usePwaInstallMock(),
+}));
+
+vi.mock("../../src/hooks/use-pwa-update", () => ({
+  usePwaUpdate: () => usePwaUpdateMock(),
 }));
 
 const API_BASE = "https://api.example.test";
@@ -42,6 +47,21 @@ function mockUsePwaInstall(
     shouldShowBrowserOpenHint: false,
     installOrShowGuide: vi.fn().mockResolvedValue(undefined),
     closeGuide: vi.fn(),
+    ...overrides,
+  });
+}
+
+function mockUsePwaUpdate(
+  overrides?: Partial<{
+    hasUpdate: boolean;
+    isApplying: boolean;
+    applyUpdate: () => Promise<void>;
+  }>,
+) {
+  usePwaUpdateMock.mockReturnValue({
+    hasUpdate: false,
+    isApplying: false,
+    applyUpdate: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   });
 }
@@ -133,6 +153,7 @@ function renderInteractiveInstallMePage(
 afterEach(() => {
   cleanup();
   usePwaInstallMock.mockReset();
+  usePwaUpdateMock.mockReset();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -140,6 +161,7 @@ afterEach(() => {
 describe("MePage", () => {
   beforeEach(() => {
     mockUsePwaInstall();
+    mockUsePwaUpdate();
   });
 
   it("shows owner nickname, avatar, and bio on the me card", async () => {
@@ -283,5 +305,78 @@ describe("MePage", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: "安装 ReMi" })).toBeInTheDocument();
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("does not show update CTA when no update is available", async () => {
+    renderResolvedMePage();
+
+    await screen.findByText("mock-p...-key");
+
+    expect(usePwaUpdateMock).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "立即更新" })).not.toBeInTheDocument();
+  });
+
+  it("shows update CTA when an update is available", async () => {
+    mockUsePwaUpdate({ hasUpdate: true });
+
+    renderResolvedMePage();
+
+    expect(await screen.findByRole("button", { name: "立即更新" })).toBeInTheDocument();
+  });
+
+  it("calls applyUpdate when update CTA is clicked", async () => {
+    const user = userEvent.setup();
+    const applyUpdate = vi.fn().mockResolvedValue(undefined);
+    mockUsePwaUpdate({ hasUpdate: true, applyUpdate });
+
+    renderResolvedMePage();
+
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables update CTA while applying", async () => {
+    mockUsePwaUpdate({ hasUpdate: true, isApplying: true });
+
+    renderResolvedMePage();
+
+    const button = await screen.findByRole("button", { name: "更新中..." });
+    expect(button).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "立即更新" })).not.toBeInTheDocument();
+  });
+
+  it("does not call applyUpdate twice while button is disabled", async () => {
+    const user = userEvent.setup();
+    const applyUpdate = vi.fn().mockResolvedValue(undefined);
+
+    function Harness() {
+      const [isApplying, setIsApplying] = useState(false);
+
+      usePwaUpdateMock.mockImplementation(() => ({
+        hasUpdate: true,
+        isApplying,
+        applyUpdate: vi.fn(async () => {
+          applyUpdate();
+          setIsApplying(true);
+        }),
+      }));
+
+      return <MePage />;
+    }
+
+    renderWithProviders(<Harness />, {
+      authState: {
+        apiClient: createMockApiClient(
+          vi.fn().mockResolvedValue({ data: createProfile() }),
+        ) as unknown as ApiClient,
+      },
+    });
+
+    const button = await screen.findByRole("button", { name: "立即更新" });
+    await user.click(button);
+    await user.click(screen.getByRole("button", { name: "更新中..." }));
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
   });
 });
