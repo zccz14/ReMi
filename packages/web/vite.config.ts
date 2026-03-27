@@ -11,7 +11,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       manifest: pwaManifest,
       includeAssets: ["icons/icon-192.png", "icons/icon-512.png"],
       devOptions: {
