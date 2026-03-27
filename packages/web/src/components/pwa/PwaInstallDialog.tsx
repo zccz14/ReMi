@@ -25,7 +25,10 @@ export function PwaInstallDialog({
   onClose,
 }: PwaInstallDialogProps) {
   const { t } = useTranslation();
-  const steps = t(`me.install.steps.${platform}`, { returnObjects: true }) as string[];
+  const translatedSteps = t(`me.install.steps.${platform}`, { returnObjects: true });
+  const steps = Array.isArray(translatedSteps)
+    ? translatedSteps.filter((step): step is string => typeof step === "string")
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>

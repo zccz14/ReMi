@@ -1,7 +1,15 @@
+import { useState } from "react";
 import type { ApiClient } from "../../src/lib/api-client";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, renderWithProviders, screen, userEvent, waitFor } from "../helpers/test-utils";
+import {
+  cleanup,
+  renderWithProviders,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from "../helpers/test-utils";
 import { MePage } from "../../src/pages/MePage";
 import { emptyPublicProfile } from "../../src/lib/profile";
 
@@ -77,6 +85,51 @@ function renderResolvedMePage() {
   return renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
 }
 
+function renderInteractiveInstallMePage(
+  options?: Partial<{
+    platform: InstallPlatform;
+    shouldShowBrowserOpenHint: boolean;
+  }>,
+) {
+  const installOrShowGuide = vi.fn();
+  const closeGuide = vi.fn();
+
+  function Harness() {
+    const [isGuideOpen, setIsGuideOpen] = useState(false);
+
+    usePwaInstallMock.mockImplementation(() => ({
+      isPwaMode: false,
+      platform: options?.platform ?? "unknown",
+      isGuideOpen,
+      shouldShowBrowserOpenHint: options?.shouldShowBrowserOpenHint ?? false,
+      installOrShowGuide: vi.fn(async () => {
+        installOrShowGuide();
+        setIsGuideOpen(true);
+      }),
+      closeGuide: vi.fn(() => {
+        closeGuide();
+        setIsGuideOpen(false);
+      }),
+    }));
+
+    return <MePage />;
+  }
+
+  const renderResult = renderWithProviders(<Harness />, {
+    authState: {
+      apiClient: createMockApiClient(
+        vi.fn().mockResolvedValue({ data: createProfile() }),
+      ) as unknown as ApiClient,
+    },
+  });
+
+  return {
+    ...renderResult,
+    installOrShowGuide,
+    closeGuide,
+  };
+}
+
 afterEach(() => {
   cleanup();
   usePwaInstallMock.mockReset();
@@ -139,16 +192,14 @@ describe("MePage", () => {
     expect(screen.queryByRole("button", { name: "安装应用" })).not.toBeInTheDocument();
   });
 
-  it("calls installOrShowGuide when CTA clicked", async () => {
-    const installOrShowGuide = vi.fn().mockResolvedValue(undefined);
+  it("opens the install dialog after CTA clicked", async () => {
     const user = userEvent.setup();
-    mockUsePwaInstall({ installOrShowGuide });
-
-    renderResolvedMePage();
+    const { installOrShowGuide } = renderInteractiveInstallMePage({ platform: "ios" });
 
     await user.click(await screen.findByRole("button", { name: "安装应用" }));
 
     expect(installOrShowGuide).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("renders iOS guidance and closes via translated footer button", async () => {
@@ -162,11 +213,13 @@ describe("MePage", () => {
 
     renderResolvedMePage();
 
-    expect(await screen.findByText("安装 ReMi")).toBeInTheDocument();
-    expect(screen.getByText("在 Safari 中点击分享按钮。")).toBeInTheDocument();
-    expect(screen.getByText("选择“添加到主屏幕”，然后确认。")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    const steps = within(dialog).getAllByRole("listitem");
+    expect(within(dialog).getByRole("heading", { name: "安装 ReMi" })).toBeInTheDocument();
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toHaveTextContent(/Safari/);
 
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
 
     expect(closeGuide).toHaveBeenCalledTimes(1);
   });
@@ -182,7 +235,7 @@ describe("MePage", () => {
 
     renderResolvedMePage();
 
-    expect(await screen.findByText("点击地址栏中的安装图标。")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
@@ -197,11 +250,25 @@ describe("MePage", () => {
 
     renderResolvedMePage();
 
+    const dialog = await screen.findByRole("dialog");
+    const steps = within(dialog).getAllByRole("listitem");
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toHaveTextContent(/打开浏览器菜单/);
     expect(
-      await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
+      within(dialog).getByText("如果没有看到安装选项，也可以继续在浏览器中使用 ReMi。"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("如果没有看到安装选项，也可以继续在浏览器中使用 ReMi。"),
-    ).toBeInTheDocument();
+  });
+
+  it("renders install dialog without steps when translation is missing", async () => {
+    mockUsePwaInstall({
+      isGuideOpen: true,
+      platform: "broken" as InstallPlatform,
+    });
+
+    renderResolvedMePage();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "安装 ReMi" })).toBeInTheDocument();
+    expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 });
