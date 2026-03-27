@@ -324,6 +324,16 @@ describe("MePage", () => {
     expect(await screen.findByRole("button", { name: "立即更新" })).toBeInTheDocument();
   });
 
+  it("shows both update and install CTAs when update is available in browser mode", async () => {
+    mockUsePwaInstall({ isPwaMode: false });
+    mockUsePwaUpdate({ hasUpdate: true });
+
+    renderResolvedMePage();
+
+    expect(await screen.findByRole("button", { name: "立即更新" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "安装应用" })).toBeInTheDocument();
+  });
+
   it("calls applyUpdate when update CTA is clicked", async () => {
     const user = userEvent.setup();
     const applyUpdate = vi.fn().mockResolvedValue(undefined);
