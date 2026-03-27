@@ -22,6 +22,10 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn() },
 }));
 
+const APPLY_TIMEOUT_MS = 10_000;
+const STALE_UPDATE_MESSAGE = "This update is no longer available. Please try again.";
+const UPDATE_TIMEOUT_MESSAGE = "Update timed out. Please try again.";
+
 function TestConsumer() {
   const { hasUpdate, isApplying, applyUpdate } = usePwaUpdate();
 
@@ -310,9 +314,7 @@ describe("PwaUpdateProvider", () => {
 
     expect(updateServiceWorker).not.toHaveBeenCalled();
     expect(view.getByTestId("is-applying")).toHaveTextContent("false");
-    expect(toast.error).toHaveBeenCalledWith(
-      "This update is no longer available. Please try again.",
-    );
+    expect(toast.error).toHaveBeenCalledWith(STALE_UPDATE_MESSAGE);
   });
 
   it("times out a stuck update apply", async () => {
@@ -336,12 +338,52 @@ describe("PwaUpdateProvider", () => {
     expect(toast.error).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(APPLY_TIMEOUT_MS);
       await flushMicrotasks();
     });
 
     expect(updateServiceWorker).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledWith("Update timed out. Please try again.");
+    expect(toast.error).toHaveBeenCalledWith(UPDATE_TIMEOUT_MESSAGE);
     expect(view.getByTestId("is-applying")).toHaveTextContent("false");
+  });
+
+  it("clears the apply timeout after a successful update", async () => {
+    vi.useFakeTimers();
+    let resolveUpdate: (() => void) | undefined;
+    const updateServiceWorker = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+    const baselineTimerCount = vi.getTimerCount();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      resolveUpdate?.();
+      await flushMicrotasks();
+    });
+
+    expect(view.getByTestId("is-applying")).toHaveTextContent("false");
+    expect(vi.getTimerCount()).toBe(baselineTimerCount);
+
+    await act(async () => {
+      vi.advanceTimersByTime(APPLY_TIMEOUT_MS);
+      await flushMicrotasks();
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });

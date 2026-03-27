@@ -96,12 +96,13 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
 
     isApplyingRef.current = true;
     setIsApplying(true);
+    let timeoutId: number | undefined;
 
     try {
       await Promise.race([
         updateServiceWorker(),
         new Promise<never>((_, reject) => {
-          window.setTimeout(() => {
+          timeoutId = window.setTimeout(() => {
             reject(new Error("PWA apply update timed out"));
           }, APPLY_TIMEOUT_MS);
         }),
@@ -113,6 +114,9 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
           : UPDATE_FAILED_MESSAGE,
       );
     } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
       isApplyingRef.current = false;
       setIsApplying(false);
     }
