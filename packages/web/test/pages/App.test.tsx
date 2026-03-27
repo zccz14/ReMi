@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Outlet } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "../helpers/test-utils";
 
@@ -18,7 +19,12 @@ function mockPwaInstallProvider() {
 
 function mockSharedPages() {
   vi.doMock("../../src/components/layout/AppShell", () => ({
-    AppShell: () => <div>app-shell</div>,
+    AppShell: () => (
+      <div>
+        <div>app-shell</div>
+        <Outlet />
+      </div>
+    ),
   }));
 
   vi.doMock("../../src/pages/MessagesPage", () => ({
@@ -67,6 +73,7 @@ function mockAppModules(authProvider: (props: { children: ReactNode }) => ReactN
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.resetModules();
   vi.doUnmock("@remi/client");
   vi.doUnmock("../../src/hooks/use-auth");
@@ -137,8 +144,15 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByTestId("auth-provider")).toBeInTheDocument();
+    expect(screen.getByText("messages-page")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("auth-provider")).getByText("messages-page"),
+    ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("pwa-install-provider")).getByTestId("auth-provider"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-install-provider")).getByText("messages-page"),
     ).toBeInTheDocument();
   });
 });
