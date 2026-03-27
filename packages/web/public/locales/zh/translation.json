@@ -71,7 +71,15 @@
   "anchors": {
     "title": "灵魂锚点",
     "search": "搜索锚点...",
+    "total": "总灵魂锚点：{{count}}",
     "noAnswer": "未回答",
+    "createdAt": "创建于 {{value}}",
+    "updatedAt": "更新于 {{value}}",
+    "invalidTime": "时间未知",
+    "source": {
+      "manual": "手动",
+      "interview": "访谈"
+    },
     "add": "添加锚点",
     "question": "问题",
     "answer": "答案",

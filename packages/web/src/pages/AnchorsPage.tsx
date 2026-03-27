@@ -23,9 +23,9 @@ import {
 import { cn } from "@/lib/utils";
 
 export function AnchorsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { apiClient } = useAuth();
-  const { anchors, loading, create, update, remove } = useAnchors(apiClient);
+  const { anchors, total, loading, create, update, remove } = useAnchors(apiClient);
   const [search, setSearch] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editQ, setEditQ] = useState("");
@@ -33,6 +33,21 @@ export function AnchorsPage() {
   const [adding, setAdding] = useState(false);
   const [newQ, setNewQ] = useState("");
   const [newA, setNewA] = useState("");
+
+  const formatTimestamp = (value: number) => {
+    if (!Number.isFinite(value)) {
+      return t("anchors.invalidTime");
+    }
+
+    try {
+      return new Intl.DateTimeFormat(i18n.language, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(value));
+    } catch {
+      return t("anchors.invalidTime");
+    }
+  };
 
   const filtered = anchors.filter(
     (a) =>
@@ -63,7 +78,7 @@ export function AnchorsPage() {
   if (loading) {
     return (
       <FullScreenLayout title={t("anchors.title")}>
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3" data-testid="anchors-loading">
           <Skeleton className="h-8 w-full" />
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -79,6 +94,9 @@ export function AnchorsPage() {
     <FullScreenLayout title={t("anchors.title")}>
       <div className="flex flex-col h-full">
         <div className="p-4 space-y-3">
+          <div className="text-sm text-muted-foreground" data-testid="anchors-total">
+            {t("anchors.total", { count: total })}
+          </div>
           <Input
             placeholder={t("anchors.search")}
             value={search}
@@ -112,11 +130,15 @@ export function AnchorsPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{a.question}</span>
                         <Badge variant={a.source === "interview" ? "secondary" : "outline"}>
-                          {a.source}
+                          {t(`anchors.source.${a.source}`)}
                         </Badge>
                       </div>
                       <div className={cn("text-sm text-muted-foreground")}>
                         {a.answer || t("anchors.noAnswer")}
+                      </div>
+                      <div className="space-y-1 text-xs text-muted-foreground">
+                        <div>{t("anchors.createdAt", { value: formatTimestamp(a.createdAt) })}</div>
+                        <div>{t("anchors.updatedAt", { value: formatTimestamp(a.updatedAt) })}</div>
                       </div>
                     </div>
                     <AlertDialog>
@@ -172,7 +194,11 @@ export function AnchorsPage() {
               </CardContent>
             </Card>
           ) : (
-            <Button className="w-full" onClick={() => setAdding(true)}>
+            <Button
+              className="w-full"
+              onClick={() => setAdding(true)}
+              data-testid="add-anchor-button"
+            >
               + {t("anchors.add")}
             </Button>
           )}

@@ -77,7 +77,15 @@
   "anchors": {
     "title": "Soul Anchors",
     "search": "Search anchors...",
+    "total": "Total soul anchors: {{count}}",
     "noAnswer": "No answer",
+    "createdAt": "Created at {{value}}",
+    "updatedAt": "Updated at {{value}}",
+    "invalidTime": "Unknown time",
+    "source": {
+      "manual": "Manual",
+      "interview": "Interview"
+    },
     "add": "Add Anchor",
     "question": "Question",
     "answer": "Answer",
