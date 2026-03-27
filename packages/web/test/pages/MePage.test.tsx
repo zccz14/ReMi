@@ -1,7 +1,7 @@
 import type { ApiClient } from "../../src/lib/api-client";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, renderWithProviders, screen } from "../helpers/test-utils";
+import { cleanup, renderWithProviders, screen, userEvent, waitFor } from "../helpers/test-utils";
 import { MePage } from "../../src/pages/MePage";
 import { emptyPublicProfile } from "../../src/lib/profile";
 
@@ -73,6 +73,10 @@ function renderMePage(profileRequest: ProfileRequestMock) {
   });
 }
 
+function renderResolvedMePage() {
+  return renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
+}
+
 afterEach(() => {
   cleanup();
   usePwaInstallMock.mockReset();
@@ -120,19 +124,84 @@ describe("MePage", () => {
     expect(screen.queryByText("hello")).not.toBeInTheDocument();
   });
 
-  it.fails(
-    "shows unknown-platform install fallback copy when the install guide is open",
-    async () => {
-      mockUsePwaInstall({
-        isGuideOpen: true,
-        platform: "unknown",
-      });
+  it("shows install CTA when running in browser mode", async () => {
+    renderResolvedMePage();
 
-      renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
+    expect(await screen.findByRole("button", { name: "安装应用" })).toBeInTheDocument();
+  });
 
-      expect(
-        await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
-      ).toBeInTheDocument();
-    },
-  );
+  it("hides install CTA when already in PWA mode", async () => {
+    mockUsePwaInstall({ isPwaMode: true });
+
+    renderResolvedMePage();
+
+    await screen.findByText("mock-p...-key");
+    expect(screen.queryByRole("button", { name: "安装应用" })).not.toBeInTheDocument();
+  });
+
+  it("calls installOrShowGuide when CTA clicked", async () => {
+    const installOrShowGuide = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    mockUsePwaInstall({ installOrShowGuide });
+
+    renderResolvedMePage();
+
+    await user.click(await screen.findByRole("button", { name: "安装应用" }));
+
+    expect(installOrShowGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders iOS guidance and closes via translated footer button", async () => {
+    const closeGuide = vi.fn();
+    const user = userEvent.setup();
+    mockUsePwaInstall({
+      isGuideOpen: true,
+      platform: "ios",
+      closeGuide,
+    });
+
+    renderResolvedMePage();
+
+    expect(await screen.findByText("安装 ReMi")).toBeInTheDocument();
+    expect(screen.getByText("在 Safari 中点击分享按钮。")).toBeInTheDocument();
+    expect(screen.getByText("选择“添加到主屏幕”，然后确认。")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+
+    expect(closeGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the dialog on dismissal path", async () => {
+    const closeGuide = vi.fn();
+    const user = userEvent.setup();
+    mockUsePwaInstall({
+      isGuideOpen: true,
+      platform: "desktop",
+      closeGuide,
+    });
+
+    renderResolvedMePage();
+
+    expect(await screen.findByText("点击地址栏中的安装图标。")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(closeGuide).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows unknown-platform install fallback copy when the install guide is open", async () => {
+    mockUsePwaInstall({
+      isGuideOpen: true,
+      platform: "unknown",
+    });
+
+    renderResolvedMePage();
+
+    expect(
+      await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("如果没有看到安装选项，也可以继续在浏览器中使用 ReMi。"),
+    ).toBeInTheDocument();
+  });
 });

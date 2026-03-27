@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BarChart3, Anchor, Share2, Settings, ChevronRight } from "lucide-react";
+import { BarChart3, Anchor, Share2, Settings, ChevronRight, Download } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
+import { usePwaInstall } from "../hooks/use-pwa-install";
 import { ChatAvatar } from "../components/chat/ChatAvatar";
+import { PwaInstallDialog } from "../components/pwa/PwaInstallDialog";
 import { emptyPublicProfile, resolveProfileSummary } from "../lib/profile";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +21,14 @@ const menuItems = [
 export function MePage() {
   const { t } = useTranslation();
   const { apiClient, publicKey } = useAuth();
+  const {
+    isPwaMode,
+    platform,
+    isGuideOpen,
+    shouldShowBrowserOpenHint,
+    installOrShowGuide,
+    closeGuide,
+  } = usePwaInstall();
   const [summary, setSummary] = useState(() =>
     resolveProfileSummary(publicKey, emptyPublicProfile),
   );
@@ -85,7 +96,23 @@ export function MePage() {
             </Link>
           ))}
         </div>
+
+        {!isPwaMode ? (
+          <div>
+            <Button className="w-full" type="button" onClick={() => void installOrShowGuide()}>
+              <Download className="h-4 w-4" />
+              {t("me.install.cta")}
+            </Button>
+          </div>
+        ) : null}
       </div>
+
+      <PwaInstallDialog
+        open={isGuideOpen}
+        platform={platform}
+        shouldShowBrowserOpenHint={shouldShowBrowserOpenHint}
+        onClose={closeGuide}
+      />
     </div>
   );
 }
