@@ -7,6 +7,12 @@ vi.mock("qrcode.react", () => ({
 
 import { SharePage } from "../../src/pages/SharePage";
 
+const shareText = {
+  bootstrapping: "正在准备公开资料…",
+  bootstrapError: "公开资料准备失败，请稍后重试。",
+  copyLink: "复制链接",
+};
+
 afterEach(cleanup);
 
 function createDeferred<T>() {
@@ -75,15 +81,15 @@ describe("SharePage", () => {
       },
     });
 
-    expect(getByText("share.bootstrapping")).toBeInTheDocument();
-    expect(getByText("share.copyLink")).toBeDisabled();
+    expect(getByText(shareText.bootstrapping)).toBeInTheDocument();
+    expect(getByText(shareText.copyLink)).toBeDisabled();
     expect(queryByTestId("qr-code")).toBeNull();
     expect(() => getByText(/http:\/\/localhost:3000\/profile\/mock-public-key/)).toThrow();
 
     bootstrap.resolve({ data: {} });
 
     await waitFor(() => {
-      expect(getByText("share.copyLink")).toBeEnabled();
+      expect(getByText(shareText.copyLink)).toBeEnabled();
     });
     expect(getByText(/http:\/\/localhost:3000\/profile\/mock-public-key/)).toBeInTheDocument();
   });
@@ -102,8 +108,8 @@ describe("SharePage", () => {
       },
     });
 
-    expect(await waitFor(() => getByText("share.bootstrapError"))).toBeInTheDocument();
-    expect(getByText("share.copyLink")).toBeDisabled();
+    expect(await waitFor(() => getByText(shareText.bootstrapError))).toBeInTheDocument();
+    expect(getByText(shareText.copyLink)).toBeDisabled();
     expect(queryByTestId("qr-code")).toBeNull();
     expect(() => getByText(/http:\/\/localhost:3000\/profile\/mock-public-key/)).toThrow();
   });

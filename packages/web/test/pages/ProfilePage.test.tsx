@@ -11,6 +11,12 @@ import {
 import { ProfilePage } from "../../src/pages/ProfilePage";
 
 const API_BASE = "https://api.example.test";
+const profileText = {
+  sendMessage: "发消息",
+  notFound: "未找到该资料",
+  invalidLink: "该资料链接无效",
+  error: "加载资料失败",
+};
 
 function createProfile(
   overrides?: Partial<{
@@ -88,7 +94,7 @@ describe("ProfilePage", () => {
       "src",
       `${API_BASE}/api/public/abcdef1234567890/profile/avatar?v=7`,
     );
-    expect(screen.getByRole("button", { name: "profile.sendMessage" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: profileText.sendMessage })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(`${API_BASE}/api/public/abcdef1234567890/profile`);
   });
 
@@ -132,7 +138,9 @@ describe("ProfilePage", () => {
 
     const { container } = renderProfilePage();
 
-    expect(await screen.findByRole("button", { name: "profile.sendMessage" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: profileText.sendMessage }),
+    ).toBeInTheDocument();
     expect(screen.queryAllByText("abcdef...7890").length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
@@ -238,8 +246,8 @@ describe("ProfilePage", () => {
 
     renderProfilePage();
 
-    expect(await screen.findByText("profile.notFound")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "profile.sendMessage" })).not.toBeInTheDocument();
+    expect(await screen.findByText(profileText.notFound)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: profileText.sendMessage })).not.toBeInTheDocument();
     expect(screen.queryByText("A")).not.toBeInTheDocument();
   });
 
@@ -255,8 +263,8 @@ describe("ProfilePage", () => {
 
     renderProfilePage();
 
-    expect(await screen.findByText("profile.invalidLink")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "profile.sendMessage" })).not.toBeInTheDocument();
+    expect(await screen.findByText(profileText.invalidLink)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: profileText.sendMessage })).not.toBeInTheDocument();
     expect(screen.queryByText("A")).not.toBeInTheDocument();
   });
 
@@ -266,8 +274,8 @@ describe("ProfilePage", () => {
 
     renderProfilePage();
 
-    expect(await screen.findByText("profile.error")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "profile.sendMessage" })).not.toBeInTheDocument();
+    expect(await screen.findByText(profileText.error)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: profileText.sendMessage })).not.toBeInTheDocument();
     expect(screen.queryByText("A")).not.toBeInTheDocument();
   });
 });

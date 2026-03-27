@@ -4,6 +4,29 @@ import { renderWithProviders, cleanup, userEvent, waitFor } from "../helpers/tes
 import { SettingsPage } from "../../src/pages/SettingsPage";
 import type { ApiClient } from "../../src/lib/api-client";
 
+const settingsText = {
+  exportKey: "导出私钥",
+  importPlaceholder: "粘贴 base58 格式私钥...",
+  saveProfile: "保存公开资料",
+  profileLoadError: "加载公开资料失败",
+  retryProfileLoad: "重试加载公开资料",
+  displayName: "昵称",
+  bio: "个人简介",
+  uploadAvatar: "上传头像",
+  profileSaved: "公开资料已保存",
+  avatarGifUnsupported: "暂不支持 GIF 头像",
+  deleteAvatar: "删除头像",
+  avatarPreview: "头像预览",
+  avatarUploadSuccess: "头像已更新",
+  avatarUploadError: "上传头像失败",
+  avatarDeleteSuccess: "头像已删除",
+  avatarDeleteError: "删除头像失败",
+  apiTokens: "API Token",
+  apiTokenNote: "Token 备注",
+  createApiToken: "创建 Token",
+  deleteApiToken: "删除 Token",
+};
+
 let avatarConfirmResult: unknown = null;
 
 vi.mock("sonner", () => ({
@@ -78,7 +101,7 @@ describe("SettingsPage", () => {
     expect(queryByText("mock-private-key")).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    const exportButton = getByText("settings.exportKey");
+    const exportButton = getByText(settingsText.exportKey);
     await user.click(exportButton);
 
     // Private key should now be visible
@@ -91,7 +114,7 @@ describe("SettingsPage", () => {
 
   it("shows import input field", () => {
     const { getByPlaceholderText } = renderWithProviders(<SettingsPage />);
-    expect(getByPlaceholderText("settings.importPlaceholder")).toBeInTheDocument();
+    expect(getByPlaceholderText(settingsText.importPlaceholder)).toBeInTheDocument();
   });
 
   it("loads owner profile data into the public profile form", async () => {
@@ -137,10 +160,10 @@ describe("SettingsPage", () => {
       },
     });
 
-    const saveButton = await findByRole("button", { name: "settings.saveProfile" });
+    const saveButton = await findByRole("button", { name: settingsText.saveProfile });
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith("settings.profileLoadError");
+      expect(toast.error).toHaveBeenCalledWith(settingsText.profileLoadError);
     });
     expect(saveButton).toBeDisabled();
     expect(mockPut).not.toHaveBeenCalled();
@@ -182,7 +205,7 @@ describe("SettingsPage", () => {
       },
     });
 
-    const retryButton = await findByRole("button", { name: "settings.retryProfileLoad" });
+    const retryButton = await findByRole("button", { name: settingsText.retryProfileLoad });
     expect(retryButton).toBeEnabled();
 
     const user = userEvent.setup();
@@ -191,7 +214,9 @@ describe("SettingsPage", () => {
     expect(await findByDisplayValue("Recovered")).toBeInTheDocument();
     expect(await findByDisplayValue("hello")).toBeInTheDocument();
     await waitFor(() => {
-      expect(queryByRole("button", { name: "settings.retryProfileLoad" })).not.toBeInTheDocument();
+      expect(
+        queryByRole("button", { name: settingsText.retryProfileLoad }),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -212,10 +237,10 @@ describe("SettingsPage", () => {
       },
     });
 
-    expect(getByLabelText("settings.displayName")).toBeDisabled();
-    expect(getByLabelText("settings.bio")).toBeDisabled();
-    expect(getByLabelText("settings.uploadAvatar")).toBeDisabled();
-    expect(getByRole("button", { name: "settings.saveProfile" })).toBeDisabled();
+    expect(getByLabelText(settingsText.displayName)).toBeDisabled();
+    expect(getByLabelText(settingsText.bio)).toBeDisabled();
+    expect(getByLabelText(settingsText.uploadAvatar)).toBeDisabled();
+    expect(getByRole("button", { name: settingsText.saveProfile })).toBeDisabled();
   });
 
   it("saves edited displayName and bio through PUT /api/:pubKey/profile", async () => {
@@ -239,20 +264,20 @@ describe("SettingsPage", () => {
     });
 
     await waitFor(() => {
-      expect(getByLabelText("settings.displayName")).toBeEnabled();
-      expect(getByLabelText("settings.bio")).toBeEnabled();
+      expect(getByLabelText(settingsText.displayName)).toBeEnabled();
+      expect(getByLabelText(settingsText.bio)).toBeEnabled();
     });
 
     const user = userEvent.setup();
-    await user.type(await getByLabelText("settings.displayName"), "Zed");
-    await user.type(getByLabelText("settings.bio"), "hello world");
-    await user.click(getByRole("button", { name: "settings.saveProfile" }));
+    await user.type(await getByLabelText(settingsText.displayName), "Zed");
+    await user.type(getByLabelText(settingsText.bio), "hello world");
+    await user.click(getByRole("button", { name: settingsText.saveProfile }));
 
     expect(mockPut).toHaveBeenCalledWith("/api/mock-public-key/profile", {
       displayName: "Zed",
       bio: "hello world",
     });
-    expect(toast.success).toHaveBeenCalledWith("settings.profileSaved");
+    expect(toast.success).toHaveBeenCalledWith(settingsText.profileSaved);
   });
 
   it("rejects gif selection before crop/upload", async () => {
@@ -272,15 +297,15 @@ describe("SettingsPage", () => {
     });
 
     await waitFor(() => {
-      expect(getByLabelText("settings.uploadAvatar")).toBeEnabled();
+      expect(getByLabelText(settingsText.uploadAvatar)).toBeEnabled();
     });
 
     const user = userEvent.setup({ applyAccept: false });
-    const input = getByLabelText("settings.uploadAvatar") as HTMLInputElement;
+    const input = getByLabelText(settingsText.uploadAvatar) as HTMLInputElement;
     expect(input).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
     await user.upload(input, new File(["gif"], "avatar.gif", { type: "image/gif" }));
 
-    expect(toast.error).toHaveBeenCalledWith("settings.avatarGifUnsupported");
+    expect(toast.error).toHaveBeenCalledWith(settingsText.avatarGifUnsupported);
     expect(mockPutBinary).not.toHaveBeenCalled();
     expect(queryByText("confirm-avatar-crop")).not.toBeInTheDocument();
   });
@@ -303,8 +328,8 @@ describe("SettingsPage", () => {
       },
     });
 
-    expect(getByLabelText("settings.uploadAvatar")).toBeDisabled();
-    expect(queryByRole("button", { name: "settings.deleteAvatar" })).not.toBeInTheDocument();
+    expect(getByLabelText(settingsText.uploadAvatar)).toBeDisabled();
+    expect(queryByRole("button", { name: settingsText.deleteAvatar })).not.toBeInTheDocument();
     expect(mockPutBinary).not.toHaveBeenCalled();
     expect(mockDelete).not.toHaveBeenCalled();
   });
@@ -346,14 +371,14 @@ describe("SettingsPage", () => {
       },
     });
 
-    expect(await findByAltText("settings.avatarPreview")).toHaveAttribute(
+    expect(await findByAltText(settingsText.avatarPreview)).toHaveAttribute(
       "src",
       `${window.location.origin}/api/public/mock-public-key/profile/avatar?v=1`,
     );
 
     const user = userEvent.setup();
     await user.upload(
-      getByLabelText("settings.uploadAvatar"),
+      getByLabelText(settingsText.uploadAvatar),
       new File(["png"], "avatar.png", { type: "image/png" }),
     );
     await user.click(getByRole("button", { name: "confirm-avatar-crop" }));
@@ -368,11 +393,11 @@ describe("SettingsPage", () => {
       );
     });
 
-    expect(await findByAltText("settings.avatarPreview")).toHaveAttribute(
+    expect(await findByAltText(settingsText.avatarPreview)).toHaveAttribute(
       "src",
       `${window.location.origin}/api/public/mock-public-key/profile/avatar?v=2`,
     );
-    expect(toast.success).toHaveBeenCalledWith("settings.avatarUploadSuccess");
+    expect(toast.success).toHaveBeenCalledWith(settingsText.avatarUploadSuccess);
   });
 
   it("does not show avatar upload success if the refresh fails", async () => {
@@ -401,14 +426,14 @@ describe("SettingsPage", () => {
       },
     );
 
-    expect(await findByAltText("settings.avatarPreview")).toHaveAttribute(
+    expect(await findByAltText(settingsText.avatarPreview)).toHaveAttribute(
       "src",
       `${window.location.origin}/api/public/mock-public-key/profile/avatar?v=1`,
     );
 
     const user = userEvent.setup();
     await user.upload(
-      getByLabelText("settings.uploadAvatar"),
+      getByLabelText(settingsText.uploadAvatar),
       new File(["png"], "avatar.png", { type: "image/png" }),
     );
     await user.click(getByRole("button", { name: "confirm-avatar-crop" }));
@@ -416,8 +441,8 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(mockPutBinary).toHaveBeenCalled();
     });
-    expect(toast.success).not.toHaveBeenCalledWith("settings.avatarUploadSuccess");
-    expect(toast.error).toHaveBeenCalledWith("settings.avatarUploadError");
+    expect(toast.success).not.toHaveBeenCalledWith(settingsText.avatarUploadSuccess);
+    expect(toast.error).toHaveBeenCalledWith(settingsText.avatarUploadError);
     expect(queryByText("confirm-avatar-crop")).toBeInTheDocument();
   });
 
@@ -462,17 +487,17 @@ describe("SettingsPage", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(await findByRole("button", { name: "settings.deleteAvatar" }));
+    await user.click(await findByRole("button", { name: settingsText.deleteAvatar }));
 
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith("/api/mock-public-key/profile/avatar");
     });
 
     await waitFor(() => {
-      expect(queryByAltText("settings.avatarPreview")).not.toBeInTheDocument();
-      expect(queryByRole("button", { name: "settings.deleteAvatar" })).not.toBeInTheDocument();
+      expect(queryByAltText(settingsText.avatarPreview)).not.toBeInTheDocument();
+      expect(queryByRole("button", { name: settingsText.deleteAvatar })).not.toBeInTheDocument();
     });
-    expect(toast.success).toHaveBeenCalledWith("settings.avatarDeleteSuccess");
+    expect(toast.success).toHaveBeenCalledWith(settingsText.avatarDeleteSuccess);
   });
 
   it("loads existing api tokens and shows the full token id in the list", async () => {
@@ -511,7 +536,7 @@ describe("SettingsPage", () => {
       },
     });
 
-    expect(await findByText("settings.apiTokens")).toBeInTheDocument();
+    expect(await findByText(settingsText.apiTokens)).toBeInTheDocument();
     expect(await findByText("Cursor local")).toBeInTheDocument();
     expect(await findByText("sk-secret-token")).toBeInTheDocument();
     expect(await findByText("2026-03-25T00:00:00.000Z")).toBeInTheDocument();
@@ -558,15 +583,15 @@ describe("SettingsPage", () => {
     });
 
     const user = userEvent.setup();
-    await user.type(await getByLabelText("settings.apiTokenNote"), "CLI");
-    await user.click(await findByRole("button", { name: "settings.createApiToken" }));
+    await user.type(await getByLabelText(settingsText.apiTokenNote), "CLI");
+    await user.click(await findByRole("button", { name: settingsText.createApiToken }));
 
     expect(mockPost).toHaveBeenCalledWith("/api/mock-public-key/api-tokens", { note: "CLI" });
     expect(await findAllByText("sk-created-secret")).toHaveLength(2);
     expect(await findByText("CLI")).toBeInTheDocument();
     expect(queryByDisplayValue("CLI")).not.toBeInTheDocument();
 
-    await user.click(await findByRole("button", { name: "settings.deleteApiToken" }));
+    await user.click(await findByRole("button", { name: settingsText.deleteApiToken }));
 
     expect(mockDelete).toHaveBeenCalledWith("/api/mock-public-key/api-tokens/sk-created-secret");
     await waitFor(() => {
@@ -598,13 +623,13 @@ describe("SettingsPage", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(await findByRole("button", { name: "settings.deleteAvatar" }));
+    await user.click(await findByRole("button", { name: settingsText.deleteAvatar }));
 
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith("/api/mock-public-key/profile/avatar");
     });
-    expect(toast.success).not.toHaveBeenCalledWith("settings.avatarDeleteSuccess");
-    expect(toast.error).toHaveBeenCalledWith("settings.avatarDeleteError");
-    expect(queryByAltText("settings.avatarPreview")).toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalledWith(settingsText.avatarDeleteSuccess);
+    expect(toast.error).toHaveBeenCalledWith(settingsText.avatarDeleteError);
+    expect(queryByAltText(settingsText.avatarPreview)).toBeInTheDocument();
   });
 });
