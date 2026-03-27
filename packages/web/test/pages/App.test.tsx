@@ -17,6 +17,20 @@ function mockPwaInstallProvider() {
   });
 }
 
+function mockPwaUpdateProvider() {
+  vi.doMock("../../src/hooks/use-pwa-update", async () => {
+    const actual = await vi.importActual<typeof import("../../src/hooks/use-pwa-update")>(
+      "../../src/hooks/use-pwa-update",
+    );
+    return {
+      ...actual,
+      PwaUpdateProvider: ({ children }: { children: ReactNode }) => (
+        <div data-testid="pwa-update-provider">{children}</div>
+      ),
+    };
+  });
+}
+
 function mockSharedPages() {
   vi.doMock("../../src/components/layout/AppShell", () => ({
     AppShell: () => (
@@ -52,6 +66,7 @@ function mockSharedPages() {
 
 function mockAppModules(authProvider: (props: { children: ReactNode }) => ReactNode) {
   mockPwaInstallProvider();
+  mockPwaUpdateProvider();
 
   vi.doMock("../../src/hooks/use-auth", async () => {
     const actual = await vi.importActual<typeof import("../../src/hooks/use-auth")>(
@@ -98,6 +113,7 @@ if (!window.matchMedia) {
 describe("App", () => {
   it("renders the real public profile route without crashing outside AuthProvider", async () => {
     mockPwaInstallProvider();
+    mockPwaUpdateProvider();
     vi.doMock("@remi/client", () => ({
       KeyStore: vi.fn().mockImplementation(() => ({
         init: vi.fn().mockRejectedValue(new Error("identity exploded")),
@@ -129,6 +145,13 @@ describe("App", () => {
 
     expect(await screen.findByText("Public Person")).toBeInTheDocument();
     expect(screen.queryByText("identity exploded")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pwa-update-provider")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-update-provider")).getByText("Public Person"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-install-provider")).getByTestId("pwa-update-provider"),
+    ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("pwa-install-provider")).getByText("Public Person"),
     ).toBeInTheDocument();
@@ -143,9 +166,16 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByTestId("auth-provider")).toBeInTheDocument();
+    expect(screen.getByTestId("pwa-update-provider")).toBeInTheDocument();
     expect(screen.getByText("messages-page")).toBeInTheDocument();
     expect(
       within(screen.getByTestId("auth-provider")).getByText("messages-page"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-update-provider")).getByTestId("auth-provider"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-update-provider")).getByText("messages-page"),
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("pwa-install-provider")).getByTestId("auth-provider"),
