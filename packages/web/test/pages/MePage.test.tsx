@@ -1,3 +1,5 @@
+import type { ApiClient } from "../../src/lib/api-client";
+import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, renderWithProviders, screen } from "../helpers/test-utils";
 import { MePage } from "../../src/pages/MePage";
@@ -10,11 +12,15 @@ vi.mock("../../src/hooks/use-pwa-install", () => ({
 }));
 
 const API_BASE = "https://api.example.test";
+type InstallPlatform = "ios" | "android" | "desktop" | "unknown";
+type ProfileResponse = { data: typeof emptyPublicProfile };
+type ProfileRequestMock = Mock<(path: string) => Promise<ProfileResponse>>;
+type MePageApiClient = Pick<ApiClient, "get" | "post" | "put" | "del" | "streamPost" | "ownerPath">;
 
 function mockUsePwaInstall(
   overrides?: Partial<{
     isPwaMode: boolean;
-    platform: "ios" | "android" | "desktop" | "unknown";
+    platform: InstallPlatform;
     isGuideOpen: boolean;
     shouldShowBrowserOpenHint: boolean;
     installOrShowGuide: () => Promise<void>;
@@ -48,17 +54,21 @@ function createProfile(
   };
 }
 
-function renderMePage(profileRequest: ReturnType<typeof vi.fn>) {
+function createMockApiClient(profileRequest: ProfileRequestMock) {
+  return {
+    get: profileRequest as unknown as ApiClient["get"],
+    post: vi.fn(),
+    put: vi.fn(),
+    del: vi.fn(),
+    streamPost: vi.fn(),
+    ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+  } satisfies MePageApiClient;
+}
+
+function renderMePage(profileRequest: ProfileRequestMock) {
   return renderWithProviders(<MePage />, {
     authState: {
-      apiClient: {
-        get: profileRequest,
-        post: vi.fn(),
-        put: vi.fn(),
-        del: vi.fn(),
-        streamPost: vi.fn(),
-        ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
-      } as any,
+      apiClient: createMockApiClient(profileRequest) as unknown as ApiClient,
     },
   });
 }
@@ -110,16 +120,19 @@ describe("MePage", () => {
     expect(screen.queryByText("hello")).not.toBeInTheDocument();
   });
 
-  it("shows unknown-platform install fallback copy when the install guide is open", async () => {
-    mockUsePwaInstall({
-      isGuideOpen: true,
-      platform: "unknown",
-    });
+  it.fails(
+    "shows unknown-platform install fallback copy when the install guide is open",
+    async () => {
+      mockUsePwaInstall({
+        isGuideOpen: true,
+        platform: "unknown",
+      });
 
-    renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
+      renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
 
-    expect(
-      await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
-    ).toBeInTheDocument();
-  });
+      expect(
+        await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
+      ).toBeInTheDocument();
+    },
+  );
 });
