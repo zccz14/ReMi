@@ -48,5 +48,5 @@ export function detectInstallPlatform({
 }
 
 export function shouldPreferBrowserOpenHint(userAgent: string): boolean {
-  return /FBAN|FBAV|Instagram|MicroMessenger/i.test(userAgent);
+  return /FBAV|Instagram|MicroMessenger/i.test(userAgent);
 }
