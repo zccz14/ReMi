@@ -42,6 +42,14 @@ function requireOwner(c: Context): Response | null {
   return null;
 }
 
+function parseNonNegativeInt(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
 export const anchorRoutes = new Hono();
 
 // GET /:pubKey/anchors
@@ -50,14 +58,14 @@ anchorRoutes.get("/:pubKey/anchors", (c) => {
   if (forbidden) return forbidden;
 
   const pubKey = c.req.param("pubKey");
-  const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);
-  const offset = Number(c.req.query("offset") ?? 0);
+  const limit = Math.min(parseNonNegativeInt(c.req.query("limit"), 50), 200);
+  const offset = parseNonNegativeInt(c.req.query("offset"), 0);
 
   const conn = c.get("connMgr").getConnection(pubKey);
   const items = conn.drizzle
     .select()
     .from(soulAnchors)
-    .orderBy(desc(soulAnchors.createdAt))
+    .orderBy(desc(soulAnchors.updatedAt), desc(soulAnchors.createdAt))
     .limit(limit)
     .offset(offset)
     .all();

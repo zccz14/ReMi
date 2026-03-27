@@ -13,6 +13,7 @@ interface Anchor {
 
 export function useAnchors(apiClient: ApiClient) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -23,7 +24,10 @@ export function useAnchors(apiClient: ApiClient) {
         data: { items: Anchor[]; total: number };
       }>(path);
       setAnchors(res.data.items);
+      setTotal(res.data.total);
     } catch {
+      setAnchors([]);
+      setTotal(0);
       toast.error("Operation failed");
     } finally {
       setLoading(false);
@@ -67,5 +71,5 @@ export function useAnchors(apiClient: ApiClient) {
     }
   };
 
-  return { anchors, loading, create, update, remove, reload: load };
+  return { anchors, total, loading, create, update, remove, reload: load };
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { anchorRoutes } from "../../src/routes/anchors.js";
 import { ConnectionManager } from "../../src/db/connection.js";
@@ -69,6 +69,71 @@ describe("anchor routes", () => {
     const json = await res.json();
     expect(json.data.items).toHaveLength(1);
     expect(json.data.total).toBe(1);
+  });
+
+  it("GET /api/:pubKey/anchors orders by updatedAt desc after edits", async () => {
+    const dateNowMock = vi.spyOn(Date, "now");
+    let currentTime = 1000;
+    dateNowMock.mockImplementation(() => currentTime);
+
+    try {
+      const app = createTestApp(connMgr, PUB_KEY);
+
+      const olderRes = await app.request(`/api/${PUB_KEY}/anchors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: "Older", source: "manual" }),
+      });
+
+      currentTime = 2000;
+      const newerRes = await app.request(`/api/${PUB_KEY}/anchors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: "Newer", source: "manual" }),
+      });
+
+      const { data: olderAnchor } = await olderRes.json();
+      const { data: newerAnchor } = await newerRes.json();
+
+      expect(olderAnchor.question).toBe("Older");
+      expect(newerAnchor.question).toBe("Newer");
+      expect(olderAnchor.createdAt).toBe(1000);
+      expect(newerAnchor.createdAt).toBe(2000);
+
+      currentTime = 3000;
+      const updateRes = await app.request(`/api/${PUB_KEY}/anchors/${olderAnchor.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: "edited later" }),
+      });
+      expect(updateRes.status).toBe(200);
+      const updatedJson = await updateRes.json();
+      expect(updatedJson.data.updatedAt).toBe(3000);
+
+      const res = await app.request(`/api/${PUB_KEY}/anchors`);
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.data.items.map((item: { question: string }) => item.question)).toEqual([
+        "Older",
+        "Newer",
+      ]);
+    } finally {
+      dateNowMock.mockRestore();
+    }
+  });
+
+  it("GET /api/:pubKey/anchors sanitizes invalid limit and offset", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors?limit=NaN&offset=-5`);
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.limit).toBe(50);
+    expect(json.data.offset).toBe(0);
+    expect(json.data.items).toEqual([]);
+    expect(json.data.total).toBe(0);
   });
 
   it("PUT /api/:pubKey/anchors/:id → 200 updates anchor", async () => {

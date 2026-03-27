@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useAnchors } from "../../src/hooks/use-anchors";
 import type { ApiClient } from "../../src/lib/api-client";
@@ -28,10 +28,34 @@ const mockAnchors = [
   },
 ];
 
-function createMockApiClient() {
+const reloadedAnchors = [
+  {
+    id: "a3",
+    question: "Reloaded anchor",
+    answer: "Reloaded answer",
+    source: "manual" as const,
+    createdAt: 3000,
+    updatedAt: 4000,
+  },
+];
+
+function createMockApiClient(options?: {
+  getResponses?: Array<{ data: { items: typeof mockAnchors; total: number } }>;
+}) {
+  const get = vi.fn();
+  const responses = options?.getResponses;
+
+  if (responses?.length) {
+    for (const response of responses) {
+      get.mockResolvedValueOnce(response);
+    }
+  } else {
+    get.mockResolvedValue({ data: { items: mockAnchors, total: 2 } });
+  }
+
   return {
     ownerPath: vi.fn((p: string) => "/api/test-key" + p),
-    get: vi.fn().mockResolvedValue({ data: { items: mockAnchors, total: 2 } }),
+    get,
     post: vi.fn().mockResolvedValue({}),
     put: vi.fn().mockResolvedValue({}),
     del: vi.fn().mockResolvedValue(undefined),
@@ -39,6 +63,11 @@ function createMockApiClient() {
 }
 
 describe("useAnchors", () => {
+  beforeEach(() => {
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+  });
+
   it("should load anchors on mount", async () => {
     const api = createMockApiClient();
     const { result } = renderHook(() => useAnchors(api));
@@ -50,10 +79,16 @@ describe("useAnchors", () => {
     expect(api.ownerPath).toHaveBeenCalledWith("/anchors?limit=200");
     expect(api.get).toHaveBeenCalledWith("/api/test-key/anchors?limit=200");
     expect(result.current.anchors).toEqual(mockAnchors);
+    expect(result.current.total).toBe(2);
   });
 
   it("should create an anchor and reload", async () => {
-    const api = createMockApiClient();
+    const api = createMockApiClient({
+      getResponses: [
+        { data: { items: mockAnchors, total: 2 } },
+        { data: { items: reloadedAnchors, total: 3 } },
+      ],
+    });
     const { result } = renderHook(() => useAnchors(api));
 
     await waitFor(() => {
@@ -70,13 +105,18 @@ describe("useAnchors", () => {
       answer: "New answer",
       source: "manual",
     });
-    // Once on mount + once after create
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(result.current.anchors).toEqual(reloadedAnchors);
+    expect(result.current.total).toBe(3);
     expect(toast.success).toHaveBeenCalledWith("Done");
   });
 
   it("should update an anchor and reload", async () => {
-    const api = createMockApiClient();
+    const api = createMockApiClient({
+      getResponses: [
+        { data: { items: mockAnchors, total: 2 } },
+        { data: { items: reloadedAnchors, total: 5 } },
+      ],
+    });
     const { result } = renderHook(() => useAnchors(api));
 
     await waitFor(() => {
@@ -91,13 +131,18 @@ describe("useAnchors", () => {
     expect(api.put).toHaveBeenCalledWith("/api/test-key/anchors/a1", {
       question: "Updated question",
     });
-    // Once on mount + once after update
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(result.current.anchors).toEqual(reloadedAnchors);
+    expect(result.current.total).toBe(5);
     expect(toast.success).toHaveBeenCalledWith("Done");
   });
 
   it("should remove an anchor and reload", async () => {
-    const api = createMockApiClient();
+    const api = createMockApiClient({
+      getResponses: [
+        { data: { items: mockAnchors, total: 2 } },
+        { data: { items: reloadedAnchors, total: 1 } },
+      ],
+    });
     const { result } = renderHook(() => useAnchors(api));
 
     await waitFor(() => {
@@ -110,8 +155,8 @@ describe("useAnchors", () => {
 
     expect(api.ownerPath).toHaveBeenCalledWith("/anchors/a1");
     expect(api.del).toHaveBeenCalledWith("/api/test-key/anchors/a1");
-    // Once on mount + once after remove
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(result.current.anchors).toEqual(reloadedAnchors);
+    expect(result.current.total).toBe(1);
     expect(toast.success).toHaveBeenCalledWith("Done");
   });
 
@@ -127,5 +172,6 @@ describe("useAnchors", () => {
 
     expect(toast.error).toHaveBeenCalledWith("Operation failed");
     expect(result.current.anchors).toEqual([]);
+    expect(result.current.total).toBe(0);
   });
 });
