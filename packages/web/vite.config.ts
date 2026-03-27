@@ -6,6 +6,7 @@ import path from "path";
 import { pwaManifest } from "./src/pwa/manifest";
 
 export default defineConfig({
+  base: "/",
   plugins: [
     react(),
     tailwindcss(),
