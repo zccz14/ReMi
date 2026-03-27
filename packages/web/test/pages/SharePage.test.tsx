@@ -27,6 +27,8 @@ vi.mock("sonner", () => ({
 
 import { SharePage } from "../../src/pages/SharePage";
 
+// Intentional forward-looking red-test scaffold: the production component does not
+// accept this prop yet, but the contract test pins the planned API before implementation.
 const SharePageWithFutureProps = SharePage as unknown as (props: {
   forceQrImageFallback?: "auto" | "logo" | "none";
 }) => ReturnType<typeof SharePage>;
@@ -198,7 +200,7 @@ describe("SharePage", () => {
     expect(getByTestId("share-qr-svg")).toHaveAttribute("data-image-src", "none");
   });
 
-  it("keeps the card shell visible while loading and after bootstrap failure", async () => {
+  it("keeps the card shell visible while loading", async () => {
     const deferred = createDeferred<{ data: PublicProfile }>();
     const loading = renderWithProviders(<SharePage />, {
       authState: { apiClient: createApiClient(deferred.promise) as any },
@@ -209,7 +211,9 @@ describe("SharePage", () => {
     expect(loading.queryByTestId("share-qr-wrapper")).toBeNull();
     expect(loading.queryByTestId("share-link")).toBeNull();
     expect(loading.getByRole("button", { name: "复制链接" })).toBeDisabled();
+  });
 
+  it("keeps the card shell visible after bootstrap failure", async () => {
     const failed = renderWithProviders(<SharePage />, {
       authState: {
         apiClient: {
@@ -228,7 +232,10 @@ describe("SharePage", () => {
 
   it("copies the share link and shows the refreshed success toast", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText },
+    });
 
     const { getByRole } = renderWithProviders(<SharePage />, {
       authState: { apiClient: createApiClient({ data: createProfile() }) as any },
