@@ -5,8 +5,10 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { useRegisterSW } from "virtual:pwa-register/react";
 
 interface PwaUpdateContextValue {
@@ -17,6 +19,10 @@ interface PwaUpdateContextValue {
 
 const PwaUpdateContext = createContext<PwaUpdateContextValue | null>(null);
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
+const APPLY_TIMEOUT_MS = 10_000;
+const STALE_UPDATE_MESSAGE = "This update is no longer available. Please try again.";
+const UPDATE_FAILED_MESSAGE = "Update failed. Please try again.";
+const UPDATE_TIMEOUT_MESSAGE = "Update timed out. Please try again.";
 
 export function usePwaUpdate(): PwaUpdateContextValue {
   const context = useContext(PwaUpdateContext);
@@ -30,6 +36,8 @@ export function usePwaUpdate(): PwaUpdateContextValue {
 
 export function PwaUpdateProvider({ children }: { children: ReactNode }) {
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const isApplyingRef = useRef(false);
+  const [isApplying, setIsApplying] = useState(false);
   const checkForUpdate = useCallback(async () => {
     const registration = registrationRef.current;
 
@@ -43,7 +51,7 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
     void checkForUpdate().catch(() => {});
   }, [checkForUpdate]);
 
-  const { needRefresh } = useRegisterSW({
+  const { needRefresh, updateServiceWorker } = useRegisterSW({
     onRegisteredSW: (_swUrl: string, registration?: ServiceWorkerRegistration) => {
       registrationRef.current = registration ?? null;
       runBackgroundUpdateCheck();
@@ -76,13 +84,47 @@ export function PwaUpdateProvider({ children }: { children: ReactNode }) {
     };
   }, [runBackgroundUpdateCheck]);
 
+  const applyUpdate = useCallback(async () => {
+    if (isApplyingRef.current) {
+      return;
+    }
+
+    if (!needRefresh[0]) {
+      toast.error(STALE_UPDATE_MESSAGE);
+      return;
+    }
+
+    isApplyingRef.current = true;
+    setIsApplying(true);
+
+    try {
+      await Promise.race([
+        updateServiceWorker(),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => {
+            reject(new Error("PWA apply update timed out"));
+          }, APPLY_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message === "PWA apply update timed out"
+          ? UPDATE_TIMEOUT_MESSAGE
+          : UPDATE_FAILED_MESSAGE,
+      );
+    } finally {
+      isApplyingRef.current = false;
+      setIsApplying(false);
+    }
+  }, [needRefresh, updateServiceWorker]);
+
   const value = useMemo<PwaUpdateContextValue>(
     () => ({
       hasUpdate: needRefresh[0],
-      isApplying: false,
-      applyUpdate: async () => {},
+      isApplying,
+      applyUpdate,
     }),
-    [needRefresh],
+    [applyUpdate, isApplying, needRefresh],
   );
 
   return <PwaUpdateContext.Provider value={value}>{children}</PwaUpdateContext.Provider>;

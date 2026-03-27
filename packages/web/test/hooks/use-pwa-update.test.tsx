@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "../helpers/test-utils";
 import { PwaUpdateProvider, usePwaUpdate } from "../../src/hooks/use-pwa-update";
+import { toast } from "sonner";
 
 const { useRegisterSWMock, registrationState } = vi.hoisted(() => ({
   useRegisterSWMock: vi.fn(),
@@ -17,9 +18,22 @@ vi.mock("virtual:pwa-register/react", () => ({
   useRegisterSW: useRegisterSWMock,
 }));
 
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn() },
+}));
+
 function TestConsumer() {
-  const { hasUpdate } = usePwaUpdate();
-  return <div data-testid="has-update">{String(hasUpdate)}</div>;
+  const { hasUpdate, isApplying, applyUpdate } = usePwaUpdate();
+
+  return (
+    <>
+      <div data-testid="has-update">{String(hasUpdate)}</div>
+      <div data-testid="is-applying">{String(isApplying)}</div>
+      <button type="button" onClick={() => void applyUpdate()}>
+        apply update
+      </button>
+    </>
+  );
 }
 
 function renderWithProvider() {
@@ -51,6 +65,7 @@ beforeEach(() => {
   useRegisterSWMock.mockReset();
   registrationState.options = undefined;
   setVisibilityState("visible");
+  vi.mocked(toast.error).mockClear();
   useRegisterSWMock.mockImplementation((options) => {
     registrationState.options = options;
 
@@ -207,5 +222,126 @@ describe("PwaUpdateProvider", () => {
     });
 
     expect(registration.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies an available update once", async () => {
+    let resolveUpdate: (() => void) | undefined;
+    const updateServiceWorker = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    expect(updateServiceWorker).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId("is-applying")).toHaveTextContent("true");
+
+    await act(async () => {
+      resolveUpdate?.();
+      await flushMicrotasks();
+    });
+
+    expect(view.getByTestId("is-applying")).toHaveTextContent("false");
+  });
+
+  it("ignores repeated apply attempts while updating", async () => {
+    let resolveUpdate: (() => void) | undefined;
+    const updateServiceWorker = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    expect(updateServiceWorker).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveUpdate?.();
+      await flushMicrotasks();
+    });
+  });
+
+  it("refuses to apply a stale update", async () => {
+    const updateServiceWorker = vi.fn(async () => {});
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [false, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    expect(updateServiceWorker).not.toHaveBeenCalled();
+    expect(view.getByTestId("is-applying")).toHaveTextContent("false");
+    expect(toast.error).toHaveBeenCalledWith(
+      "This update is no longer available. Please try again.",
+    );
+  });
+
+  it("times out a stuck update apply", async () => {
+    vi.useFakeTimers();
+    const updateServiceWorker = vi.fn(() => new Promise<void>(() => {}));
+
+    useRegisterSWMock.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker,
+    });
+
+    const view = renderWithProvider();
+
+    await act(async () => {
+      view.getByRole("button", { name: "apply update" }).click();
+      await flushMicrotasks();
+    });
+
+    expect(view.getByTestId("is-applying")).toHaveTextContent("true");
+    expect(toast.error).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+      await flushMicrotasks();
+    });
+
+    expect(updateServiceWorker).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith("Update timed out. Please try again.");
+    expect(view.getByTestId("is-applying")).toHaveTextContent("false");
   });
 });
