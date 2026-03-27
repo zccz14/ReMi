@@ -25,6 +25,12 @@
     "anchors": "Soul Anchors",
     "share": "Share Card",
     "settings": "Settings",
+    "update": {
+      "cta": "Update now",
+      "applying": "Updating...",
+      "stale": "This update is no longer available. Please try again shortly.",
+      "failed": "Update failed. Please try again later."
+    },
     "install": {
       "cta": "Install app",
       "dialogTitle": "Install ReMi",
