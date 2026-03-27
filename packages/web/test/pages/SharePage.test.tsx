@@ -113,6 +113,8 @@ describe("SharePage", () => {
     });
 
     await waitFor(() => expect(getByText("Alice")).toBeInTheDocument());
+    expect(getByText("来 ReMi 链接我")).toBeInTheDocument();
+    expect(getByText("先认识我的分身，再开始聊天")).toBeInTheDocument();
     expect(getByText("Alice")).toBeInTheDocument();
     expect(getByText("Human, builder, and friendly ReMi contact.")).toBeInTheDocument();
     expect(getByTestId("share-card")).toBeInTheDocument();
