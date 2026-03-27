@@ -1,9 +1,36 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, renderWithProviders, screen } from "../helpers/test-utils";
 import { MePage } from "../../src/pages/MePage";
 import { emptyPublicProfile } from "../../src/lib/profile";
 
+const usePwaInstallMock = vi.fn();
+
+vi.mock("../../src/hooks/use-pwa-install", () => ({
+  usePwaInstall: () => usePwaInstallMock(),
+}));
+
 const API_BASE = "https://api.example.test";
+
+function mockUsePwaInstall(
+  overrides?: Partial<{
+    isPwaMode: boolean;
+    platform: "ios" | "android" | "desktop" | "unknown";
+    isGuideOpen: boolean;
+    shouldShowBrowserOpenHint: boolean;
+    installOrShowGuide: () => Promise<void>;
+    closeGuide: () => void;
+  }>,
+) {
+  usePwaInstallMock.mockReturnValue({
+    isPwaMode: false,
+    platform: "unknown",
+    isGuideOpen: false,
+    shouldShowBrowserOpenHint: false,
+    installOrShowGuide: vi.fn().mockResolvedValue(undefined),
+    closeGuide: vi.fn(),
+    ...overrides,
+  });
+}
 
 function createProfile(
   overrides?: Partial<{
@@ -38,11 +65,16 @@ function renderMePage(profileRequest: ReturnType<typeof vi.fn>) {
 
 afterEach(() => {
   cleanup();
+  usePwaInstallMock.mockReset();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
 describe("MePage", () => {
+  beforeEach(() => {
+    mockUsePwaInstall();
+  });
+
   it("shows owner nickname, avatar, and bio on the me card", async () => {
     vi.stubEnv("VITE_API_BASE", API_BASE);
     renderMePage(
@@ -76,5 +108,18 @@ describe("MePage", () => {
 
     expect(await screen.findByText("mock-p...-key")).toBeInTheDocument();
     expect(screen.queryByText("hello")).not.toBeInTheDocument();
+  });
+
+  it("shows unknown-platform install fallback copy when the install guide is open", async () => {
+    mockUsePwaInstall({
+      isGuideOpen: true,
+      platform: "unknown",
+    });
+
+    renderMePage(vi.fn().mockResolvedValue({ data: createProfile() }));
+
+    expect(
+      await screen.findByText("打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。"),
+    ).toBeInTheDocument();
   });
 });

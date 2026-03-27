@@ -25,7 +25,30 @@
     "stats": "Stats",
     "anchors": "Soul Anchors",
     "share": "Share Card",
-    "settings": "Settings"
+    "settings": "Settings",
+    "install": {
+      "cta": "Install app",
+      "dialogTitle": "Install ReMi",
+      "dialogDescription": "Save ReMi to your device for faster access.",
+      "close": "Close",
+      "browserOpenHint": "If this page is open inside another app, open it in your browser first.",
+      "fallbackHint": "If you do not see an install option, you can keep using ReMi in your browser.",
+      "steps": {
+        "ios": ["Tap the Share button in Safari.", "Choose Add to Home Screen, then confirm."],
+        "android": [
+          "Open the browser menu.",
+          "Tap Install app or Add to Home screen, then confirm."
+        ],
+        "desktop": [
+          "Click the install icon in the address bar.",
+          "Confirm the install prompt to add ReMi."
+        ],
+        "unknown": [
+          "Open your browser menu and look for Install app or Add to Home screen.",
+          "If no install option appears, keep using ReMi in your browser."
+        ]
+      }
+    }
   },
   "profile": {
     "title": "Profile",

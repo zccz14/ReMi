@@ -14,9 +14,72 @@ const testI18n = i18n.createInstance();
 testI18n.use(initReactI18next).init({
   lng: "zh",
   resources: {
+    en: {
+      translation: {
+        common: {
+          ephemeralWarning: "Using temporary identity. Data will be lost when browser closes.",
+        },
+        me: {
+          title: "Me",
+          stats: "Stats",
+          anchors: "Soul Anchors",
+          share: "Share Card",
+          settings: "Settings",
+          install: {
+            cta: "Install app",
+            dialogTitle: "Install ReMi",
+            dialogDescription: "Save ReMi to your device for faster access.",
+            close: "Close",
+            browserOpenHint:
+              "If this page is open inside another app, open it in your browser first.",
+            fallbackHint:
+              "If you do not see an install option, you can keep using ReMi in your browser.",
+            steps: {
+              ios: ["Tap the Share button in Safari.", "Choose Add to Home Screen, then confirm."],
+              android: [
+                "Open the browser menu.",
+                "Tap Install app or Add to Home screen, then confirm.",
+              ],
+              desktop: [
+                "Click the install icon in the address bar.",
+                "Confirm the install prompt to add ReMi.",
+              ],
+              unknown: [
+                "Open your browser menu and look for Install app or Add to Home screen.",
+                "If no install option appears, keep using ReMi in your browser.",
+              ],
+            },
+          },
+        },
+      },
+    },
     zh: {
       translation: {
         common: { ephemeralWarning: "临时身份警告" },
+        me: {
+          title: "我",
+          stats: "数据统计",
+          anchors: "灵魂锚点",
+          share: "分享名片",
+          settings: "设置",
+          install: {
+            cta: "安装应用",
+            dialogTitle: "安装 ReMi",
+            dialogDescription: "将 ReMi 添加到你的设备，获得更便捷的访问体验。",
+            close: "关闭",
+            browserOpenHint: "如果当前页面是在其他应用里打开，请先在浏览器中打开。",
+            fallbackHint: "如果没有看到安装选项，也可以继续在浏览器中使用 ReMi。",
+            steps: {
+              ios: ["在 Safari 中点击分享按钮。", "选择“添加到主屏幕”，然后确认。"],
+              android: ["打开浏览器菜单。", "点击“安装应用”或“添加到主屏幕”，然后确认。"],
+              desktop: ["点击地址栏中的安装图标。", "在安装提示中确认，将 ReMi 添加到设备。"],
+              unknown: [
+                "打开浏览器菜单，查找“安装应用”或“添加到主屏幕”。",
+                "如果没有出现安装选项，也可以继续在浏览器中使用 ReMi。",
+              ],
+            },
+          },
+        },
       },
     },
   },
