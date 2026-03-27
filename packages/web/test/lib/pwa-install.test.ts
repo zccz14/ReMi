@@ -10,7 +10,7 @@ import {
 } from "../../src/lib/pwa-install";
 
 describe("pwa-install helpers", () => {
-  it("exports the expected helper types", () => {
+  it("exports the expected helper types", async () => {
     const platform: InstallPlatform = "ios";
     const runtimeSignals: PwaRuntimeSignals = {
       standaloneMatch: false,
@@ -23,13 +23,26 @@ describe("pwa-install helpers", () => {
     };
     const event = {
       prompt: async () => {},
-      userChoice: Promise.resolve({ outcome: "accepted", platform: "web" }),
+      userChoice: Promise.resolve({ outcome: "accepted" }),
     } as BeforeInstallPromptEvent;
+
+    // @ts-expect-error referrer is required
+    const missingRuntimeReferrer: PwaRuntimeSignals = {
+      standaloneMatch: false,
+      navigatorStandalone: false,
+    };
+    // @ts-expect-error maxTouchPoints is required
+    const missingTouchPoints: PlatformSignals = {
+      userAgent: "Mozilla/5.0",
+    };
 
     expect(platform).toBe("ios");
     expect(runtimeSignals.referrer).toBe("");
     expect(platformSignals.maxTouchPoints).toBe(0);
     expect(event.prompt).toBeTypeOf("function");
+    await expect(event.userChoice).resolves.toEqual({ outcome: "accepted" });
+    expect(missingRuntimeReferrer).toBeDefined();
+    expect(missingTouchPoints).toBeDefined();
   });
 
   it("detects PWA runtime mode from standalone signals or android app referrer", () => {
@@ -44,6 +57,13 @@ describe("pwa-install helpers", () => {
         standaloneMatch: false,
         navigatorStandalone: false,
         referrer: "android-app://com.android.chrome",
+      }),
+    ).toBe(true);
+    expect(
+      detectPwaMode({
+        standaloneMatch: false,
+        navigatorStandalone: false,
+        referrer: "https://example.test/from/android-app://com.android.chrome",
       }),
     ).toBe(true);
     expect(

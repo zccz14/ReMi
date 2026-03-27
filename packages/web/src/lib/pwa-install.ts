@@ -2,18 +2,18 @@ export type InstallPlatform = "ios" | "android" | "desktop" | "unknown";
 
 export interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
-  userChoice?: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+  userChoice?: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
 export interface PwaRuntimeSignals {
   standaloneMatch: boolean;
   navigatorStandalone: boolean;
-  referrer?: string | null;
+  referrer: string;
 }
 
 export interface PlatformSignals {
   userAgent: string;
-  maxTouchPoints?: number;
+  maxTouchPoints: number;
 }
 
 export function detectPwaMode({
@@ -21,12 +21,12 @@ export function detectPwaMode({
   navigatorStandalone,
   referrer,
 }: PwaRuntimeSignals): boolean {
-  return standaloneMatch || navigatorStandalone || referrer?.startsWith("android-app://") === true;
+  return standaloneMatch || navigatorStandalone || referrer.includes("android-app://");
 }
 
 export function detectInstallPlatform({
   userAgent,
-  maxTouchPoints = 0,
+  maxTouchPoints,
 }: PlatformSignals): InstallPlatform {
   if (/iPhone|iPod|iPad/i.test(userAgent)) {
     return "ios";
