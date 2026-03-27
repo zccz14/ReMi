@@ -148,10 +148,11 @@
     "avatarCropTooSmall": "Image is too small. Avatar requires at least {{size}} x {{size}} pixels."
   },
   "share": {
-    "title": "Share Avatar",
-    "description": "Scan QR code to chat with your avatar",
-    "copyLink": "Copy Link",
-    "copied": "Copied",
+    "title": "Share Persona",
+    "description": "Find me on ReMi",
+    "subtitle": "Meet my persona first, then start the conversation",
+    "copyLink": "Copy link",
+    "copied": "Link copied. Send it to a friend.",
     "bootstrapping": "Preparing your public profile…",
     "bootstrapError": "Failed to prepare your public profile. Try again later."
   },

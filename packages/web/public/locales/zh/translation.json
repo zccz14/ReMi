@@ -143,9 +143,10 @@
   },
   "share": {
     "title": "分享分身",
-    "description": "扫描二维码与你的分身对话",
+    "description": "来 ReMi 链接我",
+    "subtitle": "先认识我的分身，再开始聊天",
     "copyLink": "复制链接",
-    "copied": "已复制",
+    "copied": "链接已复制，发给朋友吧",
     "bootstrapping": "正在准备公开资料…",
     "bootstrapError": "公开资料准备失败，请稍后重试。"
   },
