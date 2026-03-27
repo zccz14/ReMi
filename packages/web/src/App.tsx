@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Suspense } from "react";
 import { AuthProvider } from "./hooks/use-auth";
+import { PwaInstallProvider } from "./hooks/use-pwa-install";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Toaster } from "./components/ui/sonner";
 import { AppShell } from "./components/layout/AppShell";
@@ -51,11 +52,13 @@ export default function App() {
     >
       <BrowserRouter>
         <TooltipProvider>
-          <Routes>
-            <Route path="/profile/:pubKey" element={<ProfilePage />} />
-            <Route path="/s/:pubKey" element={<OldShareRedirect />} />
-            <Route path="*" element={<AuthenticatedRoutes />} />
-          </Routes>
+          <PwaInstallProvider>
+            <Routes>
+              <Route path="/profile/:pubKey" element={<ProfilePage />} />
+              <Route path="/s/:pubKey" element={<OldShareRedirect />} />
+              <Route path="*" element={<AuthenticatedRoutes />} />
+            </Routes>
+          </PwaInstallProvider>
           <Toaster position="top-center" />
         </TooltipProvider>
       </BrowserRouter>

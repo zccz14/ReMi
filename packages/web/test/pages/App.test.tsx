@@ -1,6 +1,20 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "../helpers/test-utils";
+import { cleanup, render, screen, within } from "../helpers/test-utils";
+
+function mockPwaInstallProvider() {
+  vi.doMock("../../src/hooks/use-pwa-install", async () => {
+    const actual = await vi.importActual<typeof import("../../src/hooks/use-pwa-install")>(
+      "../../src/hooks/use-pwa-install",
+    );
+    return {
+      ...actual,
+      PwaInstallProvider: ({ children }: { children: ReactNode }) => (
+        <div data-testid="pwa-install-provider">{children}</div>
+      ),
+    };
+  });
+}
 
 function mockSharedPages() {
   vi.doMock("../../src/components/layout/AppShell", () => ({
@@ -32,6 +46,8 @@ function mockSharedPages() {
 }
 
 function mockAppModules(authProvider: (props: { children: ReactNode }) => ReactNode) {
+  mockPwaInstallProvider();
+
   vi.doMock("../../src/hooks/use-auth", async () => {
     const actual = await vi.importActual<typeof import("../../src/hooks/use-auth")>(
       "../../src/hooks/use-auth",
@@ -75,6 +91,7 @@ if (!window.matchMedia) {
 
 describe("App", () => {
   it("renders the real public profile route without crashing outside AuthProvider", async () => {
+    mockPwaInstallProvider();
     vi.doMock("@remi/client", () => ({
       KeyStore: vi.fn().mockImplementation(() => ({
         init: vi.fn().mockRejectedValue(new Error("identity exploded")),
@@ -106,6 +123,9 @@ describe("App", () => {
 
     expect(await screen.findByText("Public Person")).toBeInTheDocument();
     expect(screen.queryByText("identity exploded")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-install-provider")).getByText("Public Person"),
+    ).toBeInTheDocument();
   });
 
   it("keeps authenticated routes inside AuthProvider", async () => {
@@ -117,5 +137,8 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByTestId("auth-provider")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("pwa-install-provider")).getByTestId("auth-provider"),
+    ).toBeInTheDocument();
   });
 });
