@@ -1,3 +1,4 @@
+import { createElement, type ComponentType } from "react";
 import type { PublicProfile } from "../../src/lib/profile";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, renderWithProviders, userEvent, waitFor } from "../helpers/test-utils";
@@ -31,13 +32,15 @@ type FutureSharePageProps = {
   forceQrImageFallback?: "auto" | "logo" | "none";
 };
 
-// Intentional forward-looking red-test scaffold: the shim names the planned prop
-// contract explicitly, while today's SharePage render remains unchanged until implemented.
+// Intentional forward-looking red-test scaffold: the shim pins the planned prop
+// contract now and forwards it into the rendered element, even though today's
+// SharePage implementation has not caught up yet.
 function renderFutureSharePage(
-  _props: FutureSharePageProps,
+  props: FutureSharePageProps,
   options?: Parameters<typeof renderWithProviders>[1],
 ) {
-  return renderWithProviders(<SharePage />, options);
+  const ForwardCompatibleSharePage = SharePage as ComponentType<FutureSharePageProps>;
+  return renderWithProviders(createElement(ForwardCompatibleSharePage, props), options);
 }
 
 afterEach(() => {
