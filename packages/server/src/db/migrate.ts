@@ -116,6 +116,7 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       candidate_id TEXT NOT NULL,
       request_id TEXT NOT NULL,
       action TEXT NOT NULL,
+      response_payload TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
 

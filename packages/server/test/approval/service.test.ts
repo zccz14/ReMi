@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -41,14 +41,16 @@ describe("approval service candidate ingestion", () => {
     const connMgr = new ConnectionManager(tmpDir, { maxSize: 2, embeddingDimensions: 4 });
     const ownerKey = "owner-pub-key";
     const conn = connMgr.getConnection(ownerKey, { create: true });
+    const embedMock = vi.fn(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3, 0.4]));
     const embeddingClient: EmbeddingClient = {
-      embed: async (texts) => texts.map(() => [0.1, 0.2, 0.3, 0.4]),
+      embed: embedMock,
     };
     const service = createApprovalService({ ownerKey, conn, embeddingClient });
 
     return {
       service,
       conn,
+      embedMock,
       cleanup() {
         connMgr.closeAll();
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -278,6 +280,95 @@ describe("approval service candidate ingestion", () => {
         .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
         .get(denied.asset.id) as { count: number };
       expect(afterDeny.count).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("dedupes candidateId and requestId via approval_requests", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "manual",
+      });
+
+      const first = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-dedupe-1",
+      });
+      const second = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-dedupe-1",
+      });
+
+      expect(second).toEqual(first);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("stores one last_action per owner and restores candidate on undo", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "reading",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-undo-1",
+      });
+
+      const undone = await service.undoLastAction({ actionId: approved.actionId });
+
+      expect(undone.restoredCandidate).toEqual(
+        expect.objectContaining({ id: candidate.id, question: "What matters most?" }),
+      );
+      expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("resyncs vectors on undo rollback", async () => {
+    const { service, conn, embedMock, cleanup } = createService();
+
+    try {
+      const created = await service.microEditAsset({
+        assetId: null,
+        question: "What matters most?",
+        answer: "Trust",
+        source: "manual",
+        requestId: "req-undo-vector-seed",
+      });
+
+      const denied = await service.denyAsset({
+        assetId: created.asset.id,
+        requestId: "req-undo-vector-deny",
+      });
+
+      await service.undoLastAction({ actionId: denied.actionId });
+
+      const embeddingRow = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
+        .get(created.asset.id) as { count: number };
+
+      expect(embeddingRow.count).toBe(1);
+      expect(embedMock).toHaveBeenCalledTimes(3);
     } finally {
       cleanup();
     }

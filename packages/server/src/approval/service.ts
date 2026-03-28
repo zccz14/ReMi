@@ -3,7 +3,12 @@ import type Database from "better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { deleteEmbedding, upsertEmbedding } from "../embedding/index.js";
-import { approvalLastActions, soulAnchors, soulCandidateQueue } from "../db/schema.js";
+import {
+  approvalLastActions,
+  approvalRequests,
+  soulAnchors,
+  soulCandidateQueue,
+} from "../db/schema.js";
 import type {
   ApprovalAction,
   ApprovalCandidate,
@@ -61,6 +66,17 @@ function normalizeLimit(limit: number) {
 
 function normalizeOffset(offset: number) {
   return Math.max(0, Math.floor(offset));
+}
+
+function mapAnchor(row: AnchorRow): SoulAnchor {
+  return {
+    id: row.id,
+    question: row.question,
+    answer: row.answer,
+    source: row.source,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export function createApprovalService(input: CreateApprovalServiceInput) {
@@ -147,6 +163,36 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     };
   }
 
+  function getRecordedRequest(candidateId: string, requestId: string) {
+    return input.conn.drizzle
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.ownerKey, input.ownerKey))
+      .all()
+      .find((row) => row.candidateId === candidateId && row.requestId === requestId);
+  }
+
+  function recordRequest(params: {
+    candidateId: string;
+    requestId: string;
+    action: string;
+    responsePayload: Record<string, unknown>;
+    createdAt: number;
+  }) {
+    input.conn.drizzle
+      .insert(approvalRequests)
+      .values({
+        id: crypto.randomUUID(),
+        ownerKey: input.ownerKey,
+        candidateId: params.candidateId,
+        requestId: params.requestId,
+        action: params.action,
+        responsePayload: JSON.stringify(params.responsePayload),
+        createdAt: params.createdAt,
+      })
+      .run();
+  }
+
   return {
     createCandidate(candidate: ApprovalCandidateCreateInput): ApprovalCandidate {
       const now = Date.now();
@@ -201,6 +247,11 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       targetUpdatedAt?: number;
       requestId: string;
     }): Promise<ApprovalResult> {
+      const existingRequest = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
+      if (existingRequest) {
+        return JSON.parse(existingRequest.responsePayload) as ApprovalResult;
+      }
+
       const candidate = getCandidateOrThrow(inputParams.candidateId);
 
       if (inputParams.action === "reject") {
@@ -244,7 +295,14 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           writeLastAction({
             actionId,
             candidateSnapshot: candidateInsideTxn,
-            rollbackPayload: { type: "create_asset", assetId: asset.id },
+            rollbackPayload: { type: "create_asset", assetAfter: asset },
+            createdAt: now,
+          });
+          recordRequest({
+            candidateId: candidateInsideTxn.id,
+            requestId: inputParams.requestId,
+            action: inputParams.action,
+            responsePayload: { actionId, asset },
             createdAt: now,
           });
 
@@ -281,7 +339,14 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         writeLastAction({
           actionId,
           candidateSnapshot: candidateInsideTxn,
-          rollbackPayload: { type: "restore_asset", before: existing },
+          rollbackPayload: { type: "restore_asset", before: existing, after: updated },
+          createdAt: now,
+        });
+        recordRequest({
+          candidateId: candidateInsideTxn.id,
+          requestId: inputParams.requestId,
+          action: inputParams.action,
+          responsePayload: { actionId, asset: updated },
           createdAt: now,
         });
 
@@ -323,7 +388,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           writeLastAction({
             actionId,
             candidateSnapshot: null,
-            rollbackPayload: { type: "create_asset", assetId: created.id },
+            rollbackPayload: { type: "create_asset", assetAfter: created },
             createdAt: now,
           });
           return created;
@@ -351,7 +416,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         writeLastAction({
           actionId,
           candidateSnapshot: null,
-          rollbackPayload: { type: "restore_asset", before: existing },
+          rollbackPayload: { type: "restore_asset", before: existing, after: updated },
           createdAt: now,
         });
 
@@ -379,6 +444,71 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
 
     deleteAnchorEmbedding(assetId: string) {
       deleteEmbedding(input.conn.raw, "soul_anchors_vec", assetId);
+    },
+
+    async undoLastAction(inputParams: { actionId: string }) {
+      const lastAction = input.conn.drizzle
+        .select()
+        .from(approvalLastActions)
+        .where(eq(approvalLastActions.ownerKey, input.ownerKey))
+        .get();
+
+      if (!lastAction || lastAction.actionId !== inputParams.actionId) {
+        throw new Error("Undo target not found");
+      }
+
+      const rollbackPayload = JSON.parse(lastAction.rollbackPayload) as
+        | { type: "create_asset"; assetAfter: AnchorRow }
+        | { type: "restore_asset"; before: AnchorRow; after: AnchorRow };
+      const candidateSnapshot = JSON.parse(lastAction.candidateSnapshot) as CandidateRow | null;
+
+      const restoredCandidate = input.conn.raw.transaction(() => {
+        if (rollbackPayload.type === "create_asset") {
+          const current = getAnchorOrThrow(rollbackPayload.assetAfter.id);
+          if (current.updatedAt !== rollbackPayload.assetAfter.updatedAt) {
+            throw new Error("Undo conflict: asset changed after the last action");
+          }
+          input.conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, current.id)).run();
+        } else {
+          const current = getAnchorOrThrow(rollbackPayload.after.id);
+          if (current.updatedAt !== rollbackPayload.after.updatedAt) {
+            throw new Error("Undo conflict: asset changed after the last action");
+          }
+          input.conn.drizzle
+            .update(soulAnchors)
+            .set({
+              question: rollbackPayload.before.question,
+              answer: rollbackPayload.before.answer,
+              source: rollbackPayload.before.source,
+              createdAt: rollbackPayload.before.createdAt,
+              updatedAt: rollbackPayload.before.updatedAt,
+            })
+            .where(eq(soulAnchors.id, rollbackPayload.before.id))
+            .run();
+        }
+
+        if (candidateSnapshot) {
+          input.conn.drizzle.insert(soulCandidateQueue).values(candidateSnapshot).run();
+        }
+
+        input.conn.drizzle
+          .delete(approvalLastActions)
+          .where(eq(approvalLastActions.ownerKey, input.ownerKey))
+          .run();
+
+        return candidateSnapshot ? mapCandidate(candidateSnapshot) : null;
+      })();
+
+      if (rollbackPayload.type === "create_asset") {
+        deleteEmbedding(input.conn.raw, "soul_anchors_vec", rollbackPayload.assetAfter.id);
+      } else {
+        await syncAnchorEmbedding(mapAnchor(rollbackPayload.before));
+      }
+
+      return {
+        actionId: inputParams.actionId,
+        restoredCandidate,
+      };
     },
   };
 }

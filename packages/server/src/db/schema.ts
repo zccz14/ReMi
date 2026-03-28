@@ -110,6 +110,7 @@ export const approvalRequests = sqliteTable(
     candidateId: text("candidate_id").notNull(),
     requestId: text("request_id").notNull(),
     action: text("action").notNull(),
+    responsePayload: text("response_payload").notNull(),
     createdAt: integer("created_at", { mode: "number" }).notNull(),
   },
   (table) => ({
