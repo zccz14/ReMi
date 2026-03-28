@@ -821,6 +821,176 @@ describe("AvatarInferenceRuntime", () => {
     }
   });
 
+  it("prepares matching unified runtime state for stream and non-stream requests", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-28T12:34:56.000Z"));
+
+    try {
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("同一个问题")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("同一个问题")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+      });
+
+      const prepareInference = (
+        runtime as unknown as {
+          prepareInference: (input: {
+            avatarTarget: { publicKey: string };
+            conversationTurns: AvatarInferenceRequest["conversationTurns"];
+            stream: boolean;
+          }) => Promise<{
+            request: AvatarInferenceRequest;
+            finalAnchorIds: string[];
+            anchorSelectionStrategy: string;
+            turns: { turnId: string }[];
+          }>;
+        }
+      ).prepareInference.bind(runtime);
+
+      const baseInput = {
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [
+          { role: "system", content: "调用方系统补充" },
+          { role: "user", content: "同一个问题" },
+        ] as AvatarInferenceRequest["conversationTurns"],
+      };
+
+      const nonStreamPrepared = await prepareInference({ ...baseInput, stream: false });
+      const streamPrepared = await prepareInference({ ...baseInput, stream: true });
+
+      expect(runtime.buildMessages(nonStreamPrepared.request)).toEqual(
+        runtime.buildMessages(streamPrepared.request),
+      );
+      expect(nonStreamPrepared.finalAnchorIds).toEqual(streamPrepared.finalAnchorIds);
+      expect(nonStreamPrepared.anchorSelectionStrategy).toBe(
+        streamPrepared.anchorSelectionStrategy,
+      );
+      expect(nonStreamPrepared.turns.map((turn) => turn.turnId)).toEqual([
+        "01-decomposition",
+        "02-sufficiency-round-1",
+      ]);
+      expect(streamPrepared.turns.map((turn) => turn.turnId)).toEqual([
+        "01-decomposition",
+        "02-sufficiency-round-1",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rebuilds downstream messages from the mutable request at send time", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("原问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockResolvedValueOnce(createChatResponse("最终回答"));
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "原问题" }],
+      stream: false,
+    });
+
+    request.conversationTurns[0] = { role: "user", content: "已修改的问题" };
+
+    await runtime.run(request);
+
+    const finalCall = vi.mocked(chatClient.chat).mock.calls[
+      vi.mocked(chatClient.chat).mock.calls.length - 1
+    ]?.[0].messages;
+    expect(finalCall).toEqual(runtime.buildMessages(request));
+    expect(finalCall?.[1]?.content).toBe("已修改的问题");
+  });
+
+  it("cleans prepared state when non-stream inference fails", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("失败问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockRejectedValueOnce(new Error("upstream exploded"));
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "失败问题" }],
+      stream: false,
+    });
+
+    await expect(runtime.run(request)).rejects.toThrow("upstream exploded");
+
+    request.instructionSegments.recall = "mutated recall tail";
+    const rebuiltMessages = runtime.buildMessages(request);
+    expect(rebuiltMessages[rebuiltMessages.length - 1]?.content).toBe("mutated recall tail");
+  });
+
+  it("cleans prepared state when stream inference fails", async () => {
+    const chatClient = createChatClient();
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("流式失败问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+    vi.mocked(chatClient.chatStream).mockImplementation(
+      () =>
+        ({
+          [Symbol.asyncIterator]() {
+            throw new Error("stream exploded");
+          },
+        }) as unknown as AsyncGenerator<string>,
+    );
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: null,
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "流式失败问题" }],
+      stream: true,
+    });
+
+    await expect(async () => {
+      for await (const event of runtime.runStream(request)) {
+        void event;
+        // consume until failure
+      }
+    }).rejects.toThrow("stream exploded");
+
+    request.instructionSegments.recall = "mutated recall tail";
+    const rebuiltMessages = runtime.buildMessages(request);
+    expect(rebuiltMessages[rebuiltMessages.length - 1]?.content).toBe("mutated recall tail");
+  });
+
   it("keeps successful stream inference even when runtime artifact write fails", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-stream-artifact-"));
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@remi/server/app";
 import { buildStringToSign, generateKeyPair, getPublicKey, sign } from "@remi/crypto";
 import * as fs from "node:fs";
@@ -732,5 +732,82 @@ describe("avatar openapi integration", () => {
     expect(finalMessages?.[0]?.content).toContain("Caller system context 2");
     expect(finalMessages?.[0]?.content).not.toContain("late caller system");
     expect(finalMessages?.[0]?.content).not.toContain("Favorite workflow");
+  });
+
+  it("POST /ai/v1/chat/completions keeps unified runtime preparation parity between non-stream and stream", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-28T12:34:56.000Z"));
+
+    try {
+      const recording = createRecordingChatClient({
+        responseText: "ordered answer",
+        streamTokens: ["ordered", " stream"],
+      });
+      const result = createApp({
+        dataDir: tmpDir,
+        embeddingDimensions: 4,
+        chatClient: recording.client,
+        embeddingClient: null,
+      });
+      app = result.app;
+      cleanup = () => result.connMgr.closeAll();
+
+      await signedOwnerRequest("GET", `/api/${ownerPubKey}/health`);
+      await seedOwnerProfile();
+      await seedOwnerAnchor("Favorite workflow", "Plan first, then execute carefully.");
+      const token = await createOwnerToken();
+
+      const requestBody = {
+        model: `ReMi-${ownerPubKey}`,
+        messages: [
+          { role: "system", content: "Caller system context" },
+          { role: "user", content: "same parity question" },
+          { role: "assistant", content: "Earlier answer" },
+        ],
+      };
+
+      const nonStreamRes = await app.request("/ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token.id}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...requestBody, stream: false }),
+      });
+      expect(nonStreamRes.status).toBe(200);
+
+      const nonStreamCalls = recording.recordedCalls.slice();
+
+      const streamRes = await app.request("/ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token.id}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...requestBody, stream: true }),
+      });
+      expect(streamRes.status).toBe(200);
+      await readStreamBody(streamRes.body);
+
+      const streamCalls = recording.recordedCalls.slice(nonStreamCalls.length);
+      const nonStreamFinalMessages = nonStreamCalls[nonStreamCalls.length - 1];
+      const streamFinalMessages = streamCalls[streamCalls.length - 1];
+
+      expect(nonStreamCalls.length).toBeGreaterThanOrEqual(3);
+      expect(streamCalls).toHaveLength(nonStreamCalls.length);
+      expect(nonStreamCalls).toEqual(streamCalls);
+      expect(nonStreamFinalMessages).toEqual(streamFinalMessages);
+      expect(nonStreamFinalMessages?.map((message) => message.role)).toEqual([
+        "system",
+        "user",
+        "assistant",
+        "assistant",
+      ]);
+      expect(nonStreamFinalMessages?.[3]?.content).toContain("Favorite workflow");
+      expect(nonStreamFinalMessages?.[3]?.content).toContain("UpdatedAt:");
+      expect(nonStreamFinalMessages?.[3]?.content).toContain("## Missing Information");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

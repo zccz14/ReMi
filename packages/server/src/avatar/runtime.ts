@@ -64,6 +64,7 @@ type RuntimeDebugState = {
   userQuery: string;
   requiredGoalIds: string[];
   finalAnchorIds: string[];
+  anchorSelectionStrategy: string;
   rounds: number;
   stoppedBecause?: string;
   goalStatus: GoalStatus[];
@@ -71,6 +72,10 @@ type RuntimeDebugState = {
     Omit<RecallRoundSummary, "stoppedCandidate"> & { stoppedCandidate: string | null }
   >;
   turns: ReasoningDebugTurn[];
+};
+
+type PreparedInference = RuntimeDebugState & {
+  request: AvatarInferenceRequest;
 };
 
 interface AvatarInferenceRuntimeDeps {
@@ -81,7 +86,7 @@ interface AvatarInferenceRuntimeDeps {
 }
 
 export class AvatarInferenceRuntime {
-  private debugStateByRequest = new WeakMap<AvatarInferenceRequest, RuntimeDebugState>();
+  private preparedInferenceByRequest = new WeakMap<AvatarInferenceRequest, PreparedInference>();
 
   constructor(private deps: AvatarInferenceRuntimeDeps) {}
 
@@ -90,14 +95,14 @@ export class AvatarInferenceRuntime {
     messages: ChatMessage[],
     responseText: string,
   ) {
-    const debugState = this.debugStateByRequest.get(request);
-    if (!debugState) {
+    const prepared = this.preparedInferenceByRequest.get(request);
+    if (!prepared) {
       return null;
     }
 
     return {
       turns: [
-        ...debugState.turns,
+        ...prepared.turns,
         {
           turnId: "03-final-generation",
           promptMessages: messages,
@@ -105,16 +110,16 @@ export class AvatarInferenceRuntime {
         },
       ],
       finalMessages: messages,
-      recallRounds: debugState.recallRounds,
+      recallRounds: prepared.recallRounds,
       response: responseText,
       summary: buildReasoningDebugArtifactSummary({
-        currentTime: debugState.currentTime,
-        userQuery: debugState.userQuery,
-        rounds: debugState.rounds,
-        stoppedBecause: debugState.stoppedBecause,
-        finalAnchorIds: debugState.finalAnchorIds,
-        goalStatus: debugState.goalStatus,
-        requiredGoalIds: debugState.requiredGoalIds,
+        currentTime: prepared.currentTime,
+        userQuery: prepared.userQuery,
+        rounds: prepared.rounds,
+        stoppedBecause: prepared.stoppedBecause,
+        finalAnchorIds: prepared.finalAnchorIds,
+        goalStatus: prepared.goalStatus,
+        requiredGoalIds: prepared.requiredGoalIds,
       }),
     };
   }
@@ -274,11 +279,11 @@ export class AvatarInferenceRuntime {
     return { ...recall, reasoningChain: lastReasoningChain };
   }
 
-  async createRequest(input: {
+  private async prepareInference(input: {
     avatarTarget: { publicKey: string };
     conversationTurns: AvatarInferenceMessage[];
     stream: boolean;
-  }): Promise<AvatarInferenceRequest> {
+  }): Promise<PreparedInference> {
     const profile = readProfileSummary(this.deps.ownerConn);
     const userQuery = findLatestUserQuery(input.conversationTurns);
     const currentTime = isoNow();
@@ -338,7 +343,8 @@ export class AvatarInferenceRuntime {
       stream: input.stream,
     };
 
-    this.debugStateByRequest.set(request, {
+    return {
+      request,
       currentTime,
       userQuery: decomposition.userQuery,
       requiredGoalIds: decomposition.answerGoals
@@ -347,6 +353,7 @@ export class AvatarInferenceRuntime {
       rounds: recall.rounds,
       stoppedBecause: recall.stoppedBecause,
       finalAnchorIds: recall.anchors.map((anchor) => anchor.id),
+      anchorSelectionStrategy: recall.strategy,
       goalStatus: recall.goalStatus,
       recallRounds: recall.roundSummaries.map((roundSummary) => ({
         round: roundSummary.round,
@@ -357,9 +364,17 @@ export class AvatarInferenceRuntime {
         stoppedCandidate: roundSummary.stoppedCandidate ?? null,
       })),
       turns: debugTurns,
-    });
+    };
+  }
 
-    return request;
+  async createRequest(input: {
+    avatarTarget: { publicKey: string };
+    conversationTurns: AvatarInferenceMessage[];
+    stream: boolean;
+  }): Promise<AvatarInferenceRequest> {
+    const prepared = await this.prepareInference(input);
+    this.preparedInferenceByRequest.set(prepared.request, prepared);
+    return prepared.request;
   }
 
   buildMessages(request: AvatarInferenceRequest): ChatMessage[] {
@@ -372,35 +387,41 @@ export class AvatarInferenceRuntime {
   }
 
   async run(request: AvatarInferenceRequest): Promise<AvatarInferenceResponse> {
-    const messages = this.buildMessages(request);
-    const response = await this.deps.chatClient.chat({ messages });
-    await this.writeRuntimeTraceBestEffort(request, messages, response.content);
-    this.debugStateByRequest.delete(request);
+    try {
+      const messages = this.buildMessages(request);
+      const response = await this.deps.chatClient.chat({ messages });
+      await this.writeRuntimeTraceBestEffort(request, messages, response.content);
 
-    return {
-      message: { role: "assistant", content: response.content },
-      finishReason: response.finishReason,
-      usage: response.usage,
-    };
+      return {
+        message: { role: "assistant", content: response.content },
+        finishReason: response.finishReason,
+        usage: response.usage,
+      };
+    } finally {
+      this.preparedInferenceByRequest.delete(request);
+    }
   }
 
   async *runStream(
     request: AvatarInferenceRequest,
   ): AsyncGenerator<AvatarInferenceEvent, void, unknown> {
-    const messages = this.buildMessages(request);
-    const upstream = this.deps.chatClient.chatStream({ messages });
-    let fullContent = "";
+    try {
+      const messages = this.buildMessages(request);
+      const upstream = this.deps.chatClient.chatStream({ messages });
+      let fullContent = "";
 
-    yield { type: "message_start", message: { role: "assistant" } };
+      yield { type: "message_start", message: { role: "assistant" } };
 
-    for await (const token of upstream) {
-      fullContent += token;
-      yield { type: "text_delta", text: token };
+      for await (const token of upstream) {
+        fullContent += token;
+        yield { type: "text_delta", text: token };
+      }
+
+      await this.writeRuntimeTraceBestEffort(request, messages, fullContent);
+
+      yield { type: "message_end", finishReason: "stop" };
+    } finally {
+      this.preparedInferenceByRequest.delete(request);
     }
-
-    await this.writeRuntimeTraceBestEffort(request, messages, fullContent);
-    this.debugStateByRequest.delete(request);
-
-    yield { type: "message_end", finishReason: "stop" };
   }
 }
