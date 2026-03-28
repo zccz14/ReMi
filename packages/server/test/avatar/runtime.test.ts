@@ -1,4 +1,14 @@
-import { access, lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -377,6 +387,43 @@ describe("AvatarInferenceRuntime", () => {
     expect(assessmentPrompt).toContain("domain_answer");
   });
 
+  it("falls back to default goals when decomposition JSON misses required goals", async () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient: createChatClient(),
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(runtime["deps"].chatClient.chat)
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            userQuery: "被模型改写的问题",
+            currentTime: "1999-01-01T00:00:00.000Z",
+            answerGoals: [{ id: "domain_answer", goal: "只回答问题", required: true }],
+            successCriteria: ["..."],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+    await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "你好" }],
+      stream: false,
+    });
+
+    const assessmentPrompt = vi.mocked(runtime["deps"].chatClient.chat).mock.calls[1]?.[0]
+      .messages[1]?.content;
+    expect(assessmentPrompt).toContain("identity_style");
+    expect(assessmentPrompt).toContain("relationship_boundary");
+    expect(assessmentPrompt).toContain("domain_answer");
+  });
+
   it("enforces temporal validity for time-sensitive queries", async () => {
     const runtime = new AvatarInferenceRuntime({
       ownerConn: createOwnerConn(0),
@@ -581,6 +628,91 @@ describe("AvatarInferenceRuntime", () => {
     expect(request.instructionSegments.recall).not.toContain("这条链路也不该泄漏");
   });
 
+  it("keeps runtime-owned user query and current time when decomposition response rewrites them", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-28T12:34:56.000Z"));
+
+    try {
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(
+          createChatResponse(
+            JSON.stringify({
+              userQuery: "被模型改写的问题",
+              currentTime: "1999-01-01T00:00:00.000Z",
+              answerGoals: [
+                { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+                {
+                  id: "relationship_boundary",
+                  goal: "对方是谁，我与对方的关系和沟通边界",
+                  required: true,
+                },
+                { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+              ],
+              successCriteria: ["基于证据回答"],
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("最终回答"));
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+      });
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "真实用户问题" }],
+        stream: false,
+      });
+      await runtime.run(request);
+
+      const decompositionPrompt = vi.mocked(chatClient.chat).mock.calls[0]?.[0].messages[1]
+        ?.content;
+      const finalMessages = vi.mocked(chatClient.chat).mock.calls[
+        vi.mocked(chatClient.chat).mock.calls.length - 1
+      ]?.[0].messages;
+      expect(decompositionPrompt).toContain("2026-03-28T12:34:56.000Z");
+      expect(decompositionPrompt).not.toContain("1999-01-01T00:00:00.000Z");
+      expect(decompositionPrompt).toContain("真实用户问题");
+      expect(decompositionPrompt).not.toContain("被模型改写的问题");
+      expect(finalMessages?.[1]?.content).toBe("真实用户问题");
+      expect(finalMessages?.[1]?.content).not.toContain("被模型改写的问题");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows full-injection runtime inference without embedding client", async () => {
+    const chatClient = createChatClient();
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("你好")))
+      .mockResolvedValueOnce(createChatResponse("你好，我是分身"));
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient,
+      embeddingClient: null,
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "你好" }],
+      stream: false,
+    });
+    const response = await runtime.run(request);
+
+    expect(response.message.content).toBe("你好，我是分身");
+    expect(vi.mocked(chatClient.chat)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(chatClient.chatStream)).not.toHaveBeenCalled();
+  });
+
   it("writes turn-based runtime debug artifacts for decomposition sufficiency and final generation", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-artifact-"));
 
@@ -745,6 +877,93 @@ describe("AvatarInferenceRuntime", () => {
       await expect(
         writeFile(join(tempRoot, "debug", "can-still-write.txt"), "ok", "utf8"),
       ).resolves.toBeUndefined();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a pre-existing real latest directory with managed runtime artifacts", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-artifact-"));
+
+    try {
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      await mkdir(latestDir, { recursive: true });
+      await writeFile(join(latestDir, "obsolete.txt"), "legacy", "utf8");
+
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("替换旧目录")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("最新回答"));
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      });
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "替换旧目录" }],
+        stream: false,
+      });
+      await runtime.run(request);
+
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect((await readdir(latestDir)).sort()).toContain("final-messages.json");
+      await expect(access(join(latestDir, "obsolete.txt"))).rejects.toThrow();
+      expect(await readJson(join(latestDir, "summary.json"))).toEqual(
+        expect.objectContaining({ userQuery: "替换旧目录" }),
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not delete outside directories when latest symlink target is tampered", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-artifact-"));
+
+    try {
+      const outsideDir = join(tempRoot, "outside-target");
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      await mkdir(outsideDir, { recursive: true });
+      await writeFile(join(outsideDir, "keep.txt"), "safe", "utf8");
+      await mkdir(join(tempRoot, "debug"), { recursive: true });
+      await symlink("../outside-target", latestDir, "dir");
+
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("tampered")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("tampered response"));
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      });
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "tampered" }],
+        stream: false,
+      });
+      await runtime.run(request);
+
+      await expect(access(join(outsideDir, "keep.txt"))).resolves.toBeUndefined();
+      expect(await readJson(join(latestDir, "summary.json"))).toEqual(
+        expect.objectContaining({ userQuery: "tampered" }),
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
