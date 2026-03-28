@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { anchorRoutes } from "../../src/routes/anchors.js";
+import { approvalRoutes } from "../../src/routes/approval.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import { createApprovalService } from "../../src/approval/service.js";
 import * as fs from "node:fs";
@@ -206,6 +207,39 @@ describe("anchor routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.asset.answer).toBe("A1");
+  });
+
+  it("PUT /api/:pubKey/anchors/:id prefers anchor route when approval routes mount first", async () => {
+    const app = new Hono();
+    app.use("/api/:pubKey/*", async (c, next) => {
+      c.set("signerPubKey", PUB_KEY);
+      c.set("role", PUB_KEY === c.req.param("pubKey") ? "owner" : "visitor");
+      c.set("connMgr", connMgr);
+      c.set("embeddingClient", null);
+      await next();
+    });
+    app.route("/api", approvalRoutes);
+    app.route("/api", anchorRoutes);
+
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: "A1",
+      source: "manual",
+      requestId: "seed-shadow-anchor",
+    });
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: "route-shadow-anchor", answer: "A2" }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.asset).toEqual(expect.objectContaining({ question: "Q1", answer: "A2" }));
   });
 
   it("POST /api/:pubKey/anchors/:id/deny routes through gateway", async () => {

@@ -22,7 +22,7 @@ const mockAnchors = [
     id: "a2",
     question: "How does it work?",
     answer: null,
-    source: "interview" as const,
+    source: "reading" as const,
     createdAt: 2000,
     updatedAt: 2000,
   },
@@ -58,12 +58,12 @@ function createMockApiClient(options?: {
     get,
     post: vi.fn().mockResolvedValue({}),
     put: vi.fn().mockResolvedValue({}),
-    del: vi.fn().mockResolvedValue(undefined),
   } as unknown as ApiClient;
 }
 
 describe("useAnchors", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.error).mockClear();
   });
@@ -111,6 +111,8 @@ describe("useAnchors", () => {
   });
 
   it("should update an anchor and reload", async () => {
+    const requestId = "11111111-1111-1111-1111-111111111111";
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValueOnce(requestId);
     const api = createMockApiClient({
       getResponses: [
         { data: { items: mockAnchors, total: 2 } },
@@ -130,13 +132,16 @@ describe("useAnchors", () => {
     expect(api.ownerPath).toHaveBeenCalledWith("/anchors/a1");
     expect(api.put).toHaveBeenCalledWith("/api/test-key/anchors/a1", {
       question: "Updated question",
+      requestId,
     });
     expect(result.current.anchors).toEqual(reloadedAnchors);
     expect(result.current.total).toBe(5);
     expect(toast.success).toHaveBeenCalledWith("Done");
   });
 
-  it("should remove an anchor and reload", async () => {
+  it("should deny an anchor instead of calling legacy delete", async () => {
+    const requestId = "22222222-2222-2222-2222-222222222222";
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValueOnce(requestId);
     const api = createMockApiClient({
       getResponses: [
         { data: { items: mockAnchors, total: 2 } },
@@ -153,8 +158,8 @@ describe("useAnchors", () => {
       await result.current.remove("a1");
     });
 
-    expect(api.ownerPath).toHaveBeenCalledWith("/anchors/a1");
-    expect(api.del).toHaveBeenCalledWith("/api/test-key/anchors/a1");
+    expect(api.ownerPath).toHaveBeenNthCalledWith(2, "/anchors/a1/deny");
+    expect(api.post).toHaveBeenCalledWith("/api/test-key/anchors/a1/deny", { requestId });
     expect(result.current.anchors).toEqual(reloadedAnchors);
     expect(result.current.total).toBe(1);
     expect(toast.success).toHaveBeenCalledWith("Done");

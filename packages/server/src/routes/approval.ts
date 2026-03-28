@@ -46,12 +46,6 @@ const undoSchema = z.object({
   actionId: z.string().trim().min(1),
 });
 
-const microEditSchema = requestIdSchema.extend({
-  question: z.string().min(1),
-  answer: z.string().nullable().optional(),
-  source: z.enum(["interview", "manual", "reading"]),
-});
-
 function requireOwner(c: Context): Response | null {
   if (c.get("role") !== "owner") {
     return c.json({ error: "FORBIDDEN", message: "Owner access required" }, 403);
@@ -268,59 +262,6 @@ approvalRoutes.post(
     try {
       const service = getApprovalServiceFromContext(c);
       const data = await service.undoLastAction(c.req.valid("json"));
-      return c.json({ data });
-    } catch (error) {
-      return mapApprovalError(c, error);
-    }
-  },
-);
-
-approvalRoutes.put(
-  "/:pubKey/anchors/:id",
-  zValidator("json", microEditSchema.partial(), () => undefined),
-  async (c) => {
-    const forbidden = requireOwner(c);
-    if (forbidden) return forbidden;
-
-    const body = c.req.valid("json");
-    if (!body.requestId?.trim()) {
-      return missingRequestId(c);
-    }
-
-    try {
-      const service = getApprovalServiceFromContext(c);
-      const data = await service.microEditAsset({
-        assetId: c.req.param("id"),
-        question: body.question ?? "",
-        answer: body.answer,
-        source: body.source ?? "manual",
-        requestId: body.requestId,
-      });
-      return c.json({ data });
-    } catch (error) {
-      return mapApprovalError(c, error);
-    }
-  },
-);
-
-approvalRoutes.post(
-  "/:pubKey/anchors/:id/deny",
-  zValidator("json", requestIdSchema.partial(), () => undefined),
-  async (c) => {
-    const forbidden = requireOwner(c);
-    if (forbidden) return forbidden;
-
-    const body = c.req.valid("json");
-    if (!body.requestId?.trim()) {
-      return missingRequestId(c);
-    }
-
-    try {
-      const service = getApprovalServiceFromContext(c);
-      const data = await service.denyAsset({
-        assetId: c.req.param("id"),
-        requestId: body.requestId,
-      });
       return c.json({ data });
     } catch (error) {
       return mapApprovalError(c, error);

@@ -6,9 +6,13 @@ interface Anchor {
   id: string;
   question: string;
   answer: string | null;
-  source: "interview" | "manual";
+  source: "interview" | "manual" | "reading";
   createdAt: number;
   updatedAt: number;
+}
+
+function createRequestId() {
+  return globalThis.crypto.randomUUID();
 }
 
 export function useAnchors(apiClient: ApiClient) {
@@ -52,7 +56,7 @@ export function useAnchors(apiClient: ApiClient) {
   const update = async (id: string, data: { question?: string; answer?: string | null }) => {
     try {
       const path = apiClient.ownerPath(`/anchors/${id}`);
-      await apiClient.put(path, data);
+      await apiClient.put(path, { ...data, requestId: createRequestId() });
       await load();
       toast.success("Done");
     } catch {
@@ -62,8 +66,8 @@ export function useAnchors(apiClient: ApiClient) {
 
   const remove = async (id: string) => {
     try {
-      const path = apiClient.ownerPath(`/anchors/${id}`);
-      await apiClient.del(path);
+      const path = apiClient.ownerPath(`/anchors/${id}/deny`);
+      await apiClient.post(path, { requestId: createRequestId() });
       await load();
       toast.success("Done");
     } catch {

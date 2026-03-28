@@ -271,7 +271,7 @@ describe("approval routes", () => {
     expect(res.status).toBe(409);
   });
 
-  it("PUT /api/:pubKey/anchors/:id updates via gateway and requires requestId", async () => {
+  it("approval routes no longer serve anchor mutation paths", async () => {
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
     const created = await service.microEditAsset({
@@ -283,63 +283,18 @@ describe("approval routes", () => {
     });
     const app = createTestApp(connMgr, PUB_KEY);
 
-    const missingRequestId = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+    const updateRes = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question: "Edited question",
-        answer: "Edited answer",
-        source: "manual",
-      }),
+      body: JSON.stringify({ requestId: "req-edit-route", answer: "Edited answer" }),
     });
-    expect(missingRequestId.status).toBe(400);
-
-    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        requestId: "req-edit-route",
-        question: "Edited question",
-        answer: "Edited answer",
-        source: "manual",
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.asset).toEqual(expect.objectContaining({ question: "Edited question" }));
-  });
-
-  it("POST /api/:pubKey/anchors/:id/deny denies formal asset and returns 404 when missing", async () => {
-    const conn = connMgr.getConnection(PUB_KEY);
-    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
-    const created = await service.microEditAsset({
-      assetId: null,
-      question: "Question",
-      answer: "Answer",
-      source: "reading",
-      requestId: "seed-deny-asset-route",
-    });
-    const app = createTestApp(connMgr, PUB_KEY);
-
     const denyRes = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}/deny`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestId: "req-deny-route" }),
     });
 
-    expect(denyRes.status).toBe(200);
-    const denyJson = await denyRes.json();
-    expect(denyJson.data.asset).toEqual(
-      expect.objectContaining({ answer: null, source: "reading" }),
-    );
-
-    const missingRes = await app.request(`/api/${PUB_KEY}/anchors/missing-asset/deny`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId: "req-deny-missing" }),
-    });
-
-    expect(missingRes.status).toBe(404);
+    expect(updateRes.status).toBe(404);
+    expect(denyRes.status).toBe(404);
   });
 });
