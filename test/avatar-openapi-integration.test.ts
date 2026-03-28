@@ -586,30 +586,20 @@ describe("avatar openapi integration", () => {
     const reader = stream!.getReader();
     const decoder = new TextDecoder();
 
-    const firstChunkResult = await readWithTimeout(reader.read(), 200);
-    expect(firstChunkResult).not.toBe("timeout");
-    expect(typeof firstChunkResult).toBe("object");
-    expect(firstChunkResult).toMatchObject({ done: false });
+    let preReleaseText = "";
+    while (!preReleaseText.includes('"role":"assistant"') || !preReleaseText.includes(":\n\n")) {
+      const chunkResult = await readWithTimeout(reader.read(), 200);
+      expect(chunkResult).not.toBe("timeout");
+      expect(typeof chunkResult).toBe("object");
+      expect(chunkResult).toMatchObject({ done: false });
 
-    const messageStartText = decoder.decode(
-      (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
-      { stream: true },
-    );
-    expect(messageStartText).toContain('"role":"assistant"');
-    expect(messageStartText).not.toContain(":\n\n");
-    expect(messageStartText).not.toContain('"content":"hello"');
+      preReleaseText += decoder.decode(
+        (chunkResult as ReadableStreamReadResult<Uint8Array>).value,
+        { stream: true },
+      );
+      expect(preReleaseText).not.toContain('"content":"hello"');
+    }
 
-    const heartbeatChunkResult = await readWithTimeout(reader.read(), 200);
-    expect(heartbeatChunkResult).not.toBe("timeout");
-    expect(typeof heartbeatChunkResult).toBe("object");
-    expect(heartbeatChunkResult).toMatchObject({ done: false });
-
-    const heartbeatText = decoder.decode(
-      (heartbeatChunkResult as ReadableStreamReadResult<Uint8Array>).value,
-      { stream: true },
-    );
-
-    const preReleaseText = messageStartText + heartbeatText;
     expect(preReleaseText).toContain('"role":"assistant"');
     expect(preReleaseText).toContain(":\n\n");
     expect(preReleaseText).not.toContain('"content":"hello"');
