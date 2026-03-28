@@ -2,7 +2,18 @@ import { desc, inArray, sql } from "drizzle-orm";
 import { searchSimilar } from "../embedding/index.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { ChatClient, ChatMessage } from "../llm/client.js";
-import { buildBatchRecallJudgmentPrompt } from "../reasoning/prompts.js";
+import {
+  buildReasoningDecompositionPrompt,
+  buildReasoningJudgmentPrompt,
+  type ReasoningAnswerGoal,
+} from "../reasoning/prompts.js";
+import {
+  buildDefaultAnswerGoals,
+  collectMissingInformation,
+  parseDecomposition,
+  parseRecallJudgment,
+  type ParsedDecomposition,
+} from "../reasoning/orchestration.js";
 import { goalBasedRecall } from "../recall/goal-based-recall.js";
 import { RECALL_FULL_INJECTION_THRESHOLD } from "../recall/constants.js";
 import { soulAnchors } from "../db/schema.js";
@@ -22,26 +33,16 @@ import type {
   AvatarInferenceResponse,
 } from "./model.js";
 
-const DEFAULT_GOALS = [
-  "我是谁，我的身份和表达风格",
-  "回答当前请求所需的认知",
-  "与调用方上下文一致的沟通边界",
-];
+function findLatestUserQuery(conversationTurns: AvatarInferenceMessage[]): string {
+  return (
+    [...conversationTurns].reverse().find((turn) => turn.role === "user")?.content ??
+    conversationTurns.at(-1)?.content ??
+    ""
+  );
+}
 
-function parseRecallJudgment(content: string): {
-  sufficient: boolean;
-  nextQuery?: string;
-  narrative?: string;
-} {
-  const sufficient = content.includes("<sufficient>true</sufficient>");
-  const nextQuery = content.match(/<next_query>([\s\S]*?)<\/next_query>/)?.[1]?.trim();
-  const narrative = content.match(/<narrative>([\s\S]*?)<\/narrative>/)?.[1]?.trim();
-
-  return {
-    sufficient,
-    nextQuery: nextQuery || undefined,
-    narrative: narrative || undefined,
-  };
+function isoNow(): string {
+  return new Date().toISOString();
 }
 
 interface AvatarInferenceRuntimeDeps {
@@ -84,36 +85,79 @@ export class AvatarInferenceRuntime {
       .all() as SoulAnchor[];
   }
 
-  private async collectRecall(conversationTurns: AvatarInferenceMessage[]) {
+  private async collectRecall(input: {
+    conversationTurns: AvatarInferenceMessage[];
+    currentTime: string;
+    answerGoals: ReasoningAnswerGoal[];
+    visitorKey?: string;
+  }) {
     const anchorCount = await this.countAnchors();
 
     if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD || !this.deps.embeddingClient) {
-      return await this.listAnchors();
+      const anchors = await this.listAnchors();
+      return await goalBasedRecall({
+        chatClient: this.deps.chatClient,
+        goals: input.answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
+        context: input.conversationTurns
+          .map((turn) => `${turn.role}: ${turn.content}`)
+          .join("\n")
+          .slice(-2000),
+        countAnchors: () => this.countAnchors(),
+        listAnchors: () => Promise.resolve(anchors),
+        searchAnchors: async () => [],
+        buildJudgmentPrompt: ({ anchors, context }) =>
+          buildReasoningJudgmentPrompt({
+            currentTime: input.currentTime,
+            goals: input.answerGoals,
+            anchors,
+            visitorKey: input.visitorKey,
+            visitorContext: context,
+          }),
+        parseJudgment: (value) => {
+          const parsed = parseRecallJudgment(value);
+          if (!parsed.valid) {
+            throw new Error("Invalid reasoning judgment");
+          }
+          return parsed.judgment;
+        },
+      });
     }
 
-    const context = conversationTurns
+    const context = input.conversationTurns
       .map((turn) => `${turn.role}: ${turn.content}`)
       .join("\n")
       .slice(-2000);
+    let lastReasoningChain: string[] = [];
+
     const recall = await goalBasedRecall({
       chatClient: this.deps.chatClient,
       embeddingClient: this.deps.embeddingClient,
-      goals: DEFAULT_GOALS,
+      goals: input.answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
       context,
       countAnchors: () => this.countAnchors(),
       listAnchors: (limit?: number) => this.listAnchors(limit),
       searchAnchors: (embedding) => this.searchAnchors(embedding),
-      buildJudgmentPrompt: ({ goals, anchors, context }) =>
-        buildBatchRecallJudgmentPrompt(
-          goals,
+      buildJudgmentPrompt: ({ anchors, context }) =>
+        buildReasoningJudgmentPrompt({
+          currentTime: input.currentTime,
+          goals: input.answerGoals,
           anchors,
-          context,
-          conversationTurns.at(-1)?.content ?? "",
-        ) as ChatMessage[],
-      parseJudgment: (value) => parseRecallJudgment(value),
+          visitorKey: input.visitorKey,
+          visitorContext: context,
+        }),
+      parseJudgment: (value) => {
+        const parsed = parseRecallJudgment(value);
+        if (!parsed.valid) {
+          throw new Error("Invalid reasoning judgment");
+        }
+        if (parsed.reasoningChain?.length) {
+          lastReasoningChain = parsed.reasoningChain;
+        }
+        return parsed.judgment;
+      },
     });
 
-    return recall.anchors;
+    return { ...recall, reasoningChain: lastReasoningChain };
   }
 
   async createRequest(input: {
@@ -122,7 +166,33 @@ export class AvatarInferenceRuntime {
     stream: boolean;
   }): Promise<AvatarInferenceRequest> {
     const profile = readProfileSummary(this.deps.ownerConn);
-    const recalledAnchors = await this.collectRecall(input.conversationTurns);
+    const userQuery = findLatestUserQuery(input.conversationTurns);
+    const currentTime = isoNow();
+
+    let decomposition: ParsedDecomposition;
+    try {
+      const decompositionResponse = await this.deps.chatClient.chat({
+        messages: buildReasoningDecompositionPrompt({
+          currentTime,
+          userQuery,
+        }),
+      });
+      decomposition = parseDecomposition(decompositionResponse.content, userQuery, currentTime);
+    } catch {
+      decomposition = {
+        userQuery,
+        currentTime,
+        answerGoals: buildDefaultAnswerGoals(userQuery),
+      };
+    }
+
+    const recall = await this.collectRecall({
+      conversationTurns: input.conversationTurns,
+      currentTime,
+      answerGoals: decomposition.answerGoals,
+      visitorKey: undefined,
+    });
+    const missingInformation = collectMissingInformation(recall.goalStatus);
 
     return {
       avatarTarget: input.avatarTarget,
@@ -133,7 +203,11 @@ export class AvatarInferenceRuntime {
           displayName: profile.displayName,
           bio: profile.bio,
         }),
-        recall: buildRecallSegment(recalledAnchors),
+        recall: buildRecallSegment({
+          anchors: recall.anchors,
+          missingInformation,
+          stoppedBecause: recall.stoppedBecause,
+        }),
       },
       conversationTurns: input.conversationTurns,
       contentParts: [],
