@@ -1,6 +1,10 @@
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { ReasoningEngine } from "../../src/reasoning/engine.js";
 import type { ChatResponse } from "../../src/llm/client.js";
+import { createLatestReasoningDebugArtifactWriter } from "../../src/reasoning/debug-artifact.js";
 import type { SoulAnchor } from "../../src/types.js";
 
 const THRESHOLD = 20;
@@ -129,6 +133,10 @@ function getGenerationPrompt(deps: ReturnType<typeof createMockDeps>): string {
     messages?: Array<{ content: string }>;
   } | null;
   return call?.messages?.[0]?.content ?? "";
+}
+
+async function readJson<T>(filePath: string): Promise<T> {
+  return JSON.parse(await readFile(filePath, "utf8")) as T;
 }
 
 describe("ReasoningEngine", () => {
@@ -555,5 +563,198 @@ describe("ReasoningEngine", () => {
         data: expect.objectContaining({ code: "LLM_ERROR", msg: "LLM down" }),
       }),
     );
+  });
+
+  it("writes latest reasoning debug artifact when explicitly configured", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const deps = createMockDeps();
+      const engine = new ReasoningEngine({
+        ...deps,
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({
+          rootDir: tempRoot,
+        }),
+      });
+
+      await engine.handleMessage("你好", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      const summary = await readJson<{
+        currentTime: string;
+        userQuery: string;
+        rounds: number;
+        stoppedBecause: string | null;
+        finalAnchorIds: string[];
+        hasUnsatisfiedRequiredGoal: boolean;
+      }>(join(latestDir, "summary.json"));
+      const recallRounds = await readJson<
+        Array<{
+          round: number;
+          query: string;
+          newAnchorIds: string[];
+          allAnchorIds: string[];
+          normalizedGoalStatus: Array<{ goalId: string; sufficient: boolean }>;
+          stoppedCandidate?: string;
+        }>
+      >(join(latestDir, "recall-rounds.json"));
+
+      expect(await readFile(join(latestDir, "request.json"), "utf8")).toContain("visitor-key");
+      expect(await readFile(join(latestDir, "decomposition.json"), "utf8")).toContain(
+        "identity_style",
+      );
+      expect(await readFile(join(latestDir, "final-prompt.md"), "utf8")).toContain(
+        "## User Question",
+      );
+      expect(await readFile(join(latestDir, "response.txt"), "utf8")).toBe("你好，我是分身");
+      expect(summary).toEqual(
+        expect.objectContaining({
+          currentTime: expect.any(String),
+          userQuery: "你好",
+          rounds: 1,
+          stoppedBecause: "sufficient",
+          finalAnchorIds: ["a1"],
+          hasUnsatisfiedRequiredGoal: false,
+        }),
+      );
+      expect(recallRounds).toEqual([
+        expect.objectContaining({
+          round: 1,
+          query: "",
+          newAnchorIds: ["a1"],
+          allAnchorIds: ["a1"],
+          normalizedGoalStatus: expect.arrayContaining([
+            expect.objectContaining({ goalId: "identity_style", sufficient: true }),
+          ]),
+          stoppedCandidate: "sufficient",
+        }),
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces prior latest reasoning artifact contents on subsequent runs", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const firstDeps = createMockDeps();
+      const writer = createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot });
+      await new ReasoningEngine({ ...firstDeps, debugArtifactWriter: writer }).handleMessage(
+        "第一次问题",
+        "visitor-key",
+        {
+          emitThinking: vi.fn(),
+          emitToken: vi.fn(),
+          emitDone: vi.fn(),
+          emitError: vi.fn(),
+        },
+      );
+
+      const secondDeps = createMockDeps();
+      secondDeps.chatClient.chat.mockReset();
+      secondDeps.chatClient.chat
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("第二次问题")))
+        .mockResolvedValueOnce(
+          createChatResponse(
+            createAssessmentResponse({
+              sufficient: false,
+              goalStatus: [
+                {
+                  goalId: "identity_style",
+                  sufficient: false,
+                  known: [],
+                  missing: ["不知道身份风格"],
+                  knownAnchorIds: [],
+                  missingKeys: ["identity-unknown"],
+                },
+                {
+                  goalId: "relationship_boundary",
+                  sufficient: false,
+                  known: [],
+                  missing: ["不知道关系边界"],
+                  knownAnchorIds: [],
+                  missingKeys: ["visitor-boundary"],
+                },
+                {
+                  goalId: "domain_answer",
+                  sufficient: false,
+                  known: [],
+                  missing: ["不知道问题答案"],
+                  knownAnchorIds: [],
+                  missingKeys: ["domain-fact-missing"],
+                },
+              ],
+              nextQuery: "继续找",
+            }),
+          ),
+        );
+      secondDeps.searchAnchors.mockResolvedValue([]);
+
+      await new ReasoningEngine({ ...secondDeps, debugArtifactWriter: writer }).handleMessage(
+        "第二次问题",
+        "visitor-key",
+        {
+          emitThinking: vi.fn(),
+          emitToken: vi.fn(),
+          emitDone: vi.fn(),
+          emitError: vi.fn(),
+        },
+      );
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      const summary = await readJson<{
+        userQuery: string;
+        rounds: number;
+        stoppedBecause: string | null;
+        hasUnsatisfiedRequiredGoal: boolean;
+      }>(join(latestDir, "summary.json"));
+      const request = await readJson<{ userQuery: string }>(join(latestDir, "request.json"));
+      const recallRounds = await readJson<Array<{ query: string; newAnchorIds: string[] }>>(
+        join(latestDir, "recall-rounds.json"),
+      );
+
+      expect(summary).toEqual(
+        expect.objectContaining({
+          userQuery: "第二次问题",
+          rounds: 1,
+          stoppedBecause: "no-new-anchors",
+          hasUnsatisfiedRequiredGoal: true,
+        }),
+      );
+      expect(request.userQuery).toBe("第二次问题");
+      expect(recallRounds).toEqual([
+        expect.objectContaining({
+          query: "",
+          newAnchorIds: [],
+        }),
+      ]);
+      await expect(access(join(latestDir, "summary.json"))).resolves.toBeUndefined();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write reasoning debug artifact without explicit config", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const deps = createMockDeps();
+      await new ReasoningEngine(deps).handleMessage("你好", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      await expect(access(join(tempRoot, "debug", "reasoning-last"))).rejects.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });

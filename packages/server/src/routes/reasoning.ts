@@ -15,6 +15,7 @@ import type { SoulAnchor } from "../types.js";
 import { logger, shortKey } from "../logger.js";
 import type { ReasoningAnchorSelectionStrategy } from "../reasoning/constants.js";
 import { canonicalizeBodyJson } from "../messaging/body.js";
+import { createLatestReasoningDebugArtifactWriter } from "../reasoning/debug-artifact.js";
 import {
   applyReceiptPatch,
   buildCanonicalFact,
@@ -123,10 +124,14 @@ function createEngine(
   requesterPubKey: string,
   chatClient: ChatClient,
   embeddingClient: EmbeddingClient | null,
+  debugArtifactRootDir: string | null,
 ): ReasoningEngine {
   return new ReasoningEngine({
     chatClient,
     embeddingClient: embeddingClient ?? undefined,
+    debugArtifactWriter: debugArtifactRootDir
+      ? createLatestReasoningDebugArtifactWriter({ rootDir: debugArtifactRootDir })
+      : undefined,
 
     async countAnchors(): Promise<number> {
       const row = deps.ownerConn.drizzle
@@ -237,6 +242,11 @@ function createEngine(
       return ids.map((id) => anchorMap.get(id)).filter((anchor): anchor is SoulAnchor => !!anchor);
     },
   });
+}
+
+function resolveReasoningDebugArtifactRootDir(): string | null {
+  const configured = process.env.REMI_REASONING_DEBUG_ARTIFACT_ROOT_DIR?.trim();
+  return configured ? configured : null;
 }
 
 function createSSEEmitter(stream: {
@@ -773,6 +783,7 @@ reasoningRoutes.post(
       requesterPubKey,
       chatClient,
       embeddingClient,
+      resolveReasoningDebugArtifactRootDir(),
     );
 
     return streamSSE(c, async (stream) => {

@@ -14,6 +14,10 @@ import {
   mapRecallRuntimeStrategyToReasoningStrategy,
   type ReasoningAnchorSelectionStrategy,
 } from "./constants.js";
+import {
+  buildReasoningDebugArtifactSummary,
+  type ReasoningDebugArtifactWriter,
+} from "./debug-artifact.js";
 
 const log = logger.child({ module: "reasoning" });
 
@@ -32,6 +36,7 @@ export interface ReasoningSSEEmitter {
 export interface ReasoningEngineDeps {
   chatClient: ChatClient;
   embeddingClient?: EmbeddingClient;
+  debugArtifactWriter?: ReasoningDebugArtifactWriter;
   countAnchors(): Promise<number>;
   listAnchors(limit?: number): Promise<SoulAnchor[]>;
   getMessages(
@@ -390,6 +395,47 @@ export class ReasoningEngine {
         anchorIds,
         anchorSelectionStrategy,
       );
+
+      if (this.deps.debugArtifactWriter) {
+        try {
+          await this.deps.debugArtifactWriter.writeLatest({
+            request: {
+              visitorKey,
+              userQuery: content,
+              currentTime,
+              messageCount: messages.length,
+              context: contextStr,
+            },
+            decomposition: {
+              userQuery: decomposition.userQuery,
+              currentTime: decomposition.currentTime,
+              answerGoals: decomposition.answerGoals,
+            },
+            recallRounds: recall.roundSummaries.map((roundSummary) => ({
+              round: roundSummary.round,
+              query: roundSummary.query,
+              newAnchorIds: roundSummary.newAnchorIds,
+              allAnchorIds: roundSummary.allAnchorIds,
+              normalizedGoalStatus: roundSummary.normalizedGoalStatus,
+              ...(roundSummary.stoppedCandidate
+                ? { stoppedCandidate: roundSummary.stoppedCandidate }
+                : {}),
+            })),
+            finalPrompt: systemPrompt,
+            response: fullContent,
+            summary: buildReasoningDebugArtifactSummary({
+              currentTime,
+              userQuery: decomposition.userQuery,
+              rounds: recall.rounds,
+              stoppedBecause: recall.stoppedBecause,
+              finalAnchorIds: anchorIds,
+              goalStatus: recall.goalStatus,
+            }),
+          });
+        } catch (error) {
+          log.warn({ err: error }, "Failed to write reasoning debug artifact");
+        }
+      }
 
       const ms = Date.now() - startTime;
       log.info(
