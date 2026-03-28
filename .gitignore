@@ -146,3 +146,7 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Debug artifacts
+packages/web/dev-dist
+debug/debug
