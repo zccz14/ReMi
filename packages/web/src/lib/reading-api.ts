@@ -82,10 +82,16 @@ export async function persistReadingApprovedAnchors(
 ) {
   await Promise.all(
     anchors.map((anchor) =>
-      apiClient.post(apiClient.ownerPath("/anchors"), {
+      apiClient.post(apiClient.ownerPath("/approval/candidates"), {
         question: anchor.question,
         answer: anchor.answer,
-        source: "manual",
+        source: "reading",
+        sourceRef: `reading:${anchor.id}`,
+        sourceSnapshot: {
+          approvedAnchorId: anchor.id,
+          themeId: anchor.themeId,
+          themeLabel: anchor.themeLabel,
+        },
       }),
     ),
   );

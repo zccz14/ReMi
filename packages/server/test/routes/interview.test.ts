@@ -4,7 +4,7 @@ import { interviewRoutes } from "../../src/routes/interview.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
-import { messages, soulAnchors } from "../../src/db/schema.js";
+import { messages, soulAnchors, soulCandidateQueue } from "../../src/db/schema.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -168,6 +168,48 @@ describe("interview routes", () => {
     expect(body).toContain("event: phase");
     expect(body).toContain("event: token");
     expect(body).toContain("event: done");
+  });
+
+  it("POST /api/:pubKey/interview/message creates approval candidates instead of formal anchors", async () => {
+    const chatClient: ChatClient = {
+      chat: async () => ({
+        content:
+          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>ok</narrative></judgment><anchor><question>用户最近在做什么</question><answer>在做测试</answer></anchor>",
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      chatStream: async function* () {
+        yield "收到";
+      },
+    };
+    const embeddingClient: EmbeddingClient = {
+      embed: async () => [[0.1, 0.2, 0.3, 0.4]],
+    };
+    const app = createTestApp(connMgr, PUB_KEY, { chatClient, embeddingClient });
+
+    const res = await app.request(`/api/${PUB_KEY}/interview/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "我最近在做测试" }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+
+    const conn = connMgr.getConnection(PUB_KEY);
+    const queued = conn.drizzle.select().from(soulCandidateQueue).all();
+    const formal = conn.drizzle.select().from(soulAnchors).all();
+
+    expect(queued).toEqual([
+      expect.objectContaining({
+        question: "我最近在做什么",
+        answer: "在做测试",
+        source: "interview",
+      }),
+    ]);
+    expect(queued[0]?.sourceRef).toBeTruthy();
+    expect(queued[0]?.sourceSnapshot).toContain("我最近在做测试");
+    expect(formal).toHaveLength(0);
   });
 
   it("POST /api/:pubKey/interview/start keeps current embedding dependency boundary", async () => {

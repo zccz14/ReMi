@@ -4,11 +4,12 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { sql, desc, inArray } from "drizzle-orm";
 import { messages, soulAnchors } from "../db/schema.js";
+import { createApprovalService } from "../approval/service.js";
 import { InterviewEngine, type SSEEmitter } from "../interview/engine.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { ChatClient } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
-import { searchSimilar, upsertEmbedding } from "../embedding/index.js";
+import { searchSimilar } from "../embedding/index.js";
 import type { SoulAnchor } from "../types.js";
 import type { Context } from "hono";
 import { logger, shortKey } from "../logger.js";
@@ -31,6 +32,7 @@ function parsePositiveInt(value: string | undefined): number | null | undefined 
 }
 
 function createEngine(
+  ownerKey: string,
   conn: {
     raw: ReturnType<ConnectionManager["getConnection"]>["raw"];
     drizzle: ReturnType<ConnectionManager["getConnection"]>["drizzle"];
@@ -81,31 +83,29 @@ function createEngine(
     },
 
     async saveAnchors(anchors: { question: string; answer: string }[]): Promise<void> {
-      for (const anchor of anchors) {
-        const id = crypto.randomUUID();
-        const now = Date.now();
-        conn.drizzle
-          .insert(soulAnchors)
-          .values({
-            id,
-            question: anchor.question,
-            answer: anchor.answer,
-            source: "interview",
-            createdAt: now,
-            updatedAt: now,
-          })
-          .run();
+      const sourceMessage = conn.drizzle
+        .select({ id: messages.id, content: messages.content })
+        .from(messages)
+        .where(sql`${messages.role} = 'user'`)
+        .orderBy(desc(messages.id))
+        .limit(1)
+        .get();
+      const approvalService = createApprovalService({
+        ownerKey,
+        conn,
+        embeddingClient,
+      });
 
-        // Fire-and-forget embedding
-        const text = anchor.question + "\n" + anchor.answer;
-        embeddingClient
-          .embed([text])
-          .then((vectors) => {
-            upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
-          })
-          .catch((err) => {
-            log.error({ err, anchorId: id }, "Failed to generate embedding for interview anchor");
-          });
+      for (const anchor of anchors) {
+        approvalService.createCandidate({
+          question: anchor.question,
+          answer: anchor.answer,
+          source: "interview",
+          sourceRef: sourceMessage ? `interview-message:${sourceMessage.id}` : null,
+          sourceSnapshot: sourceMessage
+            ? { messageId: sourceMessage.id, content: sourceMessage.content }
+            : null,
+        });
       }
     },
 
@@ -261,7 +261,7 @@ interviewRoutes.post("/:pubKey/interview/start", (c) => {
   log.info({ soul: shortKey(pubKey) }, "Interview start requested");
 
   const conn = c.get("connMgr").getConnection(pubKey);
-  const engine = createEngine(conn, chatClient, embeddingClient);
+  const engine = createEngine(pubKey, conn, chatClient, embeddingClient);
 
   return streamSSE(c, async (stream) => {
     const emitter = createSSEEmitter(stream);
@@ -296,7 +296,7 @@ interviewRoutes.post(
     log.info({ soul: shortKey(pubKey) }, "Interview message received");
 
     const conn = c.get("connMgr").getConnection(pubKey);
-    const engine = createEngine(conn, chatClient, embeddingClient);
+    const engine = createEngine(pubKey, conn, chatClient, embeddingClient);
 
     return streamSSE(c, async (stream) => {
       const emitter = createSSEEmitter(stream);
