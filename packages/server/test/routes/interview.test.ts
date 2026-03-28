@@ -5,6 +5,7 @@ import { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
 import { messages, soulAnchors, soulCandidateQueue } from "../../src/db/schema.js";
+import { subscribeToLogs, type StructuredLogRecord } from "../../src/logger.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,6 +34,18 @@ function createTestApp(
   });
   app.route("/api", interviewRoutes);
   return app;
+}
+
+function captureLogs() {
+  const records: StructuredLogRecord[] = [];
+  const unsubscribe = subscribeToLogs((record) => {
+    records.push(record);
+  });
+  return { records, unsubscribe };
+}
+
+function findEvents(records: StructuredLogRecord[], event: string) {
+  return records.filter((record) => record.event === event || record.alertType === event);
 }
 
 describe("interview routes", () => {
@@ -212,6 +225,45 @@ describe("interview routes", () => {
     expect(formal).toHaveLength(0);
   });
 
+  it("records interview candidate creation through the approval gateway", async () => {
+    const chatClient: ChatClient = {
+      chat: async () => ({
+        content:
+          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>ok</narrative></judgment><anchor><question>用户最近在做什么</question><answer>在做测试</answer></anchor>",
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      chatStream: async function* () {
+        yield "收到";
+      },
+    };
+    const embeddingClient: EmbeddingClient = {
+      embed: async () => [[0.1, 0.2, 0.3, 0.4]],
+    };
+    const app = createTestApp(connMgr, PUB_KEY, { chatClient, embeddingClient });
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/interview/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "我最近在做测试" }),
+      });
+
+      expect(res.status).toBe(200);
+      await res.text();
+
+      expect(findEvents(records, "candidate_created")[0]).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          source: "interview",
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("POST /api/:pubKey/interview/start keeps current embedding dependency boundary", async () => {
     const chatClient: ChatClient = {
       chat: async () => ({
@@ -310,5 +362,16 @@ describe("interview routes", () => {
 
     const systemPrompt = chatMessages[chatMessages.length - 1]?.[0]?.content ?? "";
     expect(systemPrompt.indexOf("新问题")).toBeLessThan(systemPrompt.indexOf("旧问题"));
+  });
+
+  it("routes outside the gateway do not directly write soulAnchors", () => {
+    const repoRoot = path.resolve(__dirname, "../../src/routes");
+    const routeFiles = ["approval.ts", "anchors.ts", "interview.ts"];
+    const directWritePattern = /(?:insert|update|delete)\(soulAnchors\)/;
+
+    for (const routeFile of routeFiles) {
+      const content = fs.readFileSync(path.join(repoRoot, routeFile), "utf8");
+      expect(content).not.toMatch(directWritePattern);
+    }
   });
 });

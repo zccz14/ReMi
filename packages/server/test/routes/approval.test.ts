@@ -4,9 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { approvalRoutes } from "../../src/routes/approval.js";
+import { buildApprovalAlert } from "../../src/approval/alerts.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import { createApprovalService } from "../../src/approval/service.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
+import { subscribeToLogs, type StructuredLogRecord } from "../../src/logger.js";
 
 function createTestApp(
   connMgr: ConnectionManager,
@@ -23,6 +25,18 @@ function createTestApp(
   });
   app.route("/api", approvalRoutes);
   return app;
+}
+
+function captureLogs() {
+  const records: StructuredLogRecord[] = [];
+  const unsubscribe = subscribeToLogs((record) => {
+    records.push(record);
+  });
+  return { records, unsubscribe };
+}
+
+function findEvents(records: StructuredLogRecord[], event: string) {
+  return records.filter((record) => record.event === event || record.alertType === event);
 }
 
 describe("approval routes", () => {
@@ -69,6 +83,84 @@ describe("approval routes", () => {
       }),
     );
     expect(json.data.sourceSnapshot).toContain("Trust matters most.");
+  });
+
+  it("records approval success-path events with correlated actionId/requestId", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const createRes = await app.request(`/api/${PUB_KEY}/approval/candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: "What matters most?",
+          answer: "Trust",
+          source: "reading",
+        }),
+      });
+      const created = await createRes.json();
+
+      const approveRes = await app.request(
+        `/api/${PUB_KEY}/approval/candidates/${created.data.id}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: "req-success-path", mode: "create_new" }),
+        },
+      );
+
+      expect(approveRes.status).toBe(200);
+
+      const candidateCreated = findEvents(records, "candidate_created")[0];
+      const approvalApplied = findEvents(records, "approval_applied")[0];
+      const approvalCommitted = findEvents(records, "approval_committed")[0];
+      const formalWrite = findEvents(records, "formal_asset_written")[0];
+      const candidateDeleted = findEvents(records, "candidate_deleted")[0];
+
+      expect(candidateCreated).toEqual(
+        expect.objectContaining({
+          candidateId: created.data.id,
+          ownerKey: PUB_KEY,
+          source: "reading",
+        }),
+      );
+      expect(approvalApplied).toEqual(
+        expect.objectContaining({
+          candidateId: created.data.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-success-path",
+        }),
+      );
+      expect(approvalCommitted).toEqual(
+        expect.objectContaining({
+          candidateId: created.data.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-success-path",
+        }),
+      );
+      expect(formalWrite).toEqual(
+        expect.objectContaining({
+          event: "formal_asset_written",
+          actionType: "approval",
+          gateway: "controlled_write_service",
+          ownerKey: PUB_KEY,
+          candidateId: created.data.id,
+          requestId: "req-success-path",
+        }),
+      );
+      expect(candidateDeleted).toEqual(
+        expect.objectContaining({
+          candidateId: created.data.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-success-path",
+        }),
+      );
+      expect(approvalCommitted?.actionId).toBe(formalWrite?.actionId);
+      expect(findEvents(records, "formal_asset_written")).toHaveLength(1);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("GET /api/:pubKey/approval/candidates filters anchor and probe queues", async () => {
@@ -172,6 +264,80 @@ describe("approval routes", () => {
     expect(res.status).toBe(409);
   });
 
+  it("records stale-target and idempotency events for approval retries", async () => {
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const existing = await service.microEditAsset({
+      assetId: null,
+      question: "Existing question",
+      answer: "Existing answer",
+      source: "manual",
+      requestId: "seed-observability-existing",
+    });
+    const candidate = service.createCandidate({
+      question: "Updated question",
+      answer: "Updated answer",
+      source: "reading",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const staleRes = await app.request(
+        `/api/${PUB_KEY}/approval/candidates/${candidate.id}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestId: "req-stale-log",
+            mode: "update_existing",
+            targetAssetId: existing.asset.id,
+            targetUpdatedAt: existing.asset.updatedAt - 1,
+          }),
+        },
+      );
+
+      expect(staleRes.status).toBe(409);
+      expect(findEvents(records, "approval_rejected_stale_target")[0]).toEqual(
+        expect.objectContaining({
+          candidateId: candidate.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-stale-log",
+        }),
+      );
+
+      const successRes = await app.request(
+        `/api/${PUB_KEY}/approval/candidates/${candidate.id}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: "req-idempotent", mode: "create_new" }),
+        },
+      );
+      expect(successRes.status).toBe(200);
+
+      const replayRes = await app.request(
+        `/api/${PUB_KEY}/approval/candidates/${candidate.id}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: "req-idempotent", mode: "create_new" }),
+        },
+      );
+      expect(replayRes.status).toBe(200);
+
+      expect(findEvents(records, "approval_idempotency_hit")[0]).toEqual(
+        expect.objectContaining({
+          candidateId: candidate.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-idempotent",
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("POST /api/:pubKey/approval/candidates/:id/approve applies edited text to update_existing", async () => {
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
@@ -258,6 +424,38 @@ describe("approval routes", () => {
     );
   });
 
+  it("records skip events without formal writes", async () => {
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const candidate = service.createCandidate({
+      question: "Ask later",
+      answer: null,
+      source: "interview",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/approval/candidates/${candidate.id}/skip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "req-skip-log" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(findEvents(records, "candidate_skipped")[0]).toEqual(
+        expect.objectContaining({
+          candidateId: candidate.id,
+          ownerKey: PUB_KEY,
+          requestId: "req-skip-log",
+        }),
+      );
+      expect(findEvents(records, "formal_asset_written")).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("POST /api/:pubKey/approval/undo restores the last candidate", async () => {
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
@@ -283,6 +481,74 @@ describe("approval routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.restoredCandidate).toEqual(expect.objectContaining({ id: candidate.id }));
+  });
+
+  it("records undo rollback events and correlates undoneActionId to prior formal writes", async () => {
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const candidate = service.createCandidate({
+      question: "Undo approval",
+      answer: "Needs rollback",
+      source: "manual",
+    });
+    const approved = await service.approveCandidate({
+      candidateId: candidate.id,
+      action: "approve",
+      mode: "create_new",
+      requestId: "req-undo-seed",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/approval/undo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actionId: approved.actionId }),
+      });
+
+      expect(res.status).toBe(200);
+
+      const undoApplied = findEvents(records, "undo_applied")[0];
+      const candidateRestored = findEvents(records, "candidate_restored")[0];
+      const rolledBack = findEvents(records, "approval_rolled_back")[0];
+      const undoWrite = findEvents(records, "formal_asset_written")[0];
+
+      expect(undoApplied).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          undoneActionId: approved.actionId,
+          candidateId: candidate.id,
+        }),
+      );
+      expect(candidateRestored).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          candidateId: candidate.id,
+          actionId: undoApplied?.actionId,
+        }),
+      );
+      expect(rolledBack).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          candidateId: candidate.id,
+          actionId: undoApplied?.actionId,
+        }),
+      );
+      expect(undoWrite).toEqual(
+        expect.objectContaining({
+          event: "formal_asset_written",
+          actionType: "undo",
+          ownerKey: PUB_KEY,
+          gateway: "controlled_write_service",
+          requestId: null,
+          candidateId: candidate.id,
+          undoneActionId: approved.actionId,
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("POST /api/:pubKey/approval/undo returns 409 when target changed", async () => {
@@ -340,5 +606,56 @@ describe("approval routes", () => {
 
     expect(updateRes.status).toBe(404);
     expect(denyRes.status).toBe(404);
+  });
+
+  it("builds alert payloads for tx failures and invalid formal writes", () => {
+    expect(
+      buildApprovalAlert({
+        event: "approval_tx_failed",
+        ownerKey: PUB_KEY,
+        requestId: "req-failed",
+        candidateId: "candidate-1",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        alertType: "approval_tx_failed",
+        ownerKey: PUB_KEY,
+        requestId: "req-failed",
+      }),
+    );
+
+    expect(
+      buildApprovalAlert({
+        event: "direct_write_blocked",
+        ownerKey: PUB_KEY,
+        routeOrModule: "routes/interview",
+        attemptedAction: "insert(soulAnchors)",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        alertType: "direct_write_blocked",
+        ownerKey: PUB_KEY,
+      }),
+    );
+
+    expect(
+      buildApprovalAlert({
+        event: "formal_asset_written",
+        ownerKey: PUB_KEY,
+        assetId: "asset-1",
+        actionId: "action-1",
+        candidateId: null,
+        requestId: "req-1",
+        gateway: "legacy_route",
+        actionType: "other",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        alertType: "formal_asset_written_invalid",
+        assetId: "asset-1",
+        actionType: "other",
+        gateway: "legacy_route",
+      }),
+    );
   });
 });

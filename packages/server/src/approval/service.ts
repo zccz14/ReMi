@@ -19,8 +19,13 @@ import type {
   SoulAnchorSource,
   SoulAssetKind,
 } from "../types.js";
+import { logger } from "../logger.js";
+import { buildApprovalAlert } from "./alerts.js";
 import { getSoulAssetKind, normalizeAnswer, normalizeQuestion } from "./normalize.js";
 import { buildSourceContext } from "./source-context.js";
+
+const APPROVAL_GATEWAY = "controlled_write_service";
+const log = logger.child({ module: "approval-service", gateway: APPROVAL_GATEWAY });
 
 interface ApprovalConnection {
   raw: Database.Database;
@@ -42,6 +47,20 @@ interface ApprovalMutationResult {
   actionId: string;
   asset: SoulAnchor;
 }
+
+type FormalAssetActionType = "approval" | "update_existing" | "micro_edit" | "deny" | "undo";
+
+interface RollbackMetadata {
+  assetId: string | null;
+  candidateId: string | null;
+  requestId: string | null;
+  actionType: Exclude<FormalAssetActionType, "undo">;
+}
+
+type RollbackPayload =
+  | { type: "create_asset"; assetAfter: AnchorRow; meta: RollbackMetadata }
+  | { type: "restore_asset"; before: AnchorRow; after: AnchorRow; meta: RollbackMetadata }
+  | { type: "delete_candidate"; meta: { candidateId: string; requestId: string | null } };
 
 type CandidateRow = typeof soulCandidateQueue.$inferSelect;
 type AnchorRow = typeof soulAnchors.$inferSelect;
@@ -130,7 +149,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
   function writeLastAction(params: {
     actionId: string;
     candidateSnapshot: CandidateRow | null;
-    rollbackPayload: Record<string, unknown>;
+    rollbackPayload: RollbackPayload;
     createdAt: number;
   }) {
     input.conn.drizzle
@@ -245,6 +264,94 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       .run();
   }
 
+  function emitEvent(
+    level: "info" | "warn" | "error",
+    event: string,
+    fields: Record<string, unknown>,
+  ) {
+    const payload = { event, ownerKey: input.ownerKey, gateway: APPROVAL_GATEWAY, ...fields };
+    log[level](payload, event);
+
+    const alert = buildApprovalAlert({
+      event,
+      ownerKey: input.ownerKey,
+      requestId: (fields.requestId as string | null | undefined) ?? null,
+      actionId: (fields.actionId as string | null | undefined) ?? null,
+      candidateId: (fields.candidateId as string | null | undefined) ?? null,
+      assetId: (fields.assetId as string | null | undefined) ?? null,
+      gateway: (fields.gateway as string | null | undefined) ?? APPROVAL_GATEWAY,
+      actionType: (fields.actionType as string | null | undefined) ?? null,
+      routeOrModule: (fields.routeOrModule as string | null | undefined) ?? null,
+      attemptedAction: (fields.attemptedAction as string | null | undefined) ?? null,
+    });
+
+    if (alert) {
+      logger.error(alert, alert.alertType);
+    }
+  }
+
+  function emitFormalAssetWritten(params: {
+    assetId: string;
+    actionId: string;
+    actionType: FormalAssetActionType;
+    candidateId: string | null;
+    requestId: string | null;
+    undoneActionId?: string;
+  }) {
+    emitEvent("info", "formal_asset_written", {
+      assetId: params.assetId,
+      actionId: params.actionId,
+      ownerKey: input.ownerKey,
+      gateway: APPROVAL_GATEWAY,
+      actionType: params.actionType,
+      candidateId: params.candidateId,
+      requestId: params.requestId,
+      undoneActionId: params.undoneActionId,
+    });
+  }
+
+  function emitIdempotencyHit(targetId: string, requestId: string) {
+    emitEvent("info", "approval_idempotency_hit", {
+      targetId,
+      requestId,
+      candidateId: targetId.startsWith("asset:") ? null : targetId,
+    });
+  }
+
+  function getAnyRecordedRequest(targetId: string) {
+    return input.conn.drizzle
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.ownerKey, input.ownerKey),
+          eq(approvalRequests.candidateId, targetId),
+        ),
+      )
+      .get();
+  }
+
+  function getCandidateForMutation(candidateId: string, requestId: string): CandidateRow {
+    const candidate = input.conn.drizzle
+      .select()
+      .from(soulCandidateQueue)
+      .where(eq(soulCandidateQueue.id, candidateId))
+      .get();
+
+    if (candidate) {
+      return candidate;
+    }
+
+    if (getAnyRecordedRequest(candidateId)) {
+      emitEvent("warn", "approval_rejected_already_processed", {
+        candidateId,
+        requestId,
+      });
+    }
+
+    throw new Error("Approval candidate not found");
+  }
+
   return {
     createCandidate(candidate: ApprovalCandidateCreateInput): ApprovalCandidate {
       const now = Date.now();
@@ -265,7 +372,12 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         })
         .run();
 
-      return mapCandidate(getCandidateOrThrow(id));
+      const created = mapCandidate(getCandidateOrThrow(id));
+      emitEvent("info", "candidate_created", {
+        candidateId: created.id,
+        source: created.source,
+      });
+      return created;
     },
 
     listCandidates(inputParams: {
@@ -303,10 +415,11 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     }): Promise<ApprovalResult> {
       const existingRequest = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
       if (existingRequest) {
+        emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
         return JSON.parse(existingRequest.responsePayload) as ApprovalResult;
       }
 
-      const candidate = getCandidateOrThrow(inputParams.candidateId);
+      const candidate = getCandidateForMutation(inputParams.candidateId, inputParams.requestId);
       const now = Date.now();
       const actionId = crypto.randomUUID();
       const question = normalizeQuestion(inputParams.question ?? candidate.question);
@@ -319,9 +432,20 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
 
         const existing = getAnchorOrThrow(inputParams.targetAssetId);
         if (existing.updatedAt !== inputParams.targetUpdatedAt) {
+          emitEvent("warn", "approval_rejected_stale_target", {
+            candidateId: inputParams.candidateId,
+            requestId: inputParams.requestId,
+            assetId: inputParams.targetAssetId,
+          });
           throw new Error("Target asset is stale; updatedAt mismatch");
         }
       }
+
+      emitEvent("info", "approval_applied", {
+        candidateId: inputParams.candidateId,
+        requestId: inputParams.requestId,
+        actionId,
+      });
 
       const assetForWrite =
         inputParams.action === "reject"
@@ -351,10 +475,14 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         return input.conn.raw.transaction(() => {
           const recorded = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
           if (recorded) {
+            emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
             return JSON.parse(recorded.responsePayload) as ApprovalResult;
           }
 
-          const candidateInsideTxn = getCandidateOrThrow(inputParams.candidateId);
+          const candidateInsideTxn = getCandidateForMutation(
+            inputParams.candidateId,
+            inputParams.requestId,
+          );
 
           if (inputParams.action === "reject") {
             input.conn.drizzle
@@ -366,7 +494,13 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             writeLastAction({
               actionId,
               candidateSnapshot: candidateInsideTxn,
-              rollbackPayload: { type: "delete_candidate" },
+              rollbackPayload: {
+                type: "delete_candidate",
+                meta: {
+                  candidateId: candidateInsideTxn.id,
+                  requestId: inputParams.requestId,
+                },
+              },
               createdAt: now,
             });
             recordRequest({
@@ -375,6 +509,12 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
               action: inputParams.action,
               responsePayload,
               createdAt: now,
+            });
+
+            emitEvent("info", "candidate_deleted", {
+              candidateId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+              actionId,
             });
 
             return responsePayload;
@@ -392,7 +532,16 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             writeLastAction({
               actionId,
               candidateSnapshot: candidateInsideTxn,
-              rollbackPayload: { type: "create_asset", assetAfter: asset },
+              rollbackPayload: {
+                type: "create_asset",
+                assetAfter: asset,
+                meta: {
+                  assetId: asset.id,
+                  candidateId: candidateInsideTxn.id,
+                  requestId: inputParams.requestId,
+                  actionType: "approval",
+                },
+              },
               createdAt: now,
             });
             recordRequest({
@@ -403,11 +552,35 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
               createdAt: now,
             });
 
+            emitFormalAssetWritten({
+              assetId: asset.id,
+              actionId,
+              actionType: "approval",
+              candidateId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+            });
+            emitEvent("info", "approval_committed", {
+              candidateId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+              actionId,
+              assetId: asset.id,
+            });
+            emitEvent("info", "candidate_deleted", {
+              candidateId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+              actionId,
+            });
+
             return responsePayload;
           }
 
           const existing = getAnchorOrThrow(inputParams.targetAssetId!);
           if (existing.updatedAt !== inputParams.targetUpdatedAt) {
+            emitEvent("warn", "approval_rejected_stale_target", {
+              candidateId: inputParams.candidateId,
+              requestId: inputParams.requestId,
+              assetId: inputParams.targetAssetId,
+            });
             throw new Error("Target asset is stale; updatedAt mismatch");
           }
 
@@ -431,7 +604,17 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           writeLastAction({
             actionId,
             candidateSnapshot: candidateInsideTxn,
-            rollbackPayload: { type: "restore_asset", before: existing, after: updated },
+            rollbackPayload: {
+              type: "restore_asset",
+              before: existing,
+              after: updated,
+              meta: {
+                assetId: updated.id,
+                candidateId: candidateInsideTxn.id,
+                requestId: inputParams.requestId,
+                actionType: "update_existing",
+              },
+            },
             createdAt: now,
           });
           recordRequest({
@@ -442,15 +625,48 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             createdAt: now,
           });
 
+          emitFormalAssetWritten({
+            assetId: updated.id,
+            actionId,
+            actionType: "update_existing",
+            candidateId: candidateInsideTxn.id,
+            requestId: inputParams.requestId,
+          });
+          emitEvent("info", "approval_committed", {
+            candidateId: candidateInsideTxn.id,
+            requestId: inputParams.requestId,
+            actionId,
+            assetId: updated.id,
+          });
+          emitEvent("info", "candidate_deleted", {
+            candidateId: candidateInsideTxn.id,
+            requestId: inputParams.requestId,
+            actionId,
+          });
+
           return responsePayload;
         })();
       } catch (error) {
         if (isSqliteUniqueConstraint(error)) {
+          emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
           return getRecordedRequestOrThrow<ApprovalResult>(
             inputParams.candidateId,
             inputParams.requestId,
           );
         }
+        emitEvent("error", "approval_tx_failed", {
+          candidateId: inputParams.candidateId,
+          requestId: inputParams.requestId,
+          actionId,
+          assetId: assetForWrite?.id ?? null,
+          actionType:
+            inputParams.action === "reject"
+              ? null
+              : inputParams.mode === "update_existing"
+                ? "update_existing"
+                : "approval",
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     },
@@ -461,10 +677,11 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     }): Promise<ApprovalResult> {
       const existingRequest = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
       if (existingRequest) {
+        emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
         return JSON.parse(existingRequest.responsePayload) as ApprovalResult;
       }
 
-      getCandidateOrThrow(inputParams.candidateId);
+      getCandidateForMutation(inputParams.candidateId, inputParams.requestId);
       const responsePayload: ApprovalResult = { actionId: crypto.randomUUID(), asset: null };
       const now = Date.now();
 
@@ -472,10 +689,11 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         return input.conn.raw.transaction(() => {
           const recorded = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
           if (recorded) {
+            emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
             return JSON.parse(recorded.responsePayload) as ApprovalResult;
           }
 
-          getCandidateOrThrow(inputParams.candidateId);
+          getCandidateForMutation(inputParams.candidateId, inputParams.requestId);
           recordRequest({
             targetId: inputParams.candidateId,
             requestId: inputParams.requestId,
@@ -484,15 +702,28 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             createdAt: now,
           });
 
+          emitEvent("info", "candidate_skipped", {
+            candidateId: inputParams.candidateId,
+            requestId: inputParams.requestId,
+          });
+
           return responsePayload;
         })();
       } catch (error) {
         if (isSqliteUniqueConstraint(error)) {
+          emitIdempotencyHit(inputParams.candidateId, inputParams.requestId);
           return getRecordedRequestOrThrow<ApprovalResult>(
             inputParams.candidateId,
             inputParams.requestId,
           );
         }
+        emitEvent("error", "approval_tx_failed", {
+          candidateId: inputParams.candidateId,
+          requestId: inputParams.requestId,
+          actionId: responsePayload.actionId,
+          actionType: null,
+          assetId: null,
+        });
         throw error;
       }
     },
@@ -507,6 +738,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       const targetId = inputParams.assetId ? `asset:${inputParams.assetId}` : "asset:new";
       const existingRequest = getRecordedRequest(targetId, inputParams.requestId);
       if (existingRequest) {
+        emitIdempotencyHit(targetId, inputParams.requestId);
         return JSON.parse(existingRequest.responsePayload) as ApprovalMutationResult;
       }
 
@@ -536,6 +768,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         return input.conn.raw.transaction(() => {
           const recorded = getRecordedRequest(targetId, inputParams.requestId);
           if (recorded) {
+            emitIdempotencyHit(targetId, inputParams.requestId);
             return JSON.parse(recorded.responsePayload) as ApprovalMutationResult;
           }
 
@@ -546,7 +779,16 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             writeLastAction({
               actionId,
               candidateSnapshot: null,
-              rollbackPayload: { type: "create_asset", assetAfter: assetForWrite },
+              rollbackPayload: {
+                type: "create_asset",
+                assetAfter: assetForWrite,
+                meta: {
+                  assetId: assetForWrite.id,
+                  candidateId: null,
+                  requestId: inputParams.requestId,
+                  actionType: "micro_edit",
+                },
+              },
               createdAt: now,
             });
             recordRequest({
@@ -555,6 +797,13 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
               action: "micro_edit",
               responsePayload,
               createdAt: now,
+            });
+            emitFormalAssetWritten({
+              assetId: assetForWrite.id,
+              actionId,
+              actionType: "micro_edit",
+              candidateId: null,
+              requestId: inputParams.requestId,
             });
             return responsePayload;
           }
@@ -575,7 +824,17 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           writeLastAction({
             actionId,
             candidateSnapshot: null,
-            rollbackPayload: { type: "restore_asset", before: existing, after: assetForWrite },
+            rollbackPayload: {
+              type: "restore_asset",
+              before: existing,
+              after: assetForWrite,
+              meta: {
+                assetId: assetForWrite.id,
+                candidateId: null,
+                requestId: inputParams.requestId,
+                actionType: "micro_edit",
+              },
+            },
             createdAt: now,
           });
           recordRequest({
@@ -586,12 +845,28 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             createdAt: now,
           });
 
+          emitFormalAssetWritten({
+            assetId: assetForWrite.id,
+            actionId,
+            actionType: "micro_edit",
+            candidateId: null,
+            requestId: inputParams.requestId,
+          });
+
           return responsePayload;
         })();
       } catch (error) {
         if (isSqliteUniqueConstraint(error)) {
+          emitIdempotencyHit(targetId, inputParams.requestId);
           return getRecordedRequestOrThrow<ApprovalMutationResult>(targetId, inputParams.requestId);
         }
+        emitEvent("error", "approval_tx_failed", {
+          candidateId: null,
+          requestId: inputParams.requestId,
+          actionId,
+          assetId: assetForWrite.id,
+          actionType: "micro_edit",
+        });
         throw error;
       }
     },
@@ -603,6 +878,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       const targetId = `asset:${inputParams.assetId}`;
       const existingRequest = getRecordedRequest(targetId, inputParams.requestId);
       if (existingRequest) {
+        emitIdempotencyHit(targetId, inputParams.requestId);
         return JSON.parse(existingRequest.responsePayload) as ApprovalMutationResult;
       }
 
@@ -613,6 +889,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         return await withImmediateTransaction(input.conn, async () => {
           const recorded = getRecordedRequest(targetId, inputParams.requestId);
           if (recorded) {
+            emitIdempotencyHit(targetId, inputParams.requestId);
             return JSON.parse(recorded.responsePayload) as ApprovalMutationResult;
           }
 
@@ -639,7 +916,17 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           writeLastAction({
             actionId,
             candidateSnapshot: null,
-            rollbackPayload: { type: "restore_asset", before: current, after: updated },
+            rollbackPayload: {
+              type: "restore_asset",
+              before: current,
+              after: updated,
+              meta: {
+                assetId: updated.id,
+                candidateId: null,
+                requestId: inputParams.requestId,
+                actionType: "deny",
+              },
+            },
             createdAt: now,
           });
           recordRequest({
@@ -650,12 +937,28 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             createdAt: now,
           });
 
+          emitFormalAssetWritten({
+            assetId: updated.id,
+            actionId,
+            actionType: "deny",
+            candidateId: null,
+            requestId: inputParams.requestId,
+          });
+
           return responsePayload;
         });
       } catch (error) {
         if (isSqliteUniqueConstraint(error)) {
+          emitIdempotencyHit(targetId, inputParams.requestId);
           return getRecordedRequestOrThrow<ApprovalMutationResult>(targetId, inputParams.requestId);
         }
+        emitEvent("error", "approval_tx_failed", {
+          candidateId: null,
+          requestId: inputParams.requestId,
+          actionId,
+          assetId: inputParams.assetId,
+          actionType: "deny",
+        });
         throw error;
       }
     },
@@ -675,59 +978,129 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         throw new Error("Undo target not found");
       }
 
-      const rollbackPayload = JSON.parse(lastAction.rollbackPayload) as
-        | { type: "create_asset"; assetAfter: AnchorRow }
-        | { type: "restore_asset"; before: AnchorRow; after: AnchorRow }
-        | { type: "delete_candidate" };
+      const rollbackPayload = JSON.parse(lastAction.rollbackPayload) as RollbackPayload;
       const candidateSnapshot = JSON.parse(lastAction.candidateSnapshot) as CandidateRow | null;
       const rollbackEmbedding =
         rollbackPayload.type === "restore_asset"
           ? await buildAnchorEmbedding(mapAnchor(rollbackPayload.before))
           : null;
+      const undoActionId = crypto.randomUUID();
 
-      const restoredCandidate = input.conn.raw.transaction(() => {
-        if (rollbackPayload.type === "create_asset") {
-          const current = getAnchorOrThrow(rollbackPayload.assetAfter.id);
-          if (current.updatedAt !== rollbackPayload.assetAfter.updatedAt) {
-            throw new Error("Undo conflict: asset changed after the last action");
+      try {
+        const restoredCandidate = input.conn.raw.transaction(() => {
+          if (rollbackPayload.type === "create_asset") {
+            const current = getAnchorOrThrow(rollbackPayload.assetAfter.id);
+            if (current.updatedAt !== rollbackPayload.assetAfter.updatedAt) {
+              emitEvent("warn", "undo_rejected_conflict", {
+                actionId: undoActionId,
+                undoneActionId: inputParams.actionId,
+                assetId: rollbackPayload.assetAfter.id,
+                candidateId: rollbackPayload.meta.candidateId,
+              });
+              throw new Error("Undo conflict: asset changed after the last action");
+            }
+            input.conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, current.id)).run();
+            deleteAnchorEmbeddingInTxn(rollbackPayload.assetAfter.id);
+          } else if (rollbackPayload.type === "restore_asset") {
+            const current = getAnchorOrThrow(rollbackPayload.after.id);
+            if (current.updatedAt !== rollbackPayload.after.updatedAt) {
+              emitEvent("warn", "undo_rejected_conflict", {
+                actionId: undoActionId,
+                undoneActionId: inputParams.actionId,
+                assetId: rollbackPayload.after.id,
+                candidateId: rollbackPayload.meta.candidateId,
+              });
+              throw new Error("Undo conflict: asset changed after the last action");
+            }
+            input.conn.drizzle
+              .update(soulAnchors)
+              .set({
+                question: rollbackPayload.before.question,
+                answer: rollbackPayload.before.answer,
+                source: rollbackPayload.before.source,
+                createdAt: rollbackPayload.before.createdAt,
+                updatedAt: rollbackPayload.before.updatedAt,
+              })
+              .where(eq(soulAnchors.id, rollbackPayload.before.id))
+              .run();
+            upsertAnchorEmbeddingInTxn(rollbackPayload.before.id, rollbackEmbedding);
           }
-          input.conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, current.id)).run();
-          deleteAnchorEmbeddingInTxn(rollbackPayload.assetAfter.id);
-        } else if (rollbackPayload.type === "restore_asset") {
-          const current = getAnchorOrThrow(rollbackPayload.after.id);
-          if (current.updatedAt !== rollbackPayload.after.updatedAt) {
-            throw new Error("Undo conflict: asset changed after the last action");
+
+          if (candidateSnapshot) {
+            input.conn.drizzle.insert(soulCandidateQueue).values(candidateSnapshot).run();
           }
+
           input.conn.drizzle
-            .update(soulAnchors)
-            .set({
-              question: rollbackPayload.before.question,
-              answer: rollbackPayload.before.answer,
-              source: rollbackPayload.before.source,
-              createdAt: rollbackPayload.before.createdAt,
-              updatedAt: rollbackPayload.before.updatedAt,
-            })
-            .where(eq(soulAnchors.id, rollbackPayload.before.id))
+            .delete(approvalLastActions)
+            .where(eq(approvalLastActions.ownerKey, input.ownerKey))
             .run();
-          upsertAnchorEmbeddingInTxn(rollbackPayload.before.id, rollbackEmbedding);
+
+          return candidateSnapshot ? mapCandidate(candidateSnapshot) : null;
+        })();
+
+        const rollbackMeta =
+          rollbackPayload.type === "delete_candidate" ? rollbackPayload.meta : rollbackPayload.meta;
+        const assetId =
+          rollbackPayload.type === "delete_candidate"
+            ? null
+            : rollbackPayload.type === "create_asset"
+              ? rollbackPayload.assetAfter.id
+              : rollbackPayload.before.id;
+
+        emitEvent("info", "undo_applied", {
+          actionId: undoActionId,
+          undoneActionId: inputParams.actionId,
+          assetId,
+          candidateId: rollbackMeta.candidateId,
+        });
+
+        if (restoredCandidate) {
+          emitEvent("info", "candidate_restored", {
+            actionId: undoActionId,
+            candidateId: restoredCandidate.id,
+          });
         }
 
-        if (candidateSnapshot) {
-          input.conn.drizzle.insert(soulCandidateQueue).values(candidateSnapshot).run();
+        if (assetId) {
+          emitFormalAssetWritten({
+            assetId,
+            actionId: undoActionId,
+            actionType: "undo",
+            candidateId: rollbackMeta.candidateId,
+            requestId: null,
+            undoneActionId: inputParams.actionId,
+          });
+          emitEvent("info", "approval_rolled_back", {
+            actionId: undoActionId,
+            assetId,
+            candidateId: rollbackMeta.candidateId,
+          });
         }
 
-        input.conn.drizzle
-          .delete(approvalLastActions)
-          .where(eq(approvalLastActions.ownerKey, input.ownerKey))
-          .run();
-
-        return candidateSnapshot ? mapCandidate(candidateSnapshot) : null;
-      })();
-
-      return {
-        actionId: inputParams.actionId,
-        restoredCandidate,
-      };
+        return {
+          actionId: undoActionId,
+          restoredCandidate,
+        };
+      } catch (error) {
+        if (!(error instanceof Error && error.message.includes("Undo conflict"))) {
+          emitEvent("error", "approval_tx_failed", {
+            actionId: undoActionId,
+            assetId:
+              rollbackPayload.type === "delete_candidate"
+                ? null
+                : rollbackPayload.type === "create_asset"
+                  ? rollbackPayload.assetAfter.id
+                  : rollbackPayload.after.id,
+            candidateId:
+              rollbackPayload.type === "delete_candidate"
+                ? rollbackPayload.meta.candidateId
+                : rollbackPayload.meta.candidateId,
+            requestId: null,
+            actionType: "undo",
+          });
+        }
+        throw error;
+      }
     },
   };
 }

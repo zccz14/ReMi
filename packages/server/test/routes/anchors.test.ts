@@ -4,6 +4,7 @@ import { anchorRoutes } from "../../src/routes/anchors.js";
 import { approvalRoutes } from "../../src/routes/approval.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import { createApprovalService } from "../../src/approval/service.js";
+import { subscribeToLogs, type StructuredLogRecord } from "../../src/logger.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20,6 +21,18 @@ function createTestApp(connMgr: ConnectionManager, pubKey: string) {
   });
   app.route("/api", anchorRoutes);
   return app;
+}
+
+function captureLogs() {
+  const records: StructuredLogRecord[] = [];
+  const unsubscribe = subscribeToLogs((record) => {
+    records.push(record);
+  });
+  return { records, unsubscribe };
+}
+
+function findEvents(records: StructuredLogRecord[], event: string) {
+  return records.filter((record) => record.event === event || record.alertType === event);
 }
 
 describe("anchor routes", () => {
@@ -209,6 +222,42 @@ describe("anchor routes", () => {
     expect(json.data.asset.answer).toBe("A1");
   });
 
+  it("records micro-edit writes with requestId and null-safe fields", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: null,
+      source: "reading",
+      requestId: "seed-micro-edit-log",
+    });
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "route-micro-edit-log", answer: "A1" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(findEvents(records, "formal_asset_written")[0]).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          assetId: created.asset.id,
+          candidateId: null,
+          requestId: "route-micro-edit-log",
+          actionType: "micro_edit",
+          gateway: "controlled_write_service",
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("PUT /api/:pubKey/anchors/:id prefers anchor route when approval routes mount first", async () => {
     const app = new Hono();
     app.use("/api/:pubKey/*", async (c, next) => {
@@ -263,6 +312,42 @@ describe("anchor routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.asset.answer).toBeNull();
+  });
+
+  it("records deny writes with requestId and candidateId=null", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: "A1",
+      source: "reading",
+      requestId: "seed-deny-log",
+    });
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}/deny`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "route-deny-log" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(findEvents(records, "formal_asset_written")[0]).toEqual(
+        expect.objectContaining({
+          ownerKey: PUB_KEY,
+          assetId: created.asset.id,
+          candidateId: null,
+          requestId: "route-deny-log",
+          actionType: "deny",
+          gateway: "controlled_write_service",
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("DELETE /api/:pubKey/anchors/:id → 405 legacy delete path disabled", async () => {
