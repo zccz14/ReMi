@@ -39,6 +39,26 @@ export type SoulAssetKind = "anchor" | "probe";
 
 export type SoulAnchorSource = "interview" | "manual" | "reading";
 
+export interface ApprovalCandidateCreateInput {
+  question: string;
+  answer?: string | null;
+  source: SoulAnchorSource;
+  sourceRef?: string | null;
+  sourceSnapshot?: string | Record<string, unknown> | null;
+}
+
+export interface ApprovalCandidate {
+  id: string;
+  ownerKey: string;
+  question: string;
+  answer: string | null;
+  source: SoulAnchorSource;
+  sourceRef: string | null;
+  sourceSnapshot: string | null;
+  createdAt: number;
+  kind: SoulAssetKind;
+}
+
 export interface SoulAnchor {
   id: string;
   question: string;

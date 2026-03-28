@@ -88,6 +88,9 @@ export const soulCandidateQueue = sqliteTable("soul_candidate_queue", {
   ownerKey: text("owner_key").notNull(),
   question: text("question").notNull(),
   answer: text("answer"),
+  source: text("source", { enum: ["interview", "manual", "reading"] }).notNull(),
+  sourceRef: text("source_ref"),
+  sourceSnapshot: text("source_snapshot"),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
 });
 

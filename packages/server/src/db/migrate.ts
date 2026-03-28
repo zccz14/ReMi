@@ -96,6 +96,9 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       owner_key TEXT NOT NULL,
       question TEXT NOT NULL,
       answer TEXT,
+      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading')),
+      source_ref TEXT,
+      source_snapshot TEXT,
       created_at INTEGER NOT NULL
     );
 
