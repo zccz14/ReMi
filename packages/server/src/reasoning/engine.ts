@@ -181,10 +181,11 @@ export class ReasoningEngine {
     fallbackQuery: string,
     currentTime: string,
   ): ParsedDecomposition {
+    const fallbackAnswerGoals = this.buildDefaultAnswerGoals(fallbackQuery);
     const fallback: ParsedDecomposition = {
       userQuery: fallbackQuery,
       currentTime,
-      answerGoals: this.buildDefaultAnswerGoals(fallbackQuery),
+      answerGoals: fallbackAnswerGoals,
     };
 
     const parsed = JSON.parse(content) as {
@@ -225,12 +226,14 @@ export class ReasoningEngine {
     const requiredGoalIds = new Set(
       answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
     );
-    const hasRequiredDefaults =
-      requiredGoalIds.has("identity_style") &&
-      requiredGoalIds.has("relationship_boundary") &&
-      requiredGoalIds.has("domain_answer");
+    const expectedRequiredGoalIds = new Set(
+      fallbackAnswerGoals.filter((goal) => goal.required).map((goal) => goal.id),
+    );
+    const hasExpectedRequiredGoals =
+      requiredGoalIds.size === expectedRequiredGoalIds.size &&
+      Array.from(expectedRequiredGoalIds).every((goalId) => requiredGoalIds.has(goalId));
 
-    if (!hasRequiredDefaults) {
+    if (!hasExpectedRequiredGoals) {
       return fallback;
     }
 

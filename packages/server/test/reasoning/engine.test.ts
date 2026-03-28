@@ -190,6 +190,44 @@ describe("ReasoningEngine", () => {
     expect(assessmentPrompt).toContain("domain_answer");
   });
 
+  it("should fallback to default goals when time sensitive decomposition omits temporal validity", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            userQuery: "我最近怎么样？",
+            currentTime: "2026-03-28T12:34:56.000Z",
+            answerGoals: [
+              { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+              {
+                id: "relationship_boundary",
+                goal: "对方是谁，我与对方的关系和沟通边界",
+                required: true,
+              },
+              { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+            ],
+            successCriteria: ["基于证据回答"],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+    await new ReasoningEngine(deps).handleMessage("我最近怎么样？", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone: vi.fn(),
+      emitError: vi.fn(),
+    });
+
+    const assessmentPrompt = deps.chatClient.chat.mock.calls[1][0].messages[1].content;
+    expect(assessmentPrompt).toContain("identity_style");
+    expect(assessmentPrompt).toContain("relationship_boundary");
+    expect(assessmentPrompt).toContain("domain_answer");
+    expect(assessmentPrompt).toContain("temporal_validity");
+  });
+
   it("should ignore model supplied userQuery and currentTime in favor of engine owned values", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-28T12:34:56.000Z"));
