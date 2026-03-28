@@ -75,6 +75,21 @@ describe("reasoning integration", () => {
     return done ? JSON.parse(done.data ?? "{}") : null;
   }
 
+  async function readWithTimeout(
+    readPromise: Promise<ReadableStreamReadResult<Uint8Array>>,
+    timeoutMs: number,
+  ) {
+    const resultPromise = Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
+      readPromise,
+      new Promise((resolve) => {
+        setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(timeoutMs);
+    return resultPromise;
+  }
+
   function seedAnchor(id: string, question: string, withEmbedding = true) {
     const conn = connMgr.getConnection(ownerPubKey);
     const now = Date.now();
@@ -287,18 +302,9 @@ describe("reasoning integration", () => {
       expect(res.headers.get("content-type")).toContain("text/event-stream");
 
       const reader = res.body!.getReader();
-
+      const firstChunkRead = reader.read();
       await vi.advanceTimersByTimeAsync(5000);
-
-      const firstChunkResultPromise = Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
-        reader.read(),
-        new Promise((resolve) => {
-          setTimeout(() => resolve("timeout"), 1);
-        }),
-      ]);
-
-      await vi.advanceTimersByTimeAsync(1);
-
+      const firstChunkResultPromise = readWithTimeout(firstChunkRead, 50);
       const firstChunkResult = await firstChunkResultPromise;
       expect(firstChunkResult).not.toBe("timeout");
       expect(typeof firstChunkResult).toBe("object");
@@ -315,7 +321,6 @@ describe("reasoning integration", () => {
       expect(firstChunkText).not.toContain("event: token");
 
       releaseRecall();
-      await vi.runAllTimersAsync();
 
       let remainingText = "";
       while (true) {
@@ -331,6 +336,62 @@ describe("reasoning integration", () => {
       expect(done).toMatchObject({ messageId: 2, recalledAnchors: expect.any(Array) });
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("POST /reasoning/message exits stream quietly when heartbeat transport fails", async () => {
+    vi.resetModules();
+    vi.doMock("../packages/server/src/lib/sse-heartbeat.js", () => ({
+      createSseHeartbeat(options: { onError?: (error: unknown) => void }) {
+        let rejectFailure!: (error: unknown) => void;
+        const failure = new Promise<never>((_, reject) => {
+          rejectFailure = reject;
+        });
+        failure.catch(() => {});
+
+        return {
+          start() {
+            const error = new Error("mock heartbeat transport failure");
+            options.onError?.(error);
+            rejectFailure(error);
+          },
+          stop() {},
+          recordRealWrite() {},
+          get failure() {
+            return failure;
+          },
+        };
+      },
+    }));
+
+    try {
+      const { createApp: createIsolatedApp } = await import("@remi/server/app");
+      const isolated = createIsolatedApp({
+        dataDir: tmpDir,
+        embeddingDimensions: 4,
+        chatClient: createChatClient(),
+        embeddingClient: null,
+      });
+
+      app = isolated.app;
+      connMgr = isolated.connMgr;
+      cleanup = () => isolated.connMgr.closeAll();
+
+      const res = await signedRequest(
+        "POST",
+        `/api/${ownerPubKey}/reasoning/message`,
+        visitorPrivKey,
+        visitorPubKey,
+        JSON.stringify({ content: "你好" }),
+      );
+
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain("event: error");
+      expect(text).not.toContain('"code":"LLM_ERROR"');
+    } finally {
+      vi.doUnmock("../packages/server/src/lib/sse-heartbeat.js");
+      vi.resetModules();
     }
   });
 

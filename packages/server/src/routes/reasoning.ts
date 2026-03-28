@@ -731,19 +731,51 @@ reasoningRoutes.post(
 
     return streamSSE(c, async (stream) => {
       const emitter = createSSEEmitter(stream);
+      let transportFailure: unknown = null;
+
+      function markTransportFailure(error: unknown) {
+        if (transportFailure === null) {
+          transportFailure = error;
+        }
+        return transportFailure;
+      }
+
+      function isTransportFailure(error: unknown) {
+        return transportFailure !== null && error === transportFailure;
+      }
+
+      function ensureStreamHealthy() {
+        if (transportFailure !== null) {
+          throw transportFailure;
+        }
+      }
+
       const heartbeat = createSseHeartbeat({
         writeComment: async (frame) => {
           await stream.write(frame);
         },
+        onError: (error) => {
+          markTransportFailure(error);
+        },
       });
 
       async function emitThinking(narrative: string) {
-        await emitter.emitThinking(narrative);
+        ensureStreamHealthy();
+        try {
+          await emitter.emitThinking(narrative);
+        } catch (error) {
+          throw markTransportFailure(error);
+        }
         heartbeat.recordRealWrite();
       }
 
       async function emitToken(content: string) {
-        await emitter.emitToken(content);
+        ensureStreamHealthy();
+        try {
+          await emitter.emitToken(content);
+        } catch (error) {
+          throw markTransportFailure(error);
+        }
         heartbeat.recordRealWrite();
       }
 
@@ -753,12 +785,22 @@ reasoningRoutes.post(
         shared_message_id?: string;
         content?: string;
       }) {
-        await emitter.emitDone(data);
+        ensureStreamHealthy();
+        try {
+          await emitter.emitDone(data);
+        } catch (error) {
+          throw markTransportFailure(error);
+        }
         heartbeat.recordRealWrite();
       }
 
       async function emitError(code: string, message: string) {
-        await emitter.emitError(code, message);
+        ensureStreamHealthy();
+        try {
+          await emitter.emitError(code, message);
+        } catch (error) {
+          throw markTransportFailure(error);
+        }
         heartbeat.recordRealWrite();
       }
 
@@ -839,7 +881,18 @@ reasoningRoutes.post(
       try {
         await Promise.race([runReasoningFlow(), heartbeat.failure]);
       } catch (error) {
-        await emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+        if (isTransportFailure(error)) {
+          return;
+        }
+
+        try {
+          await emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+        } catch (emitErrorFailure) {
+          if (isTransportFailure(emitErrorFailure)) {
+            return;
+          }
+          throw emitErrorFailure;
+        }
       } finally {
         heartbeat.stop();
       }
