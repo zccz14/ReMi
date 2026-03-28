@@ -18,7 +18,11 @@
   "discover": {
     "title": "发现",
     "subtitle": "发现其他用户，浏览社区",
-    "comingSoon": "即将推出"
+    "comingSoon": "即将推出",
+    "reading": {
+      "title": "阅读",
+      "description": "把一段长文本交给 AI，批量提炼灵魂锚点"
+    }
   },
   "me": {
     "title": "我",
@@ -156,6 +160,36 @@
     "copied": "链接已复制，发给朋友吧",
     "bootstrapping": "正在准备公开资料…",
     "bootstrapError": "公开资料准备失败，请稍后重试。"
+  },
+  "reading": {
+    "title": "阅读",
+    "description": "把一段长文本交给 AI，批量提炼灵魂锚点。",
+    "inputLabel": "长文本",
+    "charCount": "当前字数：{{count}}",
+    "start": "开始阅读",
+    "shortHint": "这段文本有点短，可能提炼不出足够稳定的灵魂锚点，你也可以继续试试。",
+    "tooLong": "这段文本太长了。为保证阅读效果，请压缩到 50000 字以内再试。",
+    "progress": "已完成 {{answered}} / {{total}}",
+    "approved": "认可",
+    "questionInvalid": "问题不对",
+    "answerInvalid": "答案不对",
+    "submitRound": "提交本轮",
+    "submitHint": "完成所有反馈后才能提交本轮。",
+    "correctionHintPlaceholder": "补一句：答案偏差在哪里？",
+    "viewSource": "查看原文",
+    "sourceUnavailable": "暂时无法定位片段",
+    "summaryTitle": "已覆盖主题",
+    "missingTopicsTitle": "可能遗漏的话题",
+    "suggestStop": "新信息的增量已经开始下降，你可以考虑在这一轮收束。",
+    "extraFocusLabel": "补充关注点",
+    "keepDigging": "继续挖掘",
+    "alreadyEnough": "已经足够",
+    "lowYieldTitle": "这段文本可稳定提炼的锚点较少",
+    "lowYieldDescription": "建议换一段表达更密集、包含更多自我判断的长文本再试。",
+    "closedTitle": "本次阅读已结束",
+    "closedDescription": "你已经结束这次阅读会话，未开启的新一轮不会自动继续。",
+    "startNew": "重新开始",
+    "reviewBadge": "答案待修正"
   },
   "common": {
     "cancel": "取消",

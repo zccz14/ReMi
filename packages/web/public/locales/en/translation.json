@@ -18,7 +18,11 @@
   "discover": {
     "title": "Discover",
     "subtitle": "Discover users, browse community",
-    "comingSoon": "Coming Soon"
+    "comingSoon": "Coming Soon",
+    "reading": {
+      "title": "Reading",
+      "description": "Give AI a long text and extract soul anchors in batches"
+    }
   },
   "me": {
     "title": "Me",
@@ -162,6 +166,36 @@
     "copied": "Link copied. Send it to a friend.",
     "bootstrapping": "Preparing your public profile…",
     "bootstrapError": "Failed to prepare your public profile. Try again later."
+  },
+  "reading": {
+    "title": "Reading",
+    "description": "Give AI a long text and extract soul anchors in batches.",
+    "inputLabel": "Long text",
+    "charCount": "Characters: {{count}}",
+    "start": "Start reading",
+    "shortHint": "This text is a bit short. It may not yield stable soul anchors, but you can still try.",
+    "tooLong": "This text is too long. To keep the reading flow reliable, shorten it to 50000 characters or fewer.",
+    "progress": "Answered {{answered}} / {{total}}",
+    "approved": "Approve",
+    "questionInvalid": "Question is wrong",
+    "answerInvalid": "Answer is wrong",
+    "submitRound": "Submit round",
+    "submitHint": "Answer every item before submitting this round.",
+    "correctionHintPlaceholder": "Add one note: what is off in the answer?",
+    "viewSource": "View source",
+    "sourceUnavailable": "Could not locate a source snippet",
+    "summaryTitle": "Covered topics",
+    "missingTopicsTitle": "Potentially missing topics",
+    "suggestStop": "The incremental value looks lower now, so this may be a good point to stop.",
+    "extraFocusLabel": "Add focus",
+    "keepDigging": "Keep digging",
+    "alreadyEnough": "Already enough",
+    "lowYieldTitle": "This text yields very few stable anchor candidates",
+    "lowYieldDescription": "Try a denser long-form text with more explicit self-judgment and reflection.",
+    "closedTitle": "Reading session closed",
+    "closedDescription": "This reading session is closed and will not automatically continue into another round.",
+    "startNew": "Start new reading",
+    "reviewBadge": "Answer needs revision"
   },
   "common": {
     "cancel": "Cancel",

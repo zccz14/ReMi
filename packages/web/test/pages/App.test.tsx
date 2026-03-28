@@ -58,6 +58,7 @@ function mockSharedPages() {
     AvatarChatPage: () => <div>avatar-chat-page</div>,
   }));
   vi.doMock("../../src/pages/AnchorsPage", () => ({ AnchorsPage: () => <div>anchors-page</div> }));
+  vi.doMock("../../src/pages/ReadingPage", () => ({ ReadingPage: () => <div>reading-page</div> }));
   vi.doMock("../../src/pages/SharePage", () => ({ SharePage: () => <div>share-page</div> }));
   vi.doMock("../../src/pages/SettingsPage", () => ({
     SettingsPage: () => <div>settings-page</div>,
@@ -197,5 +198,17 @@ describe("App", () => {
     expect(screen.getByText("app-shell")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/messages");
     expect(screen.queryByText("stats-page")).not.toBeInTheDocument();
+  });
+
+  it("renders the reading route as a standalone authenticated page", async () => {
+    mockAppModules(({ children }) => <div data-testid="auth-provider">{children}</div>);
+    window.history.replaceState({}, "", "/read");
+
+    const { default: App } = await import("../../src/App");
+
+    render(<App />);
+
+    expect(await screen.findByText("reading-page")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-provider")).toBeInTheDocument();
   });
 });

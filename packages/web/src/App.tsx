@@ -14,6 +14,7 @@ import { RemiChatPage } from "./pages/RemiChatPage";
 import { AvatarChatPage } from "./pages/AvatarChatPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { AnchorsPage } from "./pages/AnchorsPage";
+import { ReadingPage } from "./pages/ReadingPage";
 import { SharePage } from "./pages/SharePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import "./lib/i18n";
@@ -36,6 +37,7 @@ function AuthenticatedRoutes() {
         <Route path="/chat/remi" element={<RemiChatPage />} />
         <Route path="/chat/:pubKey" element={<AvatarChatPage />} />
         <Route path="/anchors" element={<AnchorsPage />} />
+        <Route path="/read" element={<ReadingPage />} />
         <Route path="/share" element={<SharePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/messages" replace />} />
