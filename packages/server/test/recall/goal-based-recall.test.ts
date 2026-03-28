@@ -147,7 +147,7 @@ describe("goalBasedRecall", () => {
         strategy: "full-injection",
         rounds: 0,
         sufficient: false,
-        stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
+        stoppedBecause: RECALL_STOP_REASONS.NO_NEW_ANCHORS,
         goalStatus: expect.any(Array),
         roundSummaries: [],
       }),

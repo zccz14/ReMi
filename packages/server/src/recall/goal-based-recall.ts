@@ -335,14 +335,17 @@ export async function goalBasedRecall(
     }
 
     const goalStatus = normalizeGoalStatuses(judgmentResult.judgment.goalStatus, options.goals);
+    const sufficient = computeOverallSufficient(goalStatus, options.goals);
     return {
       anchors,
       narratives,
       rounds: 0,
-      sufficient: computeOverallSufficient(goalStatus, options.goals),
+      sufficient,
       strategy: "full-injection",
       goalStatus,
-      stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
+      stoppedBecause: sufficient
+        ? RECALL_STOP_REASONS.SUFFICIENT
+        : RECALL_STOP_REASONS.NO_NEW_ANCHORS,
       roundSummaries: [],
     };
   }
