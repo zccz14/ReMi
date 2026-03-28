@@ -29,6 +29,7 @@ import {
   extractStoredBodyText,
   type StoredBody,
 } from "../messaging/runtime.js";
+import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 
 const log = logger.child({ module: "route:reasoning" });
 
@@ -730,7 +731,38 @@ reasoningRoutes.post(
 
     return streamSSE(c, async (stream) => {
       const emitter = createSSEEmitter(stream);
-      try {
+      const heartbeat = createSseHeartbeat({
+        writeComment: async (frame) => {
+          await stream.write(frame);
+        },
+      });
+
+      async function emitThinking(narrative: string) {
+        await emitter.emitThinking(narrative);
+        heartbeat.recordRealWrite();
+      }
+
+      async function emitToken(content: string) {
+        await emitter.emitToken(content);
+        heartbeat.recordRealWrite();
+      }
+
+      async function emitDone(data: {
+        messageId: number;
+        recalledAnchors: string[];
+        shared_message_id?: string;
+        content?: string;
+      }) {
+        await emitter.emitDone(data);
+        heartbeat.recordRealWrite();
+      }
+
+      async function emitError(code: string, message: string) {
+        await emitter.emitError(code, message);
+        heartbeat.recordRealWrite();
+      }
+
+      const runReasoningFlow = async () => {
         await persistDirectMessage({
           connMgr,
           ownerPubKey,
@@ -766,7 +798,7 @@ reasoningRoutes.post(
         }
 
         for (const narrative of metadata.thinkingNarratives) {
-          await emitter.emitThinking(narrative);
+          await emitThinking(narrative);
         }
 
         let fullContent = "";
@@ -777,7 +809,7 @@ reasoningRoutes.post(
 
           if (event.type === "text_delta") {
             fullContent += event.text;
-            await emitter.emitToken(event.text);
+            await emitToken(event.text);
           }
         }
 
@@ -795,17 +827,21 @@ reasoningRoutes.post(
             anchorSelectionStrategy: metadata.anchorSelectionStrategy,
           },
         });
-        await emitter.emitDone({
+        await emitDone({
           messageId: savedAssistant.localMessageId,
           shared_message_id: savedAssistant.sharedMessageId,
           content: fullContent,
           recalledAnchors: metadata.recalledAnchorIds,
         });
+      };
+
+      heartbeat.start();
+      try {
+        await Promise.race([runReasoningFlow(), heartbeat.failure]);
       } catch (error) {
-        await emitter.emitError(
-          "LLM_ERROR",
-          error instanceof Error ? error.message : "Unknown error",
-        );
+        await emitError("LLM_ERROR", error instanceof Error ? error.message : "Unknown error");
+      } finally {
+        heartbeat.stop();
       }
     });
   },

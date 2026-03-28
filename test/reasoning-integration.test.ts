@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createApp } from "@remi/server/app";
 import { generateKeyPair, getPublicKey, sign, buildStringToSign } from "@remi/crypto";
 import { upsertEmbedding } from "../packages/server/src/embedding/index.js";
@@ -28,6 +28,24 @@ describe("reasoning integration", () => {
       chatStream: async function* () {
         yield "你好";
         yield "，我是分身";
+      },
+    };
+  }
+
+  function createRecallAwareEmbeddingClient() {
+    let gate: Promise<void> | null = null;
+
+    return {
+      client: {
+        async embed(texts: string[]) {
+          if (gate) {
+            await gate;
+          }
+          return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+        },
+      },
+      blockRecall(nextGate: Promise<void>) {
+        gate = nextGate;
       },
     };
   }
@@ -231,6 +249,89 @@ describe("reasoning integration", () => {
     const done = events.find((event) => event.event === "done");
     expect(done).toBeDefined();
     expect(JSON.parse(done!.data ?? "{}")).toMatchObject({ messageId: 2, recalledAnchors: [] });
+  });
+
+  it("POST /reasoning/message emits comment heartbeat while runtime prep is blocked", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const embedding = createRecallAwareEmbeddingClient();
+      const result = createApp({
+        dataDir: tmpDir,
+        embeddingDimensions: 4,
+        chatClient: createChatClient(),
+        embeddingClient: embedding.client,
+      });
+      app = result.app;
+      connMgr = result.connMgr;
+      cleanup = () => result.connMgr.closeAll();
+
+      for (let i = 1; i <= 21; i++) {
+        seedAnchor(`anchor-${i}`, `问题 ${i}`);
+      }
+
+      let releaseRecall!: () => void;
+      const recallGate = new Promise<void>((resolve) => {
+        releaseRecall = resolve;
+      });
+      embedding.blockRecall(recallGate);
+
+      const res = await signedRequest(
+        "POST",
+        `/api/${ownerPubKey}/reasoning/message`,
+        visitorPrivKey,
+        visitorPubKey,
+        JSON.stringify({ content: "你好" }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = res.body!.getReader();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      const firstChunkResultPromise = Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
+        reader.read(),
+        new Promise((resolve) => {
+          setTimeout(() => resolve("timeout"), 1);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      const firstChunkResult = await firstChunkResultPromise;
+      expect(firstChunkResult).not.toBe("timeout");
+      expect(typeof firstChunkResult).toBe("object");
+      expect(firstChunkResult).toMatchObject({ done: false });
+
+      const decoder = new TextDecoder();
+      const firstChunkText = decoder.decode(
+        (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
+        { stream: true },
+      );
+
+      expect(firstChunkText).toContain(":\n\n");
+      expect(firstChunkText).not.toContain("event: done");
+      expect(firstChunkText).not.toContain("event: token");
+
+      releaseRecall();
+      await vi.runAllTimersAsync();
+
+      let remainingText = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        remainingText += decoder.decode(value, { stream: true });
+      }
+      remainingText += decoder.decode();
+
+      const done = lastDoneEvent(firstChunkText + remainingText);
+      expect(done).toMatchObject({ messageId: 2, recalledAnchors: expect.any(Array) });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("unauthenticated request should return 401", async () => {
