@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ReasoningEngine } from "../../src/reasoning/engine.js";
 import type { ChatResponse } from "../../src/llm/client.js";
 import type { SoulAnchor } from "../../src/types.js";
@@ -11,18 +11,74 @@ function createAnchor(id: string, question: string): SoulAnchor {
     question,
     answer: `${question} 的答案`,
     source: "interview",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: Date.parse("2026-03-26T12:00:00.000Z"),
+    updatedAt: Date.parse("2026-03-27T21:13:08.000Z"),
   };
+}
+
+function createChatResponse(content: string): ChatResponse {
+  return {
+    content,
+    finishReason: "stop",
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  };
+}
+
+function createDecompositionResponse(content = "你好"): string {
+  return JSON.stringify({
+    userQuery: content,
+    currentTime: "2026-03-28T12:34:56.000Z",
+    answerGoals: [
+      { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+      { id: "relationship_boundary", goal: "对方是谁，我与对方的关系和沟通边界", required: true },
+      { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+    ],
+    successCriteria: ["基于证据回答", "缺失时承认边界"],
+  });
+}
+
+function createAssessmentResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    sufficient: true,
+    goalStatus: [
+      {
+        goalId: "identity_style",
+        sufficient: true,
+        known: ["知道身份风格"],
+        missing: [],
+        knownAnchorIds: ["a1"],
+        missingKeys: [],
+      },
+      {
+        goalId: "relationship_boundary",
+        sufficient: true,
+        known: ["知道关系边界"],
+        missing: [],
+        knownAnchorIds: ["a1"],
+        missingKeys: [],
+      },
+      {
+        goalId: "domain_answer",
+        sufficient: true,
+        known: ["已有回答所需认知"],
+        missing: [],
+        knownAnchorIds: ["a1"],
+        missingKeys: [],
+      },
+    ],
+    nextQuery: "",
+    reasoningChain: ["已有锚点足以支撑回答"],
+    narrative: "思考中...",
+    ...overrides,
+  });
 }
 
 function createMockDeps() {
   const chatClient = {
-    chat: vi.fn().mockResolvedValue({
-      content: `<judgment><sufficient>true</sufficient><next_query></next_query><narrative>思考中...</narrative><reason>ok</reason></judgment>`,
-      finishReason: "stop",
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    } satisfies ChatResponse),
+    chat: vi
+      .fn()
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse()))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse())),
     chatStream: vi.fn(async function* () {
       yield "你好";
       yield "，我是分身";
@@ -31,7 +87,8 @@ function createMockDeps() {
   const embeddingClient = {
     embed: vi.fn().mockResolvedValue([[0.1, 0.2]]),
   };
-  const deps = {
+
+  return {
     chatClient,
     embeddingClient,
     countAnchors: vi.fn().mockResolvedValue(THRESHOLD + 1),
@@ -41,11 +98,37 @@ function createMockDeps() {
       .fn()
       .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
       .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" }),
-    searchAnchors: vi.fn().mockResolvedValue([]),
+    searchAnchors: vi.fn().mockResolvedValue([createAnchor("a1", "我是谁")]),
     getCachedAnchorIds: vi.fn().mockResolvedValue([]),
     getAnchorsByIds: vi.fn().mockResolvedValue([]),
   };
-  return deps;
+}
+
+function createEmitter(events: { type: string; data: unknown }[]) {
+  return {
+    emitThinking: (n: string) => {
+      events.push({ type: "thinking", data: n });
+    },
+    emitToken: (t: string) => {
+      events.push({ type: "token", data: t });
+    },
+    emitDone: (d: unknown) => {
+      events.push({ type: "done", data: d });
+    },
+    emitError: (code: string, msg: string) => {
+      events.push({ type: "error", data: { code, msg } });
+    },
+  };
+}
+
+function getGenerationPrompt(deps: ReturnType<typeof createMockDeps>): string {
+  const calls = deps.chatClient.chatStream.mock.calls as unknown as Array<
+    Array<{ messages?: Array<{ content: string }> }>
+  >;
+  const call = (calls[0]?.[0] ?? null) as {
+    messages?: Array<{ content: string }>;
+  } | null;
+  return call?.messages?.[0]?.content ?? "";
 }
 
 describe("ReasoningEngine", () => {
@@ -53,90 +136,187 @@ describe("ReasoningEngine", () => {
     const deps = createMockDeps();
     const events: { type: string; data: unknown }[] = [];
 
-    const engine = new ReasoningEngine(deps);
+    await new ReasoningEngine(deps).handleMessage("你好", "visitor-pub-key", createEmitter(events));
 
-    const emitter = {
-      emitThinking: (n: string) => {
-        events.push({ type: "thinking", data: n });
-      },
-      emitToken: (t: string) => {
-        events.push({ type: "token", data: t });
-      },
-      emitDone: (d: unknown) => {
-        events.push({ type: "done", data: d });
-      },
-      emitError: (code: string, msg: string) => {
-        events.push({ type: "error", data: { code, msg } });
-      },
-    };
-
-    await engine.handleMessage("你好", "visitor-pub-key", emitter);
-
-    const tokenEvents = events.filter((e) => e.type === "token");
-    expect(tokenEvents.length).toBeGreaterThan(0);
-
-    const doneEvent = events.find((e) => e.type === "done");
-    expect(doneEvent).toBeDefined();
-    expect((doneEvent!.data as { messageId: number }).messageId).toBe(2);
+    expect(events.filter((event) => event.type === "token")).toHaveLength(2);
+    expect(events.find((event) => event.type === "done")).toBeDefined();
+    expect(deps.chatClient.chat).toHaveBeenCalledTimes(2);
     expect(deps.getCachedAnchorIds).toHaveBeenCalled();
   });
 
-  it("should emit error on LLM failure", async () => {
+  it("should fallback to default decomposition goals when JSON is invalid", async () => {
     const deps = createMockDeps();
-    deps.chatClient.chat.mockRejectedValue(new Error("LLM down"));
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(createChatResponse("not-json"))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
 
     const events: { type: string; data: unknown }[] = [];
+    await new ReasoningEngine(deps).handleMessage("你好", "visitor-key", createEmitter(events));
 
-    const engine = new ReasoningEngine(deps);
+    const assessmentPrompt = deps.chatClient.chat.mock.calls[1][0].messages[1].content;
+    expect(assessmentPrompt).toContain("identity_style");
+    expect(assessmentPrompt).toContain("relationship_boundary");
+    expect(assessmentPrompt).toContain("domain_answer");
+    expect(events.some((event) => event.type === "done")).toBe(true);
+  });
 
-    const emitter = {
+  it("should include current time in final structured generation prompt", async () => {
+    const deps = createMockDeps();
+
+    await new ReasoningEngine(deps).handleMessage("你好", "visitor-key", {
       emitThinking: vi.fn(),
       emitToken: vi.fn(),
       emitDone: vi.fn(),
-      emitError: (code: string, msg: string) => {
-        events.push({ type: "error", data: { code, msg } });
-      },
-    };
+      emitError: vi.fn(),
+    });
 
-    await engine.handleMessage("test", "visitor-key", emitter);
-
-    const errorEvent = events.find((e) => e.type === "error");
-    expect(errorEvent).toBeDefined();
-    expect((errorEvent!.data as { code: string }).code).toBe("LLM_ERROR");
+    const prompt = getGenerationPrompt(deps);
+    expect(prompt).toContain("## Current Time");
+    expect(prompt).toContain("## User Question");
   });
 
-  it("should use full injection and skip recall loop at threshold while allowing assessment", async () => {
+  it("should use structured generation prompt for full injection", async () => {
     const deps = createMockDeps();
     deps.saveMessage.mockReset();
     deps.saveMessage
       .mockResolvedValueOnce({ messageId: 1, sharedMessageId: "shared-user" })
       .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
-    const anchors = [createAnchor("a1", "我是谁"), createAnchor("a2", "我的风格")];
     deps.countAnchors.mockResolvedValue(THRESHOLD);
-    deps.listAnchors.mockResolvedValue(anchors);
+    deps.listAnchors.mockResolvedValue([
+      createAnchor("a1", "我是谁"),
+      createAnchor("a2", "我的风格"),
+    ]);
 
-    const emitThinking = vi.fn();
-    const emitToken = vi.fn();
-    const emitDone = vi.fn();
-    const emitter = {
-      emitThinking,
-      emitToken,
-      emitDone,
+    await new ReasoningEngine(deps).handleMessage("你好", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone: vi.fn(),
       emitError: vi.fn(),
-    };
+    });
 
-    const engine = new ReasoningEngine(deps);
-
-    await engine.handleMessage("你好", "visitor-key", emitter);
-
+    const prompt = getGenerationPrompt(deps);
+    expect(prompt).toContain("## Evidence");
+    expect(prompt).toContain("## Missing Information");
+    expect(prompt).toContain("## Non-evidence Reasoning");
+    expect(prompt).toContain("UpdatedAt: 2026-03-27T21:13:08.000Z");
     expect(deps.getCachedAnchorIds).not.toHaveBeenCalled();
-    expect(deps.chatClient.chat).toHaveBeenCalledTimes(1);
     expect(deps.embeddingClient.embed).not.toHaveBeenCalled();
-    expect(deps.listAnchors).toHaveBeenCalled();
-    expect(emitThinking).toHaveBeenCalledWith("思考中...");
+    expect(deps.chatClient.chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("should hand reasoning chain and missing information into final generation prompt", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("我最近怎么样？")))
+      .mockResolvedValueOnce(
+        createChatResponse(
+          createAssessmentResponse({
+            sufficient: false,
+            goalStatus: [
+              {
+                goalId: "identity_style",
+                sufficient: true,
+                known: ["知道身份风格"],
+                missing: [],
+                knownAnchorIds: ["a1"],
+                missingKeys: [],
+              },
+              {
+                goalId: "relationship_boundary",
+                sufficient: true,
+                known: ["知道关系边界"],
+                missing: [],
+                knownAnchorIds: ["a1"],
+                missingKeys: [],
+              },
+              {
+                goalId: "domain_answer",
+                sufficient: false,
+                known: ["已有部分信息"],
+                missing: ["缺少更近期更新"],
+                knownAnchorIds: ["a1"],
+                missingKeys: ["recent-position"],
+              },
+            ],
+            nextQuery: "查找更近期更新",
+            reasoningChain: ["已有锚点能部分回答，但近期性仍需保守处理"],
+          }),
+        ),
+      );
+    deps.searchAnchors.mockResolvedValue([]);
+
+    await new ReasoningEngine(deps).handleMessage("我最近怎么样？", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone: vi.fn(),
+      emitError: vi.fn(),
+    });
+
+    const prompt = getGenerationPrompt(deps);
+    expect(prompt).toContain("## Missing Information");
+    expect(prompt).toContain("- 缺少更近期更新");
+    expect(prompt).toContain("## Non-evidence Reasoning");
+    expect(prompt).toContain("已有锚点能部分回答，但近期性仍需保守处理");
+  });
+
+  it("should continue to final answer generation when recall is insufficient", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("test")))
+      .mockResolvedValueOnce(
+        createChatResponse(
+          createAssessmentResponse({
+            sufficient: false,
+            goalStatus: [
+              {
+                goalId: "identity_style",
+                sufficient: false,
+                known: [],
+                missing: ["不知道身份风格"],
+                knownAnchorIds: [],
+                missingKeys: ["identity-unknown"],
+              },
+              {
+                goalId: "relationship_boundary",
+                sufficient: false,
+                known: [],
+                missing: ["不知道关系边界"],
+                knownAnchorIds: [],
+                missingKeys: ["visitor-boundary"],
+              },
+              {
+                goalId: "domain_answer",
+                sufficient: false,
+                known: [],
+                missing: ["不知道问题答案"],
+                knownAnchorIds: [],
+                missingKeys: ["domain-fact-missing"],
+              },
+            ],
+            nextQuery: "继续找",
+            reasoningChain: ["证据不足，只能保守回答"],
+          }),
+        ),
+      );
+    deps.searchAnchors.mockResolvedValue([]);
+
+    const emitDone = vi.fn();
+    const emitError = vi.fn();
+    await new ReasoningEngine(deps).handleMessage("test", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone,
+      emitError,
+    });
+
+    expect(deps.chatClient.chatStream).toHaveBeenCalledTimes(1);
     expect(emitDone).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: 2, recalledAnchors: ["a1", "a2"] }),
+      expect.objectContaining({ messageId: 2, content: "你好，我是分身" }),
     );
+    expect(emitError).not.toHaveBeenCalled();
   });
 
   it("should allow full injection without embedding client", async () => {
@@ -147,46 +327,34 @@ describe("ReasoningEngine", () => {
       .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
     deps.countAnchors.mockResolvedValue(0);
     deps.listAnchors.mockResolvedValue([createAnchor("a1", "我是谁")]);
-    const depsWithoutEmbedding = { ...deps, embeddingClient: undefined };
 
     const events: { type: string; data: unknown }[] = [];
-    const emitter = {
-      emitThinking: vi.fn(),
-      emitToken: (t: string) => {
-        events.push({ type: "token", data: t });
-      },
-      emitDone: (d: unknown) => {
-        events.push({ type: "done", data: d });
-      },
-      emitError: (code: string, msg: string) => {
-        events.push({ type: "error", data: { code, msg } });
-      },
-    };
+    await new ReasoningEngine({ ...deps, embeddingClient: undefined }).handleMessage(
+      "你好",
+      "visitor-key",
+      createEmitter(events),
+    );
 
-    const engine = new ReasoningEngine(depsWithoutEmbedding);
-
-    await engine.handleMessage("你好", "visitor-key", emitter);
-
-    expect(events.some((e) => e.type === "token")).toBe(true);
-    expect(events.some((e) => e.type === "done")).toBe(true);
-    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((event) => event.type === "token")).toBe(true);
+    expect(events.some((event) => event.type === "done")).toBe(true);
+    expect(events.some((event) => event.type === "error")).toBe(false);
   });
 
   it("should emit clear error when recall path lacks embedding client", async () => {
     const deps = createMockDeps();
     deps.countAnchors.mockResolvedValue(THRESHOLD + 1);
-    const depsWithoutEmbedding = { ...deps, embeddingClient: undefined };
+
     const emitError = vi.fn();
-    const emitter = {
-      emitThinking: vi.fn(),
-      emitToken: vi.fn(),
-      emitDone: vi.fn(),
-      emitError,
-    };
-
-    const engine = new ReasoningEngine(depsWithoutEmbedding);
-
-    await engine.handleMessage("test", "visitor-key", emitter);
+    await new ReasoningEngine({ ...deps, embeddingClient: undefined }).handleMessage(
+      "test",
+      "visitor-key",
+      {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError,
+      },
+    );
 
     expect(emitError).toHaveBeenCalledWith(
       "LLM_ERROR",
@@ -202,9 +370,8 @@ describe("ReasoningEngine", () => {
       .mockResolvedValueOnce({ messageId: 2, sharedMessageId: "shared-assistant" });
     deps.countAnchors.mockResolvedValue(0);
     deps.listAnchors.mockResolvedValue([createAnchor("a1", "我是谁")]);
-    const engine = new ReasoningEngine(deps);
 
-    await engine.handleMessage("hello", "visitor-key", {
+    await new ReasoningEngine(deps).handleMessage("hello", "visitor-key", {
       emitThinking: vi.fn(),
       emitToken: vi.fn(),
       emitDone: vi.fn(),
@@ -218,6 +385,21 @@ describe("ReasoningEngine", () => {
       "你好，我是分身",
       ["a1"],
       "full-injection",
+    );
+  });
+
+  it("should emit error on LLM failure", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat.mockRejectedValue(new Error("LLM down"));
+
+    const events: { type: string; data: unknown }[] = [];
+    await new ReasoningEngine(deps).handleMessage("test", "visitor-key", createEmitter(events));
+
+    expect(events.find((event) => event.type === "error")).toEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "LLM_ERROR", msg: "LLM down" }),
+      }),
     );
   });
 });

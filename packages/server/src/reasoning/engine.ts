@@ -2,15 +2,18 @@ import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { SoulAnchor } from "../types.js";
 import { goalBasedRecall } from "../recall/goal-based-recall.js";
-import { buildAvatarSystemPrompt } from "./prompts.js";
+import {
+  buildReasoningDecompositionPrompt,
+  buildReasoningGenerationPrompt,
+  buildReasoningJudgmentPrompt,
+  type ReasoningAnswerGoal,
+} from "./prompts.js";
 import { logger, shortKey } from "../logger.js";
 import {
   REASONING_FULL_INJECTION_THRESHOLD,
   mapRecallRuntimeStrategyToReasoningStrategy,
   type ReasoningAnchorSelectionStrategy,
 } from "./constants.js";
-import { buildBatchRecallJudgmentPrompt } from "./prompts.js";
-import { extractTag } from "../llm/xml-parser.js";
 
 const log = logger.child({ module: "reasoning" });
 
@@ -55,6 +58,14 @@ const DEFAULT_GOALS = [
   "回答提问者的问题所需的认知",
 ];
 
+const TEMPORAL_QUERY_PATTERN = /(最近|现在|目前|近期|变化|当前|latest|recent|current|now)/i;
+
+type ParsedDecomposition = {
+  userQuery: string;
+  currentTime: string;
+  answerGoals: ReasoningAnswerGoal[];
+};
+
 export class ReasoningEngine {
   constructor(private deps: ReasoningEngineDeps) {}
 
@@ -62,17 +73,148 @@ export class ReasoningEngine {
     sufficient: boolean;
     nextQuery?: string;
     narrative?: string;
+    goalStatus?: {
+      goalId?: unknown;
+      sufficient?: unknown;
+      known?: unknown;
+      missing?: unknown;
+      knownAnchorIds?: unknown;
+      missingKeys?: unknown;
+    }[];
+    reasoningChain?: string[];
   } {
-    const judgmentBlock = extractTag(content, "judgment");
-    if (!judgmentBlock) {
-      return { sufficient: false };
+    const parsed = JSON.parse(content) as {
+      sufficient?: boolean;
+      nextQuery?: string;
+      narrative?: string;
+      goalStatus?: unknown[];
+      reasoningChain?: unknown;
+    };
+
+    return {
+      sufficient: parsed.sufficient === true,
+      nextQuery: typeof parsed.nextQuery === "string" ? parsed.nextQuery : undefined,
+      narrative: typeof parsed.narrative === "string" ? parsed.narrative : undefined,
+      goalStatus: Array.isArray(parsed.goalStatus)
+        ? parsed.goalStatus.filter(
+            (item): item is Record<string, unknown> => !!item && typeof item === "object",
+          )
+        : undefined,
+      reasoningChain: Array.isArray(parsed.reasoningChain)
+        ? parsed.reasoningChain.filter((item): item is string => typeof item === "string")
+        : undefined,
+    };
+  }
+
+  private isoNow(): string {
+    return new Date().toISOString();
+  }
+
+  private buildDefaultAnswerGoals(content: string): ReasoningAnswerGoal[] {
+    const goals: ReasoningAnswerGoal[] = [
+      {
+        id: "identity_style",
+        goal: DEFAULT_GOALS[0],
+        required: true,
+      },
+      {
+        id: "relationship_boundary",
+        goal: DEFAULT_GOALS[1],
+        required: true,
+      },
+      {
+        id: "domain_answer",
+        goal: DEFAULT_GOALS[2],
+        required: true,
+      },
+    ];
+
+    if (TEMPORAL_QUERY_PATTERN.test(content)) {
+      goals.push({
+        id: "temporal_validity",
+        goal: "判断回答依赖的信息是否受时间影响、是否可能过期",
+        required: true,
+      });
+    }
+
+    return goals;
+  }
+
+  private parseDecomposition(
+    content: string,
+    fallbackQuery: string,
+    currentTime: string,
+  ): ParsedDecomposition {
+    const fallback: ParsedDecomposition = {
+      userQuery: fallbackQuery,
+      currentTime,
+      answerGoals: this.buildDefaultAnswerGoals(fallbackQuery),
+    };
+
+    const parsed = JSON.parse(content) as {
+      userQuery?: unknown;
+      currentTime?: unknown;
+      answerGoals?: unknown;
+    };
+
+    if (!Array.isArray(parsed.answerGoals)) {
+      return fallback;
+    }
+
+    const answerGoals = parsed.answerGoals
+      .filter((entry): entry is ReasoningAnswerGoal => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+
+        const record = entry as Record<string, unknown>;
+        return (
+          typeof record.id === "string" &&
+          record.id.trim().length > 0 &&
+          typeof record.goal === "string" &&
+          record.goal.trim().length > 0 &&
+          typeof record.required === "boolean"
+        );
+      })
+      .map((goal) => ({
+        id: goal.id.trim(),
+        goal: goal.goal.trim(),
+        required: goal.required,
+      }));
+
+    if (answerGoals.length === 0) {
+      return fallback;
     }
 
     return {
-      sufficient: extractTag(judgmentBlock, "sufficient")?.toLowerCase() === "true",
-      nextQuery: extractTag(judgmentBlock, "next_query") ?? undefined,
-      narrative: extractTag(judgmentBlock, "narrative") ?? undefined,
+      userQuery:
+        typeof parsed.userQuery === "string" && parsed.userQuery.trim()
+          ? parsed.userQuery
+          : fallback.userQuery,
+      currentTime:
+        typeof parsed.currentTime === "string" && parsed.currentTime.trim()
+          ? parsed.currentTime
+          : fallback.currentTime,
+      answerGoals,
     };
+  }
+
+  private collectMissingInformation(
+    goalStatus: Array<{ sufficient: boolean; missing?: string[]; missingKeys?: string[] }>,
+  ): string[] {
+    const missing = goalStatus.flatMap((status) => {
+      if (status.sufficient) {
+        return [];
+      }
+
+      if (status.missing?.length) {
+        return status.missing;
+      }
+
+      return status.missingKeys ?? [];
+    });
+
+    return Array.from(new Set(missing.filter(Boolean)));
   }
 
   async handleMessage(
@@ -90,12 +232,41 @@ export class ReasoningEngine {
       }
       const messages = await this.deps.getMessages(visitorKey, WINDOW_SIZE);
       const anchorCount = await this.deps.countAnchors();
+      const currentTime = this.isoNow();
       log.debug({ messageCount: messages.length, anchorCount }, "Reasoning context loaded");
 
       const contextStr = messages
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n")
         .slice(-2000);
+
+      const decompositionResponse = await this.deps.chatClient.chat({
+        messages: buildReasoningDecompositionPrompt({
+          currentTime,
+          userQuery: content,
+        }),
+      });
+
+      let decomposition: ParsedDecomposition;
+      try {
+        decomposition = this.parseDecomposition(
+          decompositionResponse.content,
+          content,
+          currentTime,
+        );
+      } catch {
+        decomposition = {
+          userQuery: content,
+          currentTime,
+          answerGoals: this.buildDefaultAnswerGoals(content),
+        };
+      }
+
+      const requiredGoalIds = decomposition.answerGoals
+        .filter((goal) => goal.required)
+        .map((goal) => goal.id);
+
+      let lastReasoningChain: string[] = [];
 
       const cachedAnchors =
         anchorCount > REASONING_FULL_INJECTION_THRESHOLD
@@ -106,22 +277,44 @@ export class ReasoningEngine {
       const recall = await goalBasedRecall({
         chatClient: this.deps.chatClient,
         embeddingClient: this.deps.embeddingClient,
-        goals: DEFAULT_GOALS,
+        goals: requiredGoalIds,
         context: contextStr,
         initialAnchors: await cachedAnchors,
         countAnchors: () => this.deps.countAnchors(),
         listAnchors: (limit?: number) => this.deps.listAnchors(limit),
         searchAnchors: (emb) => this.deps.searchAnchors(emb),
-        buildJudgmentPrompt: ({ goals, anchors, context }) =>
-          buildBatchRecallJudgmentPrompt(goals, anchors, context, visitorKey) as ChatMessage[],
-        parseJudgment: (value) => this.parseRecallJudgment(value),
+        buildJudgmentPrompt: ({ anchors, context }) =>
+          buildReasoningJudgmentPrompt({
+            currentTime,
+            goals: decomposition.answerGoals,
+            anchors,
+            visitorKey,
+            visitorContext: context,
+          }),
+        parseJudgment: (value) => {
+          const parsed = this.parseRecallJudgment(value);
+          lastReasoningChain = parsed.reasoningChain ?? lastReasoningChain;
+          return parsed;
+        },
         onNarrative: (n) => emitter.emitThinking(n),
       });
 
       const selectedAnchors = recall.anchors;
       const anchorSelectionStrategy = mapRecallRuntimeStrategyToReasoningStrategy(recall.strategy);
+      const missingInformation = this.collectMissingInformation(recall.goalStatus);
+      const systemPrompt = buildReasoningGenerationPrompt({
+        currentTime,
+        userQuestion: decomposition.userQuery,
+        answerGoals: decomposition.answerGoals,
+        evidenceAnchors: selectedAnchors,
+        goalStatus: recall.goalStatus,
+        missingInformation,
+        reasoningChain: lastReasoningChain,
+        temporalValiditySatisfied: !requiredGoalIds.includes("temporal_validity")
+          ? undefined
+          : recall.goalStatus.find((status) => status.goalId === "temporal_validity")?.sufficient,
+      });
 
-      const systemPrompt = buildAvatarSystemPrompt(selectedAnchors);
       const chatMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         ...messages.map((m) => ({
@@ -154,6 +347,9 @@ export class ReasoningEngine {
           recalledAnchors: anchorIds.length,
           selectionStrategy: anchorSelectionStrategy,
           anchorCount,
+          rounds: recall.rounds,
+          stoppedBecause: recall.stoppedBecause,
+          goalCount: decomposition.answerGoals.length,
           promptChars: systemPrompt.length,
           ms,
         },
