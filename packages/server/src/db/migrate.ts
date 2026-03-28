@@ -91,6 +91,30 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       )
     );
 
+    CREATE TABLE IF NOT EXISTS soul_candidate_queue (
+      id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS approval_last_actions (
+      owner_key TEXT PRIMARY KEY,
+      candidate_id TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS approval_requests (
+      id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      candidate_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_messages_shared_message_id
       ON direct_messages(shared_message_id);
 
@@ -99,6 +123,9 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
 
     CREATE INDEX IF NOT EXISTS idx_goal_nodes_parent_id
       ON goal_nodes(parent_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_owner_candidate_request
+      ON approval_requests(owner_key, candidate_id, request_id);
   `);
 
   db.exec(`

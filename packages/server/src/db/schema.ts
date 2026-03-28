@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, blob } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const soulAnchors = sqliteTable("soul_anchors", {
   id: text("id").primaryKey(),
@@ -82,3 +82,37 @@ export const goalNodes = sqliteTable("goal_nodes", {
   execution_base_url: text("execution_base_url"),
   external_session_id: text("external_session_id"),
 });
+
+export const soulCandidateQueue = sqliteTable("soul_candidate_queue", {
+  id: text("id").primaryKey(),
+  ownerKey: text("owner_key").notNull(),
+  question: text("question").notNull(),
+  answer: text("answer"),
+  createdAt: integer("created_at", { mode: "number" }).notNull(),
+});
+
+export const approvalLastActions = sqliteTable("approval_last_actions", {
+  ownerKey: text("owner_key").primaryKey(),
+  candidateId: text("candidate_id").notNull(),
+  actionType: text("action_type").notNull(),
+  payload: text("payload").notNull(),
+  createdAt: integer("created_at", { mode: "number" }).notNull(),
+});
+
+export const approvalRequests = sqliteTable(
+  "approval_requests",
+  {
+    id: text("id").primaryKey(),
+    ownerKey: text("owner_key").notNull(),
+    candidateId: text("candidate_id").notNull(),
+    requestId: text("request_id").notNull(),
+    createdAt: integer("created_at", { mode: "number" }).notNull(),
+  },
+  (table) => ({
+    ownerCandidateRequestIdx: uniqueIndex("idx_approval_requests_owner_candidate_request").on(
+      table.ownerKey,
+      table.candidateId,
+      table.requestId,
+    ),
+  }),
+);

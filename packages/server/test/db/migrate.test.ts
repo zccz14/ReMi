@@ -109,6 +109,45 @@ describe("initializeDatabase", () => {
     db.close();
   });
 
+  it("should create approval persistence tables and idempotency index", () => {
+    const dbPath = createTmpDb();
+    const db = new Database(dbPath);
+    initializeDatabase(db, 1536);
+
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {
+      name: string;
+    }[];
+    const names = tables.map((t) => t.name);
+
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "soul_candidate_queue",
+        "approval_last_actions",
+        "approval_requests",
+      ]),
+    );
+
+    const indexes = db
+      .prepare(
+        "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='approval_requests'",
+      )
+      .all() as { name: string; sql: string | null }[];
+
+    const requestIndex = indexes.find(
+      (index) => index.name === "idx_approval_requests_owner_candidate_request",
+    );
+
+    expect(requestIndex).toEqual(
+      expect.objectContaining({
+        name: "idx_approval_requests_owner_candidate_request",
+        sql: expect.stringContaining("UNIQUE INDEX"),
+      }),
+    );
+    expect(requestIndex?.sql ?? "").toContain("owner_key, candidate_id, request_id");
+
+    db.close();
+  });
+
   it("should be idempotent (safe to call twice)", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
