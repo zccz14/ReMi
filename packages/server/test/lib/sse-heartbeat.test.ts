@@ -58,6 +58,26 @@ describe("createSseHeartbeat", () => {
     expect(writes).toEqual([":\n\n"]);
   });
 
+  it("continues emitting heartbeats every interval while silence persists", async () => {
+    vi.useFakeTimers();
+
+    const writes: string[] = [];
+    const heartbeat = createSseHeartbeat({
+      writeComment: async (frame) => {
+        writes.push(frame);
+      },
+    });
+
+    heartbeat.recordRealWrite();
+    heartbeat.start();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(writes).toEqual([":\n\n"]);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(writes).toEqual([":\n\n", ":\n\n"]);
+  });
+
   it("stop prevents future heartbeats", async () => {
     vi.useFakeTimers();
 
@@ -101,6 +121,30 @@ describe("createSseHeartbeat", () => {
 
     await expect(heartbeat.failure).rejects.toBe(error);
     expect(onError).toHaveBeenCalledWith(error);
+
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(writeComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects failure when onError throws", async () => {
+    vi.useFakeTimers();
+
+    const writeError = new Error("write failed");
+    const onErrorFailure = new Error("onError failed");
+    const onError = vi.fn(() => {
+      throw onErrorFailure;
+    });
+    const writeComment = vi
+      .fn<(frame: string) => Promise<void>>()
+      .mockRejectedValueOnce(writeError);
+    const heartbeat = createSseHeartbeat({ writeComment, onError });
+
+    heartbeat.recordRealWrite();
+    heartbeat.start();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(heartbeat.failure).rejects.toBe(writeError);
+    expect(onError).toHaveBeenCalledWith(writeError);
 
     await vi.advanceTimersByTimeAsync(15000);
     expect(writeComment).toHaveBeenCalledTimes(1);

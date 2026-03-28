@@ -52,8 +52,16 @@ export function createSseHeartbeat(options: CreateSseHeartbeatOptions): SseHeart
 
     failed = true;
     stop();
-    options.onError?.(error);
     rejectFailure(error);
+
+    if (options.onError) {
+      try {
+        options.onError(error);
+      } catch {
+        // Keep timer failures observable via `failure` without letting
+        // secondary onError failures escape the timer callback.
+      }
+    }
   }
 
   function schedule(delayMs: number) {
@@ -109,6 +117,8 @@ export function createSseHeartbeat(options: CreateSseHeartbeatOptions): SseHeart
     stop,
 
     recordRealWrite() {
+      // Call after a real business/event write succeeds; heartbeat writes do
+      // not move this baseline.
       lastRealWriteAt = now();
     },
 
