@@ -107,7 +107,8 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       action_id TEXT NOT NULL,
       candidate_snapshot TEXT NOT NULL,
       rollback_payload TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS approval_requests (

@@ -119,6 +119,10 @@ export async function mapApprovalError(c: Context, error: unknown, candidateId?:
     return c.json({ error: "UNDO_CONFLICT", message }, 409);
   }
 
+  if (message.includes("Undo target expired")) {
+    return c.json({ error: "UNDO_EXPIRED", message }, 409);
+  }
+
   if (message.includes("question") || message.includes("targetUpdatedAt is required")) {
     return validationError(c, message);
   }
@@ -127,6 +131,14 @@ export async function mapApprovalError(c: Context, error: unknown, candidateId?:
 }
 
 export const approvalRoutes = new Hono();
+
+approvalRoutes.get("/:pubKey/approval/undo", (c) => {
+  const forbidden = requireOwner(c);
+  if (forbidden) return forbidden;
+
+  const service = getApprovalServiceFromContext(c);
+  return c.json({ data: service.getUndoState() });
+});
 
 approvalRoutes.post(
   "/:pubKey/approval/candidates",

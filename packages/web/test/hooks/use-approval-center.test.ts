@@ -31,6 +31,7 @@ function createApprovalApiMock(overrides?: Partial<ApprovalApi>): ApprovalApi {
     approveCandidate: vi.fn().mockResolvedValue({ actionId: "action-1", asset: null }),
     rejectCandidate: vi.fn().mockResolvedValue({ actionId: "action-2", asset: null }),
     skipCandidate: vi.fn().mockResolvedValue({ actionId: "action-3", asset: null }),
+    getUndoState: vi.fn().mockResolvedValue(null),
     undo: vi.fn().mockResolvedValue({ actionId: "action-1", restoredCandidate: anchorCandidate }),
     ...overrides,
   };
@@ -183,10 +184,30 @@ describe("useApprovalCenter", () => {
       await result.current.skipProbe(probeCandidate);
     });
 
-    expect(api.skipCandidate).not.toHaveBeenCalled();
+    expect(api.skipCandidate).toHaveBeenCalledWith({
+      candidateId: "candidate-2",
+      requestId: "req-skip",
+    });
     expect(result.current.lastActionId).toBeNull();
     expect(result.current.candidates).toEqual([secondProbe, probeCandidate]);
     expect(result.current.total).toBe(2);
+  });
+
+  it("hydrates the current undoable action from the server on load", async () => {
+    const api = createApprovalApiMock({
+      getUndoState: vi.fn().mockResolvedValue({ actionId: "action-persisted", expiresAt: 123456 }),
+    });
+
+    const { result } = renderHook(() =>
+      useApprovalCenter({ api, kind: "anchor", requestIdFactory: () => "req-1" }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(api.getUndoState).toHaveBeenCalledTimes(1);
+    expect(result.current.lastActionId).toBe("action-persisted");
   });
 
   it("sends edited question and answer during update-existing approval", async () => {

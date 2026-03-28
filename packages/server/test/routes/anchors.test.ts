@@ -372,6 +372,40 @@ describe("anchor routes", () => {
     expect(listJson.data.items).toEqual([expect.objectContaining({ id: created.asset.id })]);
   });
 
+  it("emits direct_write_blocked for legacy single delete attempts", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: null,
+      source: "manual",
+      requestId: "seed-delete-alert",
+    });
+    const { records, unsubscribe } = captureLogs();
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+        method: "DELETE",
+      });
+
+      expect(res.status).toBe(405);
+      expect(findEvents(records, "direct_write_blocked")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            alertType: "direct_write_blocked",
+            ownerKey: PUB_KEY,
+            routeOrModule: "routes/anchors",
+            attemptedAction: "DELETE /:pubKey/anchors/:id",
+          }),
+        ]),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("DELETE /api/:pubKey/anchors → 405 legacy delete path disabled", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const conn = connMgr.getConnection(PUB_KEY);

@@ -145,6 +145,20 @@ describe("initializeDatabase", () => {
     );
     expect(requestIndex?.sql ?? "").toContain("owner_key, candidate_id, request_id");
 
+    const lastActionColumns = db.prepare("PRAGMA table_info(approval_last_actions)").all() as {
+      name: string;
+    }[];
+    expect(lastActionColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "owner_key",
+        "action_id",
+        "candidate_snapshot",
+        "rollback_payload",
+        "created_at",
+        "expires_at",
+      ]),
+    );
+
     db.close();
   });
 

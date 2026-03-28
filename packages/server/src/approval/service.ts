@@ -25,6 +25,7 @@ import { getSoulAssetKind, normalizeAnswer, normalizeQuestion } from "./normaliz
 import { buildSourceContext } from "./source-context.js";
 
 const APPROVAL_GATEWAY = "controlled_write_service";
+export const APPROVAL_UNDO_TTL_MS = 5 * 60 * 1000;
 const log = logger.child({ module: "approval-service", gateway: APPROVAL_GATEWAY });
 
 interface ApprovalConnection {
@@ -46,6 +47,11 @@ interface ApprovalResult {
 interface ApprovalMutationResult {
   actionId: string;
   asset: SoulAnchor;
+}
+
+interface UndoState {
+  actionId: string;
+  expiresAt: number;
 }
 
 type FormalAssetActionType = "approval" | "update_existing" | "micro_edit" | "deny" | "undo";
@@ -152,6 +158,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     rollbackPayload: RollbackPayload;
     createdAt: number;
   }) {
+    const expiresAt = params.createdAt + APPROVAL_UNDO_TTL_MS;
     input.conn.drizzle
       .insert(approvalLastActions)
       .values({
@@ -160,6 +167,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         candidateSnapshot: JSON.stringify(params.candidateSnapshot),
         rollbackPayload: JSON.stringify(params.rollbackPayload),
         createdAt: params.createdAt,
+        expiresAt,
       })
       .onConflictDoUpdate({
         target: approvalLastActions.ownerKey,
@@ -168,9 +176,42 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           candidateSnapshot: JSON.stringify(params.candidateSnapshot),
           rollbackPayload: JSON.stringify(params.rollbackPayload),
           createdAt: params.createdAt,
+          expiresAt,
         },
       })
       .run();
+  }
+
+  function clearLastAction() {
+    input.conn.drizzle
+      .delete(approvalLastActions)
+      .where(eq(approvalLastActions.ownerKey, input.ownerKey))
+      .run();
+  }
+
+  function getLastActionRow() {
+    return input.conn.drizzle
+      .select()
+      .from(approvalLastActions)
+      .where(eq(approvalLastActions.ownerKey, input.ownerKey))
+      .get();
+  }
+
+  function getUndoState(): UndoState | null {
+    const lastAction = getLastActionRow();
+    if (!lastAction) {
+      return null;
+    }
+
+    if (lastAction.expiresAt <= Date.now()) {
+      clearLastAction();
+      return null;
+    }
+
+    return {
+      actionId: lastAction.actionId,
+      expiresAt: lastAction.expiresAt,
+    };
   }
 
   function getCandidateOrThrow(candidateId: string): CandidateRow {
@@ -353,6 +394,8 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
   }
 
   return {
+    getUndoState,
+
     createCandidate(candidate: ApprovalCandidateCreateInput): ApprovalCandidate {
       const now = Date.now();
       const id = crypto.randomUUID();
@@ -968,11 +1011,17 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     },
 
     async undoLastAction(inputParams: { actionId: string }) {
-      const lastAction = input.conn.drizzle
-        .select()
-        .from(approvalLastActions)
-        .where(eq(approvalLastActions.ownerKey, input.ownerKey))
-        .get();
+      const lastAction = getLastActionRow();
+
+      if (lastAction && lastAction.expiresAt <= Date.now()) {
+        clearLastAction();
+        if (lastAction.actionId === inputParams.actionId) {
+          emitEvent("warn", "undo_rejected_expired", {
+            actionId: inputParams.actionId,
+          });
+          throw new Error("Undo target expired");
+        }
+      }
 
       if (!lastAction || lastAction.actionId !== inputParams.actionId) {
         throw new Error("Undo target not found");
@@ -1030,10 +1079,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             input.conn.drizzle.insert(soulCandidateQueue).values(candidateSnapshot).run();
           }
 
-          input.conn.drizzle
-            .delete(approvalLastActions)
-            .where(eq(approvalLastActions.ownerKey, input.ownerKey))
-            .run();
+          clearLastAction();
 
           return candidateSnapshot ? mapCandidate(candidateSnapshot) : null;
         })();

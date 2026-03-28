@@ -100,6 +100,7 @@ export const approvalLastActions = sqliteTable("approval_last_actions", {
   candidateSnapshot: text("candidate_snapshot").notNull(),
   rollbackPayload: text("rollback_payload").notNull(),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "number" }).notNull(),
 });
 
 export const approvalRequests = sqliteTable(

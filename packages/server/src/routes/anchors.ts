@@ -8,10 +8,30 @@ import type { ChatClient } from "../llm/client.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { Role } from "../middleware/role.js";
 import type { Context } from "hono";
+import { buildApprovalAlert } from "../approval/alerts.js";
 import { logger, shortKey } from "../logger.js";
 import { getApprovalServiceFromContext, mapApprovalError } from "./approval.js";
 
 const log = logger.child({ module: "anchors" });
+
+function emitDirectWriteBlocked(params: {
+  ownerKey: string;
+  routeOrModule: string;
+  attemptedAction: string;
+  assetId?: string;
+}) {
+  const alert = buildApprovalAlert({
+    event: "direct_write_blocked",
+    ownerKey: params.ownerKey,
+    routeOrModule: params.routeOrModule,
+    attemptedAction: params.attemptedAction,
+    assetId: params.assetId,
+  });
+
+  if (alert) {
+    logger.error(alert, alert.alertType);
+  }
+}
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -203,6 +223,12 @@ anchorRoutes.delete("/:pubKey/anchors/:id", (c) => {
   const pubKey = c.req.param("pubKey");
   const id = c.req.param("id");
 
+  emitDirectWriteBlocked({
+    ownerKey: pubKey,
+    routeOrModule: "routes/anchors",
+    attemptedAction: "DELETE /:pubKey/anchors/:id",
+    assetId: id,
+  });
   log.warn({ soul: shortKey(pubKey), anchorId: id }, "Legacy single-anchor delete path disabled");
   return c.json(
     {
@@ -220,6 +246,11 @@ anchorRoutes.delete("/:pubKey/anchors", (c) => {
 
   const pubKey = c.req.param("pubKey");
 
+  emitDirectWriteBlocked({
+    ownerKey: pubKey,
+    routeOrModule: "routes/anchors",
+    attemptedAction: "DELETE /:pubKey/anchors",
+  });
   log.warn({ soul: shortKey(pubKey) }, "Legacy bulk anchor delete path disabled");
   return c.json(
     {

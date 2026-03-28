@@ -43,6 +43,11 @@ export interface UndoResult {
   restoredCandidate: ApprovalCandidate | null;
 }
 
+export interface UndoState {
+  actionId: string;
+  expiresAt: number;
+}
+
 export interface ApproveCandidateInput {
   candidateId: string;
   requestId: string;
@@ -64,6 +69,7 @@ export interface ApprovalApi {
   approveCandidate(input: ApproveCandidateInput): Promise<ApprovalResult>;
   rejectCandidate(input: CandidateMutationInput): Promise<ApprovalResult>;
   skipCandidate(input: CandidateMutationInput): Promise<ApprovalResult>;
+  getUndoState(): Promise<UndoState | null>;
   undo(input: { actionId: string }): Promise<UndoResult>;
 }
 
@@ -123,6 +129,12 @@ export function createApprovalApi(apiClient: ApiClient): ApprovalApi {
       const response = await apiClient.post<{ data: ApprovalResult }>(
         apiClient.ownerPath(`/approval/candidates/${input.candidateId}/skip`),
         { requestId: input.requestId },
+      );
+      return response.data;
+    },
+    async getUndoState() {
+      const response = await apiClient.get<{ data: UndoState | null }>(
+        apiClient.ownerPath("/approval/undo"),
       );
       return response.data;
     },

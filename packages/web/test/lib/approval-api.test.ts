@@ -105,6 +105,7 @@ describe("createApprovalApi", () => {
   it("posts reject, skip, and undo mutations", async () => {
     const apiClient = {
       ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+      get: vi.fn().mockResolvedValue({ data: null }),
       post: vi.fn().mockResolvedValue({ data: { actionId: "action-1", asset: null } }),
     } as unknown as ApiClient;
 
@@ -112,6 +113,7 @@ describe("createApprovalApi", () => {
 
     await api.rejectCandidate({ candidateId: "candidate-1", requestId: "req-1" });
     await api.skipCandidate({ candidateId: "candidate-2", requestId: "req-2" });
+    await api.getUndoState();
     await api.undo({ actionId: "action-1" });
 
     expect(apiClient.post).toHaveBeenNthCalledWith(
@@ -124,6 +126,7 @@ describe("createApprovalApi", () => {
       "/api/mock-public-key/approval/candidates/candidate-2/skip",
       { requestId: "req-2" },
     );
+    expect(apiClient.get).toHaveBeenCalledWith("/api/mock-public-key/approval/undo");
     expect(apiClient.post).toHaveBeenNthCalledWith(3, "/api/mock-public-key/approval/undo", {
       actionId: "action-1",
     });

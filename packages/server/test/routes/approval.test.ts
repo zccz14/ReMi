@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -481,6 +481,75 @@ describe("approval routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.restoredCandidate).toEqual(expect.objectContaining({ id: candidate.id }));
+  });
+
+  it("GET /api/:pubKey/approval/undo returns the current undoable action", async () => {
+    const dateNowMock = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const candidate = service.createCandidate({
+      question: "Undo me later",
+      answer: "Later",
+      source: "manual",
+    });
+    const approved = await service.approveCandidate({
+      candidateId: candidate.id,
+      action: "approve",
+      mode: "create_new",
+      requestId: "req-get-undo-state",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    try {
+      const res = await app.request(`/api/${PUB_KEY}/approval/undo`);
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.data).toEqual({
+        actionId: approved.actionId,
+        expiresAt: 10_000 + 5 * 60 * 1000,
+      });
+    } finally {
+      dateNowMock.mockRestore();
+    }
+  });
+
+  it("POST /api/:pubKey/approval/undo returns 409 when the last action expired", async () => {
+    const dateNowMock = vi.spyOn(Date, "now");
+    dateNowMock.mockReturnValue(10_000);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const candidate = service.createCandidate({
+      question: "Undo me",
+      answer: "Later",
+      source: "manual",
+    });
+    const rejected = await service.approveCandidate({
+      candidateId: candidate.id,
+      action: "reject",
+      mode: "create_new",
+      requestId: "req-expired-undo-route",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    try {
+      dateNowMock.mockReturnValue(10_000 + 5 * 60 * 1000 + 1);
+
+      const res = await app.request(`/api/${PUB_KEY}/approval/undo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actionId: rejected.actionId }),
+      });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual(expect.objectContaining({ error: "UNDO_EXPIRED" }));
+
+      const stateRes = await app.request(`/api/${PUB_KEY}/approval/undo`);
+      expect(stateRes.status).toBe(200);
+      expect(await stateRes.json()).toEqual({ data: null });
+    } finally {
+      dateNowMock.mockRestore();
+    }
   });
 
   it("records undo rollback events and correlates undoneActionId to prior formal writes", async () => {

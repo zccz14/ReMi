@@ -57,9 +57,10 @@ export function useApprovalCenter({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.listCandidates(kind);
+      const [data, undoState] = await Promise.all([api.listCandidates(kind), api.getUndoState()]);
       setCandidates(data.items);
       setTotal(data.total);
+      setLastActionId(undoState?.actionId ?? null);
     } finally {
       setLoading(false);
     }
@@ -185,24 +186,37 @@ export function useApprovalCenter({
     [api.rejectCandidate, submitCandidateMutation],
   );
 
-  const skipProbe = useCallback(async (candidate: ApprovalCandidate) => {
-    setCandidates((current) => {
-      const index = current.findIndex((item) => item.id === candidate.id);
-      if (index < 0) {
-        return current;
-      }
+  const skipProbe = useCallback(
+    async (candidate: ApprovalCandidate) => {
+      const mutationKey = buildMutationKey("skip", candidate);
+      const requestId = claimRequestId(mutationKey);
+      setSubmitting(true);
 
-      const next = current.slice();
-      const [item] = next.splice(index, 1);
-      if (!item) {
-        return current;
-      }
-      next.push(item);
-      return next;
-    });
+      try {
+        const result = await api.skipCandidate({ candidateId: candidate.id, requestId });
+        releaseRequestId(mutationKey);
+        setCandidates((current) => {
+          const index = current.findIndex((item) => item.id === candidate.id);
+          if (index < 0) {
+            return current;
+          }
 
-    return { actionId: "", asset: null };
-  }, []);
+          const next = current.slice();
+          const [item] = next.splice(index, 1);
+          if (!item) {
+            return current;
+          }
+          next.push(item);
+          return next;
+        });
+        setLastActionId(null);
+        return result;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [api, claimRequestId, releaseRequestId],
+  );
 
   const undo = useCallback(async () => {
     if (!lastActionId) {
@@ -217,6 +231,12 @@ export function useApprovalCenter({
       }
       setLastActionId(null);
       return result;
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? error.code : null;
+      if (code === "UNDO_EXPIRED" || code === "ANCHOR_NOT_FOUND") {
+        setLastActionId(null);
+      }
+      throw error;
     } finally {
       setSubmitting(false);
     }

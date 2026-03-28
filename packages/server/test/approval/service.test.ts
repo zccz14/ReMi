@@ -242,6 +242,34 @@ describe("approval service candidate ingestion", () => {
     }
   });
 
+  it("stores expiring undo metadata for the current last action", async () => {
+    const dateNowMock = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const { service, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "reading",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-undo-state-1",
+      });
+
+      expect(service.getUndoState()).toEqual({
+        actionId: approved.actionId,
+        expiresAt: 10_000 + 5 * 60 * 1000,
+      });
+    } finally {
+      dateNowMock.mockRestore();
+      cleanup();
+    }
+  });
+
   it("rejects stale update_existing requests and keeps candidate pending", async () => {
     const { service, cleanup } = createService();
 
@@ -600,6 +628,42 @@ describe("approval service candidate ingestion", () => {
         expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
       );
     } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects expired undo attempts and clears the stale last action", async () => {
+    const dateNowMock = vi.spyOn(Date, "now");
+    dateNowMock.mockReturnValue(10_000);
+    const { service, conn, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "reading",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-undo-expired-1",
+      });
+
+      dateNowMock.mockReturnValue(10_000 + 5 * 60 * 1000 + 1);
+
+      await expect(service.undoLastAction({ actionId: approved.actionId })).rejects.toThrow(
+        /expired/i,
+      );
+      expect(service.getUndoState()).toBeNull();
+
+      const lastActionCount = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM approval_last_actions WHERE owner_key = ?")
+        .get("owner-pub-key") as { count: number };
+      expect(lastActionCount.count).toBe(0);
+    } finally {
+      dateNowMock.mockRestore();
       cleanup();
     }
   });
