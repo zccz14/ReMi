@@ -35,11 +35,15 @@ export interface Message {
   created_at: number;
 }
 
+export type SoulAssetKind = "anchor" | "probe";
+
+export type SoulAnchorSource = "interview" | "manual";
+
 export interface SoulAnchor {
   id: string;
   question: string;
   answer: string | null;
-  source: "interview" | "manual";
+  source: SoulAnchorSource;
   createdAt: number;
   updatedAt: number;
 }
