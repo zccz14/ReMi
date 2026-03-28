@@ -275,16 +275,6 @@ function validateJudgmentShape(judgment: ParsedJudgment): ValidatedJudgment | un
   return judgment;
 }
 
-function buildFullInjectionGoalStatus(anchors: SoulAnchor[], goals: string[]): GoalStatus[] {
-  const anchorIds = anchors.map((anchor) => anchor.id);
-  return goals.map((goalId) => ({
-    goalId,
-    sufficient: false,
-    knownAnchorIds: anchorIds,
-    missingKeys: ["unassessed-required-goal"],
-  }));
-}
-
 async function getJudgmentWithRetry(
   options: GoalBasedRecallOptions,
   anchors: SoulAnchor[],
@@ -323,15 +313,36 @@ export async function goalBasedRecall(
 
   if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD) {
     const anchors = await options.listAnchors();
-    const goalStatus = buildFullInjectionGoalStatus(anchors, options.goals);
+    const narratives: string[] = [];
+    const judgmentResult = await getJudgmentWithRetry(options, anchors);
+
+    if (judgmentResult.failed || !judgmentResult.judgment) {
+      return {
+        anchors,
+        narratives,
+        rounds: 0,
+        sufficient: false,
+        strategy: "full-injection",
+        goalStatus: normalizeGoalStatuses(undefined, options.goals),
+        stoppedBecause: RECALL_STOP_REASONS.PARSE_FAILURE,
+        roundSummaries: [],
+      };
+    }
+
+    if (judgmentResult.narrative) {
+      narratives.push(judgmentResult.narrative);
+      options.onNarrative?.(judgmentResult.narrative);
+    }
+
+    const goalStatus = normalizeGoalStatuses(judgmentResult.judgment.goalStatus, options.goals);
     return {
       anchors,
-      narratives: [],
+      narratives,
       rounds: 0,
       sufficient: computeOverallSufficient(goalStatus, options.goals),
       strategy: "full-injection",
       goalStatus,
-      stoppedBecause: RECALL_STOP_REASONS.MAX_ROUNDS,
+      stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
       roundSummaries: [],
     };
   }

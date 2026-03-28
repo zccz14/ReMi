@@ -68,7 +68,7 @@ describe("goalBasedRecall", () => {
     expect(result.strategy).toBe("full-injection");
     expect(result.anchors.map((anchor) => anchor.id)).toEqual(["a1", "a2"]);
     expect(options.embeddingClient.embed).not.toHaveBeenCalled();
-    expect(options.chatClient.chat).not.toHaveBeenCalled();
+    expect(options.chatClient.chat).toHaveBeenCalledTimes(1);
   });
 
   it("enters recall loop when anchor count exceeds threshold", async () => {
@@ -116,10 +116,28 @@ describe("goalBasedRecall", () => {
   });
 
   it("returns normalized metadata for full injection", async () => {
+    const anchor = createAnchor("a1", "问题1");
     const options = createOptions({
       goals: ["identity_style", "domain_answer"],
       countAnchors: vi.fn().mockResolvedValue(RECALL_FULL_INJECTION_THRESHOLD),
-      listAnchors: vi.fn().mockResolvedValue([createAnchor("a1", "问题1")]),
+      listAnchors: vi.fn().mockResolvedValue([anchor]),
+      parseJudgment: vi.fn().mockReturnValue({
+        sufficient: true,
+        goalStatus: [
+          createGoalStatus({
+            goalId: "identity_style",
+            sufficient: true,
+            knownAnchorIds: ["a1"],
+            missingKeys: [],
+          }),
+          createGoalStatus({
+            goalId: "domain_answer",
+            sufficient: false,
+            knownAnchorIds: ["a1"],
+            missingKeys: ["domain-fact-missing"],
+          }),
+        ],
+      }),
     });
 
     const result = await goalBasedRecall(options as never);
@@ -129,7 +147,7 @@ describe("goalBasedRecall", () => {
         strategy: "full-injection",
         rounds: 0,
         sufficient: false,
-        stoppedBecause: RECALL_STOP_REASONS.MAX_ROUNDS,
+        stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
         goalStatus: expect.any(Array),
         roundSummaries: [],
       }),
@@ -137,17 +155,24 @@ describe("goalBasedRecall", () => {
     expect(result.goalStatus).toEqual([
       expect.objectContaining({
         goalId: "identity_style",
-        sufficient: false,
+        sufficient: true,
         knownAnchorIds: ["a1"],
-        missingKeys: ["unassessed-required-goal"],
+        missingKeys: [],
       }),
       expect.objectContaining({
         goalId: "domain_answer",
         sufficient: false,
         knownAnchorIds: ["a1"],
-        missingKeys: ["unassessed-required-goal"],
+        missingKeys: ["domain-fact-missing"],
       }),
     ]);
+    expect(options.chatClient.chat).toHaveBeenCalledTimes(1);
+    expect(options.parseJudgment).toHaveBeenCalledTimes(1);
+    expect(options.buildJudgmentPrompt).toHaveBeenCalledWith({
+      goals: ["identity_style", "domain_answer"],
+      anchors: [anchor],
+      context: "user: hello",
+    });
   });
 
   it("treats invalid parsed nextQuery shape as parse-failure", async () => {
