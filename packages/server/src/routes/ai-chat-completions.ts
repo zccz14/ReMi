@@ -237,8 +237,6 @@ export function aiChatCompletionsRoute(deps: {
         }
 
         try {
-          heartbeat.start();
-
           await writeOpenAiChunk(
             buildChunkData({
               id,
@@ -247,6 +245,8 @@ export function aiChatCompletionsRoute(deps: {
               event: { type: "message_start", message: { role: "assistant" } },
             }),
           );
+
+          heartbeat.start();
 
           await Promise.race([
             (async () => {

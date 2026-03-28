@@ -89,15 +89,6 @@ async function readStreamBody(stream: ReadableStream<Uint8Array> | null) {
   return text;
 }
 
-async function readWithTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-  return Promise.race<T | "timeout">([
-    promise,
-    new Promise<"timeout">((resolve) => {
-      setTimeout(() => resolve("timeout"), timeoutMs);
-    }),
-  ]);
-}
-
 function createRecallAwareEmbeddingClient() {
   let gate: Promise<void> | null = null;
   let failRecall = false;
@@ -587,29 +578,31 @@ describe("avatar openapi integration", () => {
       const reader = stream!.getReader();
       const decoder = new TextDecoder();
 
-      const firstChunkResult = await readWithTimeout(reader.read(), 100);
-      expect(firstChunkResult).not.toBe("timeout");
+      const firstChunkResult = await reader.read();
       expect(typeof firstChunkResult).toBe("object");
       expect(firstChunkResult).toMatchObject({ done: false });
 
-      let preReleaseText = decoder.decode(
+      const messageStartText = decoder.decode(
         (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
         { stream: true },
       );
+      expect(messageStartText).toContain('"role":"assistant"');
+      expect(messageStartText).not.toContain(":\n\n");
+      expect(messageStartText).not.toContain('"content":"hello"');
 
       const heartbeatChunkRead = reader.read();
       await vi.advanceTimersByTimeAsync(5000);
-      const heartbeatChunkResult = await readWithTimeout(heartbeatChunkRead, 50);
+      const heartbeatChunkResult = await heartbeatChunkRead;
 
-      expect(heartbeatChunkResult).not.toBe("timeout");
       expect(typeof heartbeatChunkResult).toBe("object");
       expect(heartbeatChunkResult).toMatchObject({ done: false });
 
-      preReleaseText += decoder.decode(
+      const heartbeatText = decoder.decode(
         (heartbeatChunkResult as ReadableStreamReadResult<Uint8Array>).value,
         { stream: true },
       );
 
+      const preReleaseText = messageStartText + heartbeatText;
       expect(preReleaseText).toContain('"role":"assistant"');
       expect(preReleaseText).toContain(":\n\n");
       expect(preReleaseText).not.toContain('"content":"hello"');
