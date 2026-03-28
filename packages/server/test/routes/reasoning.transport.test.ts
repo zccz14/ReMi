@@ -149,4 +149,94 @@ describe("reasoning route transport cancellation", () => {
       body: { type: "text", version: 1, text: "你好" },
     });
   });
+
+  it("removes the just-persisted assistant message when transport fails during assistant persistence", async () => {
+    const heartbeatFailure = createDeferred<never>();
+    let notifyHeartbeatError: ((error: unknown) => void) | undefined;
+
+    vi.doMock("../../src/lib/sse-heartbeat.js", () => ({
+      createSseHeartbeat: (options: { onError?: (error: unknown) => void }) => {
+        notifyHeartbeatError = options.onError;
+        return {
+          start() {},
+          stop() {},
+          recordRealWrite() {},
+          failure: heartbeatFailure.promise,
+        };
+      },
+    }));
+
+    const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
+    const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
+
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
+      async (input) => ({
+        avatarTarget: input.avatarTarget,
+        instructionSegments: {
+          platform: "platform",
+          avatar: "avatar",
+          recall: "recall",
+        },
+        conversationTurns: input.conversationTurns,
+        contentParts: [],
+        stream: input.stream,
+        signal: input.signal,
+      }),
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: [],
+      recalledAnchorIds: [],
+      anchorSelectionStrategy: "batch-recall",
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "runStream").mockImplementation(async function* () {
+      yield { type: "message_start", message: { role: "assistant" } };
+      yield { type: "text_delta", text: "reply" };
+      yield { type: "message_end", finishReason: "stop" };
+    });
+
+    const visitorConn = connMgr.getConnection(visitorPubKey, { create: true });
+    const originalPrepare = visitorConn.raw.prepare.bind(visitorConn.raw);
+    vi.spyOn(visitorConn.raw, "prepare").mockImplementation((sql: string) => {
+      const statement = originalPrepare(sql);
+      if (!sql.includes("INSERT INTO direct_messages")) {
+        return statement;
+      }
+
+      return {
+        ...statement,
+        run: (...args: unknown[]) => {
+          const result = statement.run(...args);
+          const senderKey = args[3];
+          const senderKind = args[4];
+          if (senderKey === ownerPubKey && senderKind === "avatar") {
+            const transportFailure = new Error("transport closed during assistant persist");
+            notifyHeartbeatError?.(transportFailure);
+            heartbeatFailure.reject(transportFailure);
+          }
+          return result;
+        },
+      };
+    });
+
+    const app = await createTestApp(reasoningRoutes, {
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+    });
+
+    const res = await app.request(`/api/${ownerPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+
+    const storedBodies = listStoredBodies(visitorPubKey);
+    expect(storedBodies).toHaveLength(1);
+    expect(storedBodies[0]).toMatchObject({
+      senderKey: visitorPubKey,
+      body: { type: "text", version: 1, text: "你好" },
+    });
+  });
 });

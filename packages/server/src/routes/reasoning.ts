@@ -823,6 +823,13 @@ reasoningRoutes.post(
         heartbeat.recordRealWrite();
       }
 
+      function rollbackAssistantMessage(sharedMessageId: string) {
+        deleteDirectMessage(ownerConn.raw, sharedMessageId);
+        if (requesterConn !== ownerConn) {
+          deleteDirectMessage(requesterConn.raw, sharedMessageId);
+        }
+      }
+
       const runReasoningFlow = async () => {
         await persistDirectMessage({
           connMgr,
@@ -891,6 +898,12 @@ reasoningRoutes.post(
             anchorSelectionStrategy: metadata.anchorSelectionStrategy,
           },
         });
+        try {
+          ensureStreamHealthy();
+        } catch (error) {
+          rollbackAssistantMessage(savedAssistant.sharedMessageId);
+          throw error;
+        }
         await emitDone({
           messageId: savedAssistant.localMessageId,
           shared_message_id: savedAssistant.sharedMessageId,
