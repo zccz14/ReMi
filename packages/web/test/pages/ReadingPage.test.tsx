@@ -169,6 +169,47 @@ describe("ReadingPage", () => {
     );
   });
 
+  it("caps the input textarea height so the start button stays reachable", () => {
+    renderWithProviders(<ReadingPage />, { route: "/read" });
+
+    expect(screen.getByLabelText(/长文本|Long text/i)).toHaveStyle({ maxHeight: "400px" });
+  });
+
+  it("shows a reading loading hint while the first round is being generated", async () => {
+    const user = userEvent.setup();
+    const deferred: {
+      resolve?: (value: { data: { items: never[]; candidatePool: never[] } }) => void;
+    } = {};
+    const post = vi.fn(
+      () =>
+        new Promise<{ data: { items: never[]; candidatePool: never[] } }>((resolve) => {
+          deferred.resolve = resolve;
+        }),
+    );
+    const apiClient = {
+      ownerPath: (path: string) => `/api/mock-public-key${path}`,
+      post,
+      get: vi.fn(),
+      put: vi.fn(),
+      del: vi.fn(),
+      streamPost: vi.fn(),
+    } as unknown as ApiClient;
+
+    renderWithProviders(<ReadingPage />, {
+      route: "/read",
+      authState: { apiClient },
+    });
+
+    await user.type(screen.getByLabelText(/长文本|Long text/i), seededLongText);
+    await user.click(screen.getByRole("button", { name: /开始阅读|Start reading/i }));
+
+    expect(screen.getByText(/Thinking\.\.\.|AI 正在阅读中/i)).toBeInTheDocument();
+
+    if (deferred.resolve) {
+      deferred.resolve({ data: { items: [], candidatePool: [] } });
+    }
+  });
+
   it("keeps start disabled for whitespace-only input", () => {
     renderWithProviders(<ReadingPage />, { route: "/read" });
 

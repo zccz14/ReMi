@@ -18,6 +18,7 @@
   "discover": {
     "title": "发现",
     "subtitle": "发现其他用户，浏览社区",
+    "selfSubtitle": "发现自己",
     "comingSoon": "即将推出",
     "reading": {
       "title": "阅读",
@@ -167,6 +168,7 @@
     "inputLabel": "长文本",
     "charCount": "当前字数：{{count}}",
     "start": "开始阅读",
+    "starting": "Thinking... AI 正在阅读中",
     "shortHint": "这段文本有点短，可能提炼不出足够稳定的灵魂锚点，你也可以继续试试。",
     "tooLong": "这段文本太长了。为保证阅读效果，请压缩到 50000 字以内再试。",
     "progress": "已完成 {{answered}} / {{total}}",

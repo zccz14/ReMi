@@ -56,6 +56,8 @@ export function ReadingPage() {
               id="reading-input"
               aria-label={t("reading.inputLabel")}
               rows={14}
+              className="max-h-[400px] overflow-y-auto"
+              style={{ maxHeight: 400 }}
               value={text}
               onChange={(event) => setText(event.target.value)}
             />
@@ -72,7 +74,7 @@ export function ReadingPage() {
             disabled={isTooLong || reading.isStarting || !hasInput}
             onClick={() => void handleStart()}
           >
-            {t("reading.start")}
+            {reading.isStarting ? t("reading.starting") : t("reading.start")}
           </Button>
         </div>
       </FullScreenLayout>
