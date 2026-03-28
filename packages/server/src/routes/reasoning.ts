@@ -4,6 +4,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { desc, inArray, sql } from "drizzle-orm";
 import { verify as verifySignature } from "@remi/crypto";
+import { isAbsolute } from "node:path";
 
 import { soulAnchors } from "../db/schema.js";
 import { ReasoningEngine, type ReasoningSSEEmitter } from "../reasoning/engine.js";
@@ -246,7 +247,7 @@ function createEngine(
 
 function resolveReasoningDebugArtifactRootDir(): string | null {
   const configured = process.env.REMI_REASONING_DEBUG_ARTIFACT_ROOT_DIR?.trim();
-  return configured ? configured : null;
+  return configured && isAbsolute(configured) ? configured : null;
 }
 
 function createSSEEmitter(stream: {

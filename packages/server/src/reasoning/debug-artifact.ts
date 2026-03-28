@@ -1,5 +1,5 @@
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 
 import type { GoalStatus, RecallRoundSummary } from "../recall/goal-based-recall.js";
 
@@ -15,7 +15,9 @@ export interface ReasoningDebugArtifactSummary {
 export interface ReasoningDebugArtifactPayload {
   request: Record<string, unknown>;
   decomposition: Record<string, unknown>;
-  recallRounds: RecallRoundSummary[];
+  recallRounds: Array<
+    Omit<RecallRoundSummary, "stoppedCandidate"> & { stoppedCandidate: string | null }
+  >;
   finalPrompt: string;
   response: string;
   summary: ReasoningDebugArtifactSummary;
@@ -25,6 +27,10 @@ export interface ReasoningDebugArtifactWriter {
   writeLatest(payload: ReasoningDebugArtifactPayload): Promise<void>;
 }
 
+interface ReasoningDebugArtifactTestHooks {
+  beforeSwap?(): void | Promise<void>;
+}
+
 function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -32,51 +38,64 @@ function formatJson(value: unknown): string {
 async function writeLatestReasoningDirectory(
   baseDir: string,
   payload: ReasoningDebugArtifactPayload,
+  testHooks?: ReasoningDebugArtifactTestHooks,
 ): Promise<void> {
   const debugDir = join(baseDir, "debug");
+  const versionsDir = join(debugDir, ".reasoning-last-versions");
   const latestDir = join(debugDir, "reasoning-last");
   const versionSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const nextDir = join(debugDir, `.reasoning-last-next-${versionSuffix}`);
-  const previousDir = join(debugDir, `.reasoning-last-prev-${versionSuffix}`);
+  const versionDir = join(versionsDir, versionSuffix);
+  const nextLink = join(debugDir, `.reasoning-last-link-${versionSuffix}`);
+  let previousVersionDir: string | null = null;
 
   await mkdir(debugDir, { recursive: true });
-  await rm(nextDir, { recursive: true, force: true });
-  await rm(previousDir, { recursive: true, force: true });
-  await mkdir(nextDir, { recursive: true });
+  await mkdir(versionsDir, { recursive: true });
+  await rm(versionDir, { recursive: true, force: true });
+  await rm(nextLink, { recursive: true, force: true });
+  await mkdir(versionDir, { recursive: true });
 
   await Promise.all([
-    writeFile(join(nextDir, "request.json"), formatJson(payload.request), "utf8"),
-    writeFile(join(nextDir, "decomposition.json"), formatJson(payload.decomposition), "utf8"),
-    writeFile(join(nextDir, "recall-rounds.json"), formatJson(payload.recallRounds), "utf8"),
-    writeFile(join(nextDir, "final-prompt.md"), payload.finalPrompt, "utf8"),
-    writeFile(join(nextDir, "response.txt"), payload.response, "utf8"),
-    writeFile(join(nextDir, "summary.json"), formatJson(payload.summary), "utf8"),
+    writeFile(join(versionDir, "request.json"), formatJson(payload.request), "utf8"),
+    writeFile(join(versionDir, "decomposition.json"), formatJson(payload.decomposition), "utf8"),
+    writeFile(join(versionDir, "recall-rounds.json"), formatJson(payload.recallRounds), "utf8"),
+    writeFile(join(versionDir, "final-prompt.md"), payload.finalPrompt, "utf8"),
+    writeFile(join(versionDir, "response.txt"), payload.response, "utf8"),
+    writeFile(join(versionDir, "summary.json"), formatJson(payload.summary), "utf8"),
   ]);
 
   try {
-    await rename(latestDir, previousDir);
+    previousVersionDir = resolve(debugDir, await readlink(latestDir));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (
+      (error as NodeJS.ErrnoException).code !== "ENOENT" &&
+      (error as NodeJS.ErrnoException).code !== "EINVAL"
+    ) {
       throw error;
     }
   }
 
   try {
-    await rename(nextDir, latestDir);
+    await symlink(relative(debugDir, versionDir), nextLink, "dir");
+    await testHooks?.beforeSwap?.();
+    await rename(nextLink, latestDir);
   } catch (error) {
-    await rm(nextDir, { recursive: true, force: true });
+    await rm(nextLink, { recursive: true, force: true });
+    await rm(versionDir, { recursive: true, force: true });
     throw error;
   }
 
-  await rm(previousDir, { recursive: true, force: true });
+  if (previousVersionDir && previousVersionDir !== versionDir) {
+    await rm(previousVersionDir, { recursive: true, force: true });
+  }
 }
 
 export function createLatestReasoningDebugArtifactWriter(options: {
   rootDir: string;
+  testHooks?: ReasoningDebugArtifactTestHooks;
 }): ReasoningDebugArtifactWriter {
   return {
     async writeLatest(payload) {
-      await writeLatestReasoningDirectory(options.rootDir, payload);
+      await writeLatestReasoningDirectory(options.rootDir, payload, options.testHooks);
     },
   };
 }
@@ -88,13 +107,17 @@ export function buildReasoningDebugArtifactSummary(input: {
   stoppedBecause?: string;
   finalAnchorIds: string[];
   goalStatus: GoalStatus[];
+  requiredGoalIds: string[];
 }): ReasoningDebugArtifactSummary {
+  const requiredGoalIds = new Set(input.requiredGoalIds);
   return {
     currentTime: input.currentTime,
     userQuery: input.userQuery,
     rounds: input.rounds,
     stoppedBecause: input.stoppedBecause ?? null,
     finalAnchorIds: input.finalAnchorIds,
-    hasUnsatisfiedRequiredGoal: input.goalStatus.some((goal) => !goal.sufficient),
+    hasUnsatisfiedRequiredGoal: input.goalStatus.some(
+      (goal) => requiredGoalIds.has(goal.goalId) && !goal.sufficient,
+    ),
   };
 }

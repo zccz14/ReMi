@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, lstat, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -137,6 +137,19 @@ function getGenerationPrompt(deps: ReturnType<typeof createMockDeps>): string {
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+function expectGoalStatusShape(goalStatus: unknown, sufficient: boolean) {
+  expect(goalStatus).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        goalId: expect.any(String),
+        sufficient,
+        knownAnchorIds: expect.any(Array),
+        missingKeys: expect.any(Array),
+      }),
+    ]),
+  );
 }
 
 describe("ReasoningEngine", () => {
@@ -585,6 +598,15 @@ describe("ReasoningEngine", () => {
       });
 
       const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect((await readdir(latestDir)).sort()).toEqual([
+        "decomposition.json",
+        "final-prompt.md",
+        "recall-rounds.json",
+        "request.json",
+        "response.txt",
+        "summary.json",
+      ]);
       const summary = await readJson<{
         currentTime: string;
         userQuery: string;
@@ -599,8 +621,13 @@ describe("ReasoningEngine", () => {
           query: string;
           newAnchorIds: string[];
           allAnchorIds: string[];
-          normalizedGoalStatus: Array<{ goalId: string; sufficient: boolean }>;
-          stoppedCandidate?: string;
+          normalizedGoalStatus: Array<{
+            goalId: string;
+            sufficient: boolean;
+            knownAnchorIds: string[];
+            missingKeys: string[];
+          }>;
+          stoppedCandidate: string | null;
         }>
       >(join(latestDir, "recall-rounds.json"));
 
@@ -612,28 +639,24 @@ describe("ReasoningEngine", () => {
         "## User Question",
       );
       expect(await readFile(join(latestDir, "response.txt"), "utf8")).toBe("你好，我是分身");
-      expect(summary).toEqual(
-        expect.objectContaining({
-          currentTime: expect.any(String),
-          userQuery: "你好",
-          rounds: 1,
-          stoppedBecause: "sufficient",
-          finalAnchorIds: ["a1"],
-          hasUnsatisfiedRequiredGoal: false,
-        }),
-      );
-      expect(recallRounds).toEqual([
-        expect.objectContaining({
-          round: 1,
-          query: "",
-          newAnchorIds: ["a1"],
-          allAnchorIds: ["a1"],
-          normalizedGoalStatus: expect.arrayContaining([
-            expect.objectContaining({ goalId: "identity_style", sufficient: true }),
-          ]),
-          stoppedCandidate: "sufficient",
-        }),
-      ]);
+      expect(summary).toEqual({
+        currentTime: expect.any(String),
+        userQuery: "你好",
+        rounds: 1,
+        stoppedBecause: "sufficient",
+        finalAnchorIds: ["a1"],
+        hasUnsatisfiedRequiredGoal: false,
+      });
+      expect(recallRounds).toHaveLength(1);
+      expect(recallRounds[0]).toEqual({
+        round: 1,
+        query: "",
+        newAnchorIds: ["a1"],
+        allAnchorIds: ["a1"],
+        normalizedGoalStatus: expect.any(Array),
+        stoppedCandidate: "sufficient",
+      });
+      expectGoalStatusShape(recallRounds[0]?.normalizedGoalStatus, true);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -689,6 +712,14 @@ describe("ReasoningEngine", () => {
                   knownAnchorIds: [],
                   missingKeys: ["domain-fact-missing"],
                 },
+                {
+                  goalId: "optional_goal",
+                  sufficient: false,
+                  known: [],
+                  missing: ["可选目标未满足"],
+                  knownAnchorIds: [],
+                  missingKeys: ["other"],
+                },
               ],
               nextQuery: "继续找",
             }),
@@ -708,6 +739,14 @@ describe("ReasoningEngine", () => {
       );
 
       const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await readdir(latestDir)).sort()).toEqual([
+        "decomposition.json",
+        "final-prompt.md",
+        "recall-rounds.json",
+        "request.json",
+        "response.txt",
+        "summary.json",
+      ]);
       const summary = await readJson<{
         userQuery: string;
         rounds: number;
@@ -715,25 +754,41 @@ describe("ReasoningEngine", () => {
         hasUnsatisfiedRequiredGoal: boolean;
       }>(join(latestDir, "summary.json"));
       const request = await readJson<{ userQuery: string }>(join(latestDir, "request.json"));
-      const recallRounds = await readJson<Array<{ query: string; newAnchorIds: string[] }>>(
-        join(latestDir, "recall-rounds.json"),
-      );
+      const recallRounds = await readJson<
+        Array<{
+          round: number;
+          query: string;
+          newAnchorIds: string[];
+          allAnchorIds: string[];
+          normalizedGoalStatus: Array<{
+            goalId: string;
+            sufficient: boolean;
+            knownAnchorIds: string[];
+            missingKeys: string[];
+          }>;
+          stoppedCandidate: string | null;
+        }>
+      >(join(latestDir, "recall-rounds.json"));
 
-      expect(summary).toEqual(
-        expect.objectContaining({
-          userQuery: "第二次问题",
-          rounds: 1,
-          stoppedBecause: "no-new-anchors",
-          hasUnsatisfiedRequiredGoal: true,
-        }),
-      );
+      expect(summary).toEqual({
+        currentTime: expect.any(String),
+        userQuery: "第二次问题",
+        rounds: 1,
+        stoppedBecause: "no-new-anchors",
+        finalAnchorIds: [],
+        hasUnsatisfiedRequiredGoal: true,
+      });
       expect(request.userQuery).toBe("第二次问题");
-      expect(recallRounds).toEqual([
-        expect.objectContaining({
-          query: "",
-          newAnchorIds: [],
-        }),
-      ]);
+      expect(recallRounds).toHaveLength(1);
+      expect(recallRounds[0]).toEqual({
+        round: 1,
+        query: "",
+        newAnchorIds: [],
+        allAnchorIds: [],
+        normalizedGoalStatus: expect.any(Array),
+        stoppedCandidate: "no-new-anchors",
+      });
+      expectGoalStatusShape(recallRounds[0]?.normalizedGoalStatus, false);
       await expect(access(join(latestDir, "summary.json"))).resolves.toBeUndefined();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -753,6 +808,148 @@ describe("ReasoningEngine", () => {
       });
 
       await expect(access(join(tempRoot, "debug", "reasoning-last"))).rejects.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes stable recall round schema with null stoppedCandidate when a round continues", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const deps = createMockDeps();
+      deps.chatClient.chat.mockReset();
+      deps.chatClient.chat
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("两轮问题")))
+        .mockResolvedValueOnce(
+          createChatResponse(
+            createAssessmentResponse({
+              sufficient: false,
+              goalStatus: [
+                {
+                  goalId: "identity_style",
+                  sufficient: false,
+                  known: [],
+                  missing: ["缺少身份信息"],
+                  knownAnchorIds: [],
+                  missingKeys: ["identity-unknown"],
+                },
+                {
+                  goalId: "relationship_boundary",
+                  sufficient: false,
+                  known: [],
+                  missing: ["缺少关系信息"],
+                  knownAnchorIds: [],
+                  missingKeys: ["visitor-boundary"],
+                },
+                {
+                  goalId: "domain_answer",
+                  sufficient: false,
+                  known: [],
+                  missing: ["缺少答案信息"],
+                  knownAnchorIds: [],
+                  missingKeys: ["domain-fact-missing"],
+                },
+              ],
+              nextQuery: "补充查询",
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+      deps.searchAnchors
+        .mockResolvedValueOnce([createAnchor("a1", "我是谁")])
+        .mockResolvedValueOnce([createAnchor("a1", "我是谁"), createAnchor("a2", "关系")]);
+
+      await new ReasoningEngine({
+        ...deps,
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      }).handleMessage("两轮问题", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const recallRounds = await readJson<
+        Array<{
+          round: number;
+          query: string;
+          newAnchorIds: string[];
+          allAnchorIds: string[];
+          normalizedGoalStatus: Array<{
+            goalId: string;
+            sufficient: boolean;
+            knownAnchorIds: string[];
+            missingKeys: string[];
+          }>;
+          stoppedCandidate: string | null;
+        }>
+      >(join(tempRoot, "debug", "reasoning-last", "recall-rounds.json"));
+
+      expect(recallRounds).toHaveLength(2);
+      expect(recallRounds[0]).toEqual({
+        round: 1,
+        query: "",
+        newAnchorIds: ["a1"],
+        allAnchorIds: ["a1"],
+        normalizedGoalStatus: expect.any(Array),
+        stoppedCandidate: null,
+      });
+      expect(recallRounds[1]).toEqual({
+        round: 2,
+        query: "补充查询",
+        newAnchorIds: ["a2"],
+        allAnchorIds: ["a1", "a2"],
+        normalizedGoalStatus: expect.any(Array),
+        stoppedCandidate: "sufficient",
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps previous latest readable when debug artifact swap fails", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const stableWriter = createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot });
+      await new ReasoningEngine({
+        ...createMockDeps(),
+        debugArtifactWriter: stableWriter,
+      }).handleMessage("第一次问题", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const failingWriter = createLatestReasoningDebugArtifactWriter({
+        rootDir: tempRoot,
+        testHooks: {
+          beforeSwap() {
+            throw new Error("swap failed");
+          },
+        },
+      });
+
+      await new ReasoningEngine({
+        ...createMockDeps(),
+        debugArtifactWriter: failingWriter,
+      }).handleMessage("第二次问题", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect(await readJson(join(latestDir, "request.json"))).toEqual(
+        expect.objectContaining({ userQuery: "第一次问题" }),
+      );
+      expect(await readJson(join(latestDir, "summary.json"))).toEqual(
+        expect.objectContaining({ userQuery: "第一次问题" }),
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

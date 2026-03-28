@@ -417,9 +417,7 @@ export class ReasoningEngine {
               newAnchorIds: roundSummary.newAnchorIds,
               allAnchorIds: roundSummary.allAnchorIds,
               normalizedGoalStatus: roundSummary.normalizedGoalStatus,
-              ...(roundSummary.stoppedCandidate
-                ? { stoppedCandidate: roundSummary.stoppedCandidate }
-                : {}),
+              stoppedCandidate: roundSummary.stoppedCandidate ?? null,
             })),
             finalPrompt: systemPrompt,
             response: fullContent,
@@ -430,6 +428,7 @@ export class ReasoningEngine {
               stoppedBecause: recall.stoppedBecause,
               finalAnchorIds: anchorIds,
               goalStatus: recall.goalStatus,
+              requiredGoalIds,
             }),
           });
         } catch (error) {
