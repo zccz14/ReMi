@@ -189,8 +189,9 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("treats /stats as a retired route sample by redirecting to /approval/anchors", async () => {
+  it("treats /stats as a retired route sample by redirecting to the last approval path", async () => {
     mockAppModules(({ children }) => <div data-testid="auth-provider">{children}</div>);
+    window.localStorage.setItem("remi.last-approval-path", "/approval/probes");
     window.history.replaceState({}, "", "/stats");
 
     const { default: App } = await import("../../src/App");
@@ -199,7 +200,7 @@ describe("App", () => {
 
     expect(await screen.findByText("approval-page")).toBeInTheDocument();
     expect(screen.getByText("app-shell")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/approval/anchors");
+    expect(window.location.pathname).toBe("/approval/probes");
     expect(screen.queryByText("stats-page")).not.toBeInTheDocument();
   });
 

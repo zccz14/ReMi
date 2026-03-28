@@ -40,6 +40,8 @@ const approveCandidateSchema = requestIdSchema.extend({
   mode: z.enum(["create_new", "update_existing"]).default("create_new"),
   targetAssetId: z.string().optional(),
   targetUpdatedAt: z.number().int().optional(),
+  question: z.string().trim().min(1).optional(),
+  answer: z.string().nullable().optional(),
 });
 
 const undoSchema = z.object({
@@ -185,6 +187,8 @@ approvalRoutes.post(
         mode: body.mode ?? "create_new",
         targetAssetId: body.targetAssetId,
         targetUpdatedAt: body.targetUpdatedAt,
+        question: body.question,
+        answer: body.answer,
         requestId: body.requestId,
       });
       return c.json({ data });
@@ -235,10 +239,8 @@ approvalRoutes.post(
 
     try {
       const service = getApprovalServiceFromContext(c);
-      const data = await service.approveCandidate({
+      const data = await service.skipCandidate({
         candidateId: c.req.param("id"),
-        action: "reject",
-        mode: "create_new",
         requestId: body.requestId,
       });
       return c.json({ data });

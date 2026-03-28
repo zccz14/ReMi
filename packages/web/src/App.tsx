@@ -18,11 +18,16 @@ import { ReadingPage } from "./pages/ReadingPage";
 import { SharePage } from "./pages/SharePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ApprovalPage } from "./pages/ApprovalPage";
+import { getStoredApprovalPath } from "./lib/approval-path";
 import "./lib/i18n";
 
 function OldShareRedirect() {
   const { pubKey } = useParams<{ pubKey: string }>();
   return <Navigate to={`/profile/${pubKey}`} replace />;
+}
+
+function DefaultApprovalRedirect() {
+  return <Navigate to={getStoredApprovalPath()} replace />;
 }
 
 function AuthenticatedRoutes() {
@@ -42,7 +47,7 @@ function AuthenticatedRoutes() {
         <Route path="/read" element={<ReadingPage />} />
         <Route path="/share" element={<SharePage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/approval/anchors" replace />} />
+        <Route path="*" element={<DefaultApprovalRedirect />} />
       </Routes>
     </AuthProvider>
   );

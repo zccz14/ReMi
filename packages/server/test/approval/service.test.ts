@@ -214,6 +214,34 @@ describe("approval service candidate ingestion", () => {
     }
   });
 
+  it("skips a probe without deleting it from the queue", async () => {
+    const { service, conn, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "Ask later?",
+        answer: null,
+        source: "interview",
+      });
+
+      const skipped = await service.skipCandidate({
+        candidateId: candidate.id,
+        requestId: "req-skip-1",
+      });
+
+      expect(skipped.asset).toBeNull();
+      expect(service.listCandidates({ kind: "probe", limit: 10, offset: 0 }).items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+      );
+      const requestCount = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM approval_requests WHERE candidate_id = ?")
+        .get(candidate.id) as { count: number };
+      expect(requestCount.count).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("rejects stale update_existing requests and keeps candidate pending", async () => {
     const { service, cleanup } = createService();
 
@@ -244,6 +272,47 @@ describe("approval service candidate ingestion", () => {
 
       expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toEqual(
         expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("uses edited question and answer when approving update_existing", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const existing = await service.microEditAsset({
+        assetId: null,
+        question: "Existing question",
+        answer: "Existing answer",
+        source: "manual",
+        requestId: "seed-edited-asset",
+      });
+      const candidate = service.createCandidate({
+        question: "Original question",
+        answer: "Original answer",
+        source: "reading",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "update_existing",
+        targetAssetId: existing.asset.id,
+        targetUpdatedAt: existing.asset.updatedAt,
+        question: "Edited question",
+        answer: "Edited answer",
+        requestId: "req-edited-update-1",
+      });
+
+      expect(approved.asset).toEqual(
+        expect.objectContaining({
+          id: existing.asset.id,
+          question: "Edited question",
+          answer: "Edited answer",
+          source: "reading",
+        }),
       );
     } finally {
       cleanup();

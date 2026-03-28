@@ -187,11 +187,13 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     action: ApprovalAction;
     now: number;
     id: string;
+    question: string;
+    answer: string | null;
   }): AnchorRow {
-    const answer = params.action === "question_only" ? null : params.candidate.answer;
+    const answer = params.action === "question_only" ? null : params.answer;
     return {
       id: params.id,
-      question: params.candidate.question,
+      question: params.question,
       answer,
       source: params.candidate.source,
       createdAt: params.now,
@@ -295,6 +297,8 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       mode: ApprovalWriteMode;
       targetAssetId?: string;
       targetUpdatedAt?: number;
+      question?: string;
+      answer?: string | null;
       requestId: string;
     }): Promise<ApprovalResult> {
       const existingRequest = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
@@ -305,6 +309,8 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       const candidate = getCandidateOrThrow(inputParams.candidateId);
       const now = Date.now();
       const actionId = crypto.randomUUID();
+      const question = normalizeQuestion(inputParams.question ?? candidate.question);
+      const answer = normalizeAnswer(inputParams.answer ?? candidate.answer);
 
       if (inputParams.mode === "update_existing") {
         if (inputParams.targetUpdatedAt == null || !inputParams.targetAssetId) {
@@ -326,13 +332,15 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
                 action: inputParams.action,
                 now,
                 id: crypto.randomUUID(),
+                question,
+                answer,
               })
             : (() => {
                 const existing = getAnchorOrThrow(inputParams.targetAssetId!);
                 return {
                   ...existing,
-                  question: candidate.question,
-                  answer: inputParams.action === "question_only" ? null : candidate.answer,
+                  question,
+                  answer: inputParams.action === "question_only" ? null : answer,
                   source: candidate.source,
                   updatedAt: now,
                 } satisfies AnchorRow;
@@ -430,6 +438,48 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             targetId: candidateInsideTxn.id,
             requestId: inputParams.requestId,
             action: inputParams.action,
+            responsePayload,
+            createdAt: now,
+          });
+
+          return responsePayload;
+        })();
+      } catch (error) {
+        if (isSqliteUniqueConstraint(error)) {
+          return getRecordedRequestOrThrow<ApprovalResult>(
+            inputParams.candidateId,
+            inputParams.requestId,
+          );
+        }
+        throw error;
+      }
+    },
+
+    async skipCandidate(inputParams: {
+      candidateId: string;
+      requestId: string;
+    }): Promise<ApprovalResult> {
+      const existingRequest = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
+      if (existingRequest) {
+        return JSON.parse(existingRequest.responsePayload) as ApprovalResult;
+      }
+
+      getCandidateOrThrow(inputParams.candidateId);
+      const responsePayload: ApprovalResult = { actionId: crypto.randomUUID(), asset: null };
+      const now = Date.now();
+
+      try {
+        return input.conn.raw.transaction(() => {
+          const recorded = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
+          if (recorded) {
+            return JSON.parse(recorded.responsePayload) as ApprovalResult;
+          }
+
+          getCandidateOrThrow(inputParams.candidateId);
+          recordRequest({
+            targetId: inputParams.candidateId,
+            requestId: inputParams.requestId,
+            action: "skip",
             responsePayload,
             createdAt: now,
           });

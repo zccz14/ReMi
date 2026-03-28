@@ -172,6 +172,47 @@ describe("approval routes", () => {
     expect(res.status).toBe(409);
   });
 
+  it("POST /api/:pubKey/approval/candidates/:id/approve applies edited text to update_existing", async () => {
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const existing = await service.microEditAsset({
+      assetId: null,
+      question: "Existing question",
+      answer: "Existing answer",
+      source: "manual",
+      requestId: "seed-route-existing-asset",
+    });
+    const candidate = service.createCandidate({
+      question: "Original question",
+      answer: "Original answer",
+      source: "reading",
+    });
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    const res = await app.request(`/api/${PUB_KEY}/approval/candidates/${candidate.id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "req-route-edited-update",
+        mode: "update_existing",
+        targetAssetId: existing.asset.id,
+        targetUpdatedAt: existing.asset.updatedAt,
+        question: "Edited question",
+        answer: "Edited answer",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.asset).toEqual(
+      expect.objectContaining({
+        id: existing.asset.id,
+        question: "Edited question",
+        answer: "Edited answer",
+      }),
+    );
+  });
+
   it("POST /api/:pubKey/approval/candidates/:id/reject rejects the candidate", async () => {
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
@@ -193,7 +234,7 @@ describe("approval routes", () => {
     expect(json.data.asset).toBeNull();
   });
 
-  it("POST /api/:pubKey/approval/candidates/:id/skip skips a probe without formal write", async () => {
+  it("POST /api/:pubKey/approval/candidates/:id/skip keeps a probe pending without formal write", async () => {
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
     const candidate = service.createCandidate({
@@ -212,6 +253,9 @@ describe("approval routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.asset).toBeNull();
+    expect(service.listCandidates({ kind: "probe", limit: 10, offset: 0 }).items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+    );
   });
 
   it("POST /api/:pubKey/approval/undo restores the last candidate", async () => {

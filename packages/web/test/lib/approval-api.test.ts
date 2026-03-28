@@ -63,6 +63,41 @@ describe("createApprovalApi", () => {
         mode: "update_existing",
         targetAssetId: "asset-1",
         targetUpdatedAt: 42,
+        question: undefined,
+        answer: undefined,
+      },
+    );
+  });
+
+  it("posts edited text with approval mutations", async () => {
+    const apiClient = {
+      ownerPath: vi.fn((path: string) => `/api/mock-public-key${path}`),
+      post: vi.fn().mockResolvedValue({ data: { actionId: "action-1", asset: null } }),
+    } as unknown as ApiClient;
+
+    const api = createApprovalApi(apiClient);
+
+    await api.approveCandidate({
+      candidateId: "candidate-1",
+      requestId: "req-2",
+      action: "question_only",
+      mode: "update_existing",
+      targetAssetId: "asset-1",
+      targetUpdatedAt: 42,
+      question: "What still matters most?",
+      answer: "Trust after pressure.",
+    });
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/api/mock-public-key/approval/candidates/candidate-1/approve",
+      {
+        requestId: "req-2",
+        action: "question_only",
+        mode: "update_existing",
+        targetAssetId: "asset-1",
+        targetUpdatedAt: 42,
+        question: "What still matters most?",
+        answer: "Trust after pressure.",
       },
     );
   });

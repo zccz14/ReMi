@@ -154,4 +154,70 @@ describe("useApprovalCenter", () => {
 
     expect(result.current.candidates).toEqual([anchorCandidate, probeCandidate]);
   });
+
+  it("rotates probe skips locally without committing a reject", async () => {
+    const probeCandidate = {
+      ...anchorCandidate,
+      id: "candidate-2",
+      answer: null,
+      kind: "probe" as const,
+    };
+    const secondProbe = { ...probeCandidate, id: "candidate-3", question: "Come back later?" };
+    const api = createApprovalApiMock({
+      listCandidates: vi.fn().mockResolvedValue({
+        items: [probeCandidate, secondProbe],
+        total: 2,
+        limit: 50,
+        offset: 0,
+      }),
+    });
+    const { result } = renderHook(() =>
+      useApprovalCenter({ api, kind: "probe", requestIdFactory: () => "req-skip" }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.skipProbe(probeCandidate);
+    });
+
+    expect(api.skipCandidate).not.toHaveBeenCalled();
+    expect(result.current.lastActionId).toBeNull();
+    expect(result.current.candidates).toEqual([secondProbe, probeCandidate]);
+    expect(result.current.total).toBe(2);
+  });
+
+  it("sends edited question and answer during update-existing approval", async () => {
+    const api = createApprovalApiMock();
+    const { result } = renderHook(() =>
+      useApprovalCenter({ api, kind: "anchor", requestIdFactory: () => "req-edit" }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.approve(anchorCandidate, {
+        mode: "update_existing",
+        targetAssetId: "asset-1",
+        targetUpdatedAt: 42,
+        question: "What still matters most?",
+        answer: "Trust after pressure.",
+      });
+    });
+
+    expect(api.approveCandidate).toHaveBeenCalledWith({
+      candidateId: "candidate-1",
+      requestId: "req-edit",
+      action: "approve",
+      mode: "update_existing",
+      targetAssetId: "asset-1",
+      targetUpdatedAt: 42,
+      question: "What still matters most?",
+      answer: "Trust after pressure.",
+    });
+  });
 });

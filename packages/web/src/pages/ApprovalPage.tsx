@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +13,7 @@ import type {
   ApprovalTargetAsset,
   CandidateDetailSubmitPayload,
 } from "../components/approval/CandidateDetailSheet";
-
-const LAST_APPROVAL_PATH_STORAGE_KEY = "remi.last-approval-path";
+import { getStoredApprovalPath, LAST_APPROVAL_PATH_STORAGE_KEY } from "../lib/approval-path";
 
 function mapRouteKind(routeKind: string | undefined): ApprovalKind | null {
   if (routeKind === "anchors") {
@@ -39,6 +38,21 @@ export function ApprovalPage() {
   const approvalApi = useMemo(() => createApprovalApi(apiClient), [apiClient]);
   const [assets, setAssets] = useState<ApprovalTargetAsset[]>([]);
 
+  const loadAssets = useCallback(async () => {
+    const response = await apiClient.get<{
+      data: {
+        items: Array<{
+          id: string;
+          question: string;
+          answer: string | null;
+          updatedAt: number;
+        }>;
+      };
+    }>(apiClient.ownerPath("/anchors?limit=200"));
+
+    setAssets(response.data.items);
+  }, [apiClient]);
+
   useEffect(() => {
     if (routeKind === "anchors" || routeKind === "probes") {
       window.localStorage.setItem(LAST_APPROVAL_PATH_STORAGE_KEY, location.pathname);
@@ -60,7 +74,6 @@ export function ApprovalPage() {
             }>;
           };
         }>(apiClient.ownerPath("/anchors?limit=200"));
-
         if (!cancelled) {
           setAssets(response.data.items);
         }
@@ -84,26 +97,68 @@ export function ApprovalPage() {
   });
   const { candidates, loading, total, lastActionId } = approvalCenter;
 
+  const refreshAfterStaleTarget = useCallback(async () => {
+    try {
+      await Promise.all([approvalCenter.reload(), loadAssets()]);
+    } catch {
+      // keep the reopened candidate visible even if refresh fails
+    }
+  }, [approvalCenter, loadAssets]);
+
   const handleApprove = async ({
     candidate,
+    question,
+    answer,
     mode,
     targetAssetId,
     targetUpdatedAt,
   }: CandidateDetailSubmitPayload) => {
-    await approvalCenter.approve(candidate, { mode, targetAssetId, targetUpdatedAt });
+    try {
+      await approvalCenter.approve(candidate, {
+        mode,
+        targetAssetId,
+        targetUpdatedAt,
+        question,
+        answer,
+      });
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? error.code : null;
+      if (code === "STALE_TARGET") {
+        await refreshAfterStaleTarget();
+        return;
+      }
+      throw error;
+    }
   };
 
   const handleQuestionOnly = async ({
     candidate,
+    question,
+    answer,
     mode,
     targetAssetId,
     targetUpdatedAt,
   }: CandidateDetailSubmitPayload) => {
-    await approvalCenter.keepQuestionOnly(candidate, { mode, targetAssetId, targetUpdatedAt });
+    try {
+      await approvalCenter.keepQuestionOnly(candidate, {
+        mode,
+        targetAssetId,
+        targetUpdatedAt,
+        question,
+        answer,
+      });
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? error.code : null;
+      if (code === "STALE_TARGET") {
+        await refreshAfterStaleTarget();
+        return;
+      }
+      throw error;
+    }
   };
 
   if (isInvalidRoute) {
-    return <Navigate to="/approval/anchors" replace />;
+    return <Navigate to={getStoredApprovalPath()} replace />;
   }
 
   return (

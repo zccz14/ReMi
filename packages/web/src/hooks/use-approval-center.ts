@@ -12,6 +12,8 @@ interface UpdateExistingOptions {
   mode?: ApprovalWriteMode;
   targetAssetId?: string;
   targetUpdatedAt?: number;
+  question?: string;
+  answer?: string | null;
 }
 
 interface UseApprovalCenterOptions {
@@ -29,9 +31,15 @@ function buildMutationKey(
   candidate: ApprovalCandidate,
   options?: UpdateExistingOptions,
 ) {
-  return [action, candidate.id, options?.mode ?? "create_new", options?.targetAssetId ?? ""].join(
-    ":",
-  );
+  return [
+    action,
+    candidate.id,
+    options?.mode ?? "create_new",
+    options?.targetAssetId ?? "",
+    options?.targetUpdatedAt ?? "",
+    options?.question ?? "",
+    options?.answer ?? "",
+  ].join(":");
 }
 
 export function useApprovalCenter({
@@ -113,6 +121,8 @@ export function useApprovalCenter({
           mode: options?.mode ?? "create_new",
           targetAssetId: options?.targetAssetId,
           targetUpdatedAt: options?.targetUpdatedAt,
+          question: options?.question,
+          answer: options?.answer,
         });
         releaseRequestId(mutationKey);
         setLastActionId(result.actionId);
@@ -175,10 +185,24 @@ export function useApprovalCenter({
     [api.rejectCandidate, submitCandidateMutation],
   );
 
-  const skipProbe = useCallback(
-    (candidate: ApprovalCandidate) => submitCandidateMutation(candidate, "skip", api.skipCandidate),
-    [api.skipCandidate, submitCandidateMutation],
-  );
+  const skipProbe = useCallback(async (candidate: ApprovalCandidate) => {
+    setCandidates((current) => {
+      const index = current.findIndex((item) => item.id === candidate.id);
+      if (index < 0) {
+        return current;
+      }
+
+      const next = current.slice();
+      const [item] = next.splice(index, 1);
+      if (!item) {
+        return current;
+      }
+      next.push(item);
+      return next;
+    });
+
+    return { actionId: "", asset: null };
+  }, []);
 
   const undo = useCallback(async () => {
     if (!lastActionId) {

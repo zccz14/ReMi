@@ -2,8 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { MessageSquare, Users, CheckSquare2, User, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const LAST_APPROVAL_PATH_STORAGE_KEY = "remi.last-approval-path";
+import { getStoredApprovalPath } from "../../lib/approval-path";
 
 const navItems: { path: string; labelKey: string; icon: LucideIcon }[] = [
   { path: "/messages", labelKey: "nav.messages", icon: MessageSquare },
@@ -12,21 +11,10 @@ const navItems: { path: string; labelKey: string; icon: LucideIcon }[] = [
   { path: "/me", labelKey: "nav.me", icon: User },
 ];
 
-function getApprovalPath(pathname: string) {
-  if (pathname === "/approval/anchors" || pathname === "/approval/probes") {
-    return pathname;
-  }
-
-  const stored = window.localStorage.getItem(LAST_APPROVAL_PATH_STORAGE_KEY);
-  return stored === "/approval/probes" || stored === "/approval/anchors"
-    ? stored
-    : "/approval/anchors";
-}
-
 export function NavBar() {
   const { pathname } = useLocation();
   const { t } = useTranslation();
-  const approvalPath = getApprovalPath(pathname);
+  const approvalPath = getStoredApprovalPath(pathname);
 
   return (
     <nav className="flex justify-around border-t bg-card py-2">

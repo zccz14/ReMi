@@ -50,6 +50,8 @@ export interface ApproveCandidateInput {
   mode?: ApprovalWriteMode;
   targetAssetId?: string;
   targetUpdatedAt?: number;
+  question?: string;
+  answer?: string | null;
 }
 
 export interface CandidateMutationInput {
@@ -104,6 +106,8 @@ export function createApprovalApi(apiClient: ApiClient): ApprovalApi {
           mode: body.mode ?? "create_new",
           targetAssetId: body.targetAssetId,
           targetUpdatedAt: body.targetUpdatedAt,
+          question: body.question,
+          answer: body.answer,
         },
       );
       return response.data;
