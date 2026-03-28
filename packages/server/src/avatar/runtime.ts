@@ -27,7 +27,7 @@ import type { ConnectionManager } from "../db/connection.js";
 import type { SoulAnchor } from "../types.js";
 import { readProfileSummary } from "../routes/profile.js";
 import { mapRecallRuntimeStrategyToReasoningStrategy } from "../reasoning/constants.js";
-import { throwIfAborted } from "../lib/abort.js";
+import { isAbortError, throwIfAborted } from "../lib/abort.js";
 import {
   buildAvatarIdentitySegment,
   buildDownstreamMessages,
@@ -331,7 +331,11 @@ export class AvatarInferenceRuntime {
         responseJson: parseJsonIfPossible(decompositionResponse.content),
       });
       decomposition = parseDecomposition(decompositionResponse.content, userQuery, currentTime);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+
       decomposition = {
         userQuery,
         currentTime,

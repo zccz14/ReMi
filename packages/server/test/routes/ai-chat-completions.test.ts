@@ -67,8 +67,8 @@ describe("ai chat completions route", () => {
   });
 
   it("aborts upstream streaming work when the SSE transport fails", async () => {
-    const releaseCreateRequest = createDeferred<void>();
-    const createRequestStarted = createDeferred<void>();
+    const releaseRunStream = createDeferred<void>();
+    const runStreamStarted = createDeferred<void>();
     let observedSignal: AbortSignal | undefined;
 
     const chatClient: ChatClient = {
@@ -92,13 +92,28 @@ describe("ai chat completions route", () => {
 
     const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
     const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
-    const createRequestSpy = vi
-      .spyOn(AvatarInferenceRuntime.prototype, "createRequest")
-      .mockImplementation(async (input) => {
-        observedSignal = input.signal;
-        createRequestStarted.resolve();
-        await releaseCreateRequest.promise;
-        throw input.signal?.reason ?? new Error("aborted");
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
+      async (input) => ({
+        avatarTarget: input.avatarTarget,
+        instructionSegments: {
+          platform: "platform",
+          avatar: "avatar",
+          recall: "recall",
+        },
+        conversationTurns: input.conversationTurns,
+        contentParts: [],
+        stream: input.stream,
+        signal: input.signal,
+      }),
+    );
+    const runStreamSpy = vi
+      .spyOn(AvatarInferenceRuntime.prototype, "runStream")
+      .mockImplementation(async function* (request) {
+        yield* [] as Array<{ type: "message_start"; message: { role: "assistant" } }>;
+        observedSignal = request.signal;
+        runStreamStarted.resolve();
+        await releaseRunStream.promise;
+        throw request.signal?.reason ?? new Error("aborted");
       });
 
     const app = await createTestApp(aiChatCompletionsRoute, {
@@ -119,19 +134,19 @@ describe("ai chat completions route", () => {
       }),
     });
 
-    await createRequestStarted.promise;
+    await runStreamStarted.promise;
     const transportFailure = new Error("transport closed");
     notifyHeartbeatError?.(transportFailure);
     heartbeatFailure.reject(transportFailure);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(createRequestSpy).toHaveBeenCalledWith(
+    expect(runStreamSpy).toHaveBeenCalledWith(
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(observedSignal).toBeDefined();
     expect(observedSignal?.aborted).toBe(true);
 
-    releaseCreateRequest.resolve();
+    releaseRunStream.resolve();
     const res = await responsePromise;
     expect(res.status).toBe(200);
   });

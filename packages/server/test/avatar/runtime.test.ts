@@ -21,6 +21,7 @@ import type { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatResponse } from "../../src/llm/client.js";
 import { createLatestReasoningDebugArtifactWriter } from "../../src/reasoning/debug-artifact.js";
 import type { SoulAnchor } from "../../src/types.js";
+import { createAbortError } from "../../src/lib/abort.js";
 
 vi.mock("../../src/recall/goal-based-recall.js", () => ({
   goalBasedRecall: vi.fn(),
@@ -385,6 +386,26 @@ describe("AvatarInferenceRuntime", () => {
     expect(assessmentPrompt).toContain("identity_style");
     expect(assessmentPrompt).toContain("relationship_boundary");
     expect(assessmentPrompt).toContain("domain_answer");
+  });
+
+  it("rethrows aborts during decomposition instead of falling back", async () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient: createChatClient(),
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+    const abortError = createAbortError("decomposition aborted");
+
+    vi.mocked(runtime["deps"].chatClient.chat).mockRejectedValueOnce(abortError);
+
+    await expect(
+      runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "你好" }],
+        stream: false,
+      }),
+    ).rejects.toBe(abortError);
+    expect(mockGoalBasedRecall).not.toHaveBeenCalled();
   });
 
   it("falls back to default goals when decomposition JSON misses required goals", async () => {
