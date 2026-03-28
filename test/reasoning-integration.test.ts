@@ -75,6 +75,15 @@ describe("reasoning integration", () => {
     return done ? JSON.parse(done.data ?? "{}") : null;
   }
 
+  async function readWithTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+    return Promise.race<T | "timeout">([
+      promise,
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
+    ]);
+  }
+
   function seedAnchor(id: string, question: string, withEmbedding = true) {
     const conn = connMgr.getConnection(ownerPubKey);
     const now = Date.now();
@@ -252,74 +261,68 @@ describe("reasoning integration", () => {
   });
 
   it("POST /reasoning/message emits comment heartbeat while runtime prep is blocked", async () => {
-    vi.useFakeTimers();
+    const embedding = createRecallAwareEmbeddingClient();
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: createChatClient(),
+      embeddingClient: embedding.client,
+      sseHeartbeatTiming: { silentMs: 10, intervalMs: 10 },
+    });
+    app = result.app;
+    connMgr = result.connMgr;
+    cleanup = () => result.connMgr.closeAll();
 
-    try {
-      const embedding = createRecallAwareEmbeddingClient();
-      const result = createApp({
-        dataDir: tmpDir,
-        embeddingDimensions: 4,
-        chatClient: createChatClient(),
-        embeddingClient: embedding.client,
-      });
-      app = result.app;
-      connMgr = result.connMgr;
-      cleanup = () => result.connMgr.closeAll();
-
-      for (let i = 1; i <= 21; i++) {
-        seedAnchor(`anchor-${i}`, `问题 ${i}`);
-      }
-
-      let releaseRecall!: () => void;
-      const recallGate = new Promise<void>((resolve) => {
-        releaseRecall = resolve;
-      });
-      embedding.blockRecall(recallGate);
-
-      const res = await signedRequest(
-        "POST",
-        `/api/${ownerPubKey}/reasoning/message`,
-        visitorPrivKey,
-        visitorPubKey,
-        JSON.stringify({ content: "你好" }),
-      );
-      expect(res.status).toBe(200);
-      expect(res.headers.get("content-type")).toContain("text/event-stream");
-
-      const reader = res.body!.getReader();
-      const firstChunkRead = reader.read();
-      await vi.advanceTimersByTimeAsync(5000);
-      const firstChunkResult = await firstChunkRead;
-      expect(typeof firstChunkResult).toBe("object");
-      expect(firstChunkResult).toMatchObject({ done: false });
-
-      const decoder = new TextDecoder();
-      const firstChunkText = decoder.decode(
-        (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
-        { stream: true },
-      );
-
-      expect(firstChunkText).toContain(":\n\n");
-      expect(firstChunkText).not.toContain("event: done");
-      expect(firstChunkText).not.toContain("event: token");
-
-      releaseRecall();
-
-      let remainingText = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        remainingText += decoder.decode(value, { stream: true });
-      }
-      remainingText += decoder.decode();
-
-      const done = lastDoneEvent(firstChunkText + remainingText);
-      expect(done).toMatchObject({ messageId: 2, recalledAnchors: expect.any(Array) });
-    } finally {
-      vi.useRealTimers();
+    for (let i = 1; i <= 21; i++) {
+      seedAnchor(`anchor-${i}`, `问题 ${i}`);
     }
+
+    let releaseRecall!: () => void;
+    const recallGate = new Promise<void>((resolve) => {
+      releaseRecall = resolve;
+    });
+    embedding.blockRecall(recallGate);
+
+    const res = await signedRequest(
+      "POST",
+      `/api/${ownerPubKey}/reasoning/message`,
+      visitorPrivKey,
+      visitorPubKey,
+      JSON.stringify({ content: "你好" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const firstChunkResult = await readWithTimeout(reader.read(), 200);
+    expect(firstChunkResult).not.toBe("timeout");
+    expect(typeof firstChunkResult).toBe("object");
+    expect(firstChunkResult).toMatchObject({ done: false });
+
+    const decoder = new TextDecoder();
+    const firstChunkText = decoder.decode(
+      (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
+      { stream: true },
+    );
+
+    expect(firstChunkText).toContain(":\n\n");
+    expect(firstChunkText).not.toContain("event: done");
+    expect(firstChunkText).not.toContain("event: token");
+
+    releaseRecall();
+
+    let remainingText = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      remainingText += decoder.decode(value, { stream: true });
+    }
+    remainingText += decoder.decode();
+
+    const done = lastDoneEvent(firstChunkText + remainingText);
+    expect(done).toMatchObject({ messageId: 2, recalledAnchors: expect.any(Array) });
   });
 
   it("POST /reasoning/message exits stream quietly when heartbeat transport fails", async () => {

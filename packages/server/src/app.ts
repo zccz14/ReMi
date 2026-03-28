@@ -21,12 +21,25 @@ import { logger, shortKey } from "./logger.js";
 import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
 import { resolveStaticDir, serveStaticRequest } from "./web/static.js";
 
+declare module "hono" {
+  interface ContextVariableMap {
+    sseHeartbeatTiming: {
+      silentMs?: number;
+      intervalMs?: number;
+    } | null;
+  }
+}
+
 interface AppConfig {
   dataDir: string;
   maxConnections?: number;
   embeddingDimensions?: number;
   embeddingClient?: EmbeddingClient | null;
   chatClient?: ChatClient | null;
+  sseHeartbeatTiming?: {
+    silentMs?: number;
+    intervalMs?: number;
+  };
   web?: WebConfig;
 }
 
@@ -97,6 +110,7 @@ export function createApp(config: AppConfig) {
 
   const embeddingClient = config.embeddingClient ?? null;
   const chatClient = config.chatClient ?? null;
+  const sseHeartbeatTiming = config.sseHeartbeatTiming ?? null;
 
   // Inject role + connMgr + embeddingClient + chatClient
   const injectContext = async (c: Context, next: Next) => {
@@ -110,6 +124,7 @@ export function createApp(config: AppConfig) {
     c.set("connMgr", connMgr);
     c.set("embeddingClient", embeddingClient);
     c.set("chatClient", chatClient);
+    c.set("sseHeartbeatTiming", sseHeartbeatTiming);
     c.set("soulExistedBeforeRequest", soulExistedBeforeRequest);
 
     // Soul implicit creation
@@ -138,7 +153,7 @@ export function createApp(config: AppConfig) {
   app.route("/api/:pubKey/api-tokens", apiTokensRoutes());
   app.route(
     "/ai/v1/chat/completions",
-    aiChatCompletionsRoute({ connMgr, chatClient, embeddingClient }),
+    aiChatCompletionsRoute({ connMgr, chatClient, embeddingClient, sseHeartbeatTiming }),
   );
 
   if (config.web?.mode === "static") {

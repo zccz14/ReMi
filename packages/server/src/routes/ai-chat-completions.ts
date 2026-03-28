@@ -114,6 +114,10 @@ export function aiChatCompletionsRoute(deps: {
   connMgr: ConnectionManager;
   chatClient: ChatClient | null;
   embeddingClient: EmbeddingClient | null;
+  sseHeartbeatTiming?: {
+    silentMs?: number;
+    intervalMs?: number;
+  } | null;
 }) {
   const routes = new Hono();
 
@@ -224,6 +228,8 @@ export function aiChatCompletionsRoute(deps: {
           onError: (error) => {
             markTransportFailure(error);
           },
+          silentMs: deps.sseHeartbeatTiming?.silentMs,
+          intervalMs: deps.sseHeartbeatTiming?.intervalMs,
         });
 
         async function writeOpenAiChunk(data: string) {

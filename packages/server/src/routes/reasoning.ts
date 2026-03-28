@@ -750,6 +750,14 @@ reasoningRoutes.post(
         }
       }
 
+      const heartbeatTiming = c.get("sseHeartbeatTiming") as
+        | {
+            silentMs?: number;
+            intervalMs?: number;
+          }
+        | null
+        | undefined;
+
       const heartbeat = createSseHeartbeat({
         writeComment: async (frame) => {
           await stream.write(frame);
@@ -757,6 +765,8 @@ reasoningRoutes.post(
         onError: (error) => {
           markTransportFailure(error);
         },
+        silentMs: heartbeatTiming?.silentMs,
+        intervalMs: heartbeatTiming?.intervalMs,
       });
 
       async function emitThinking(narrative: string) {
