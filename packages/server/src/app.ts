@@ -16,6 +16,7 @@ import { apiTokensRoutes } from "./routes/api-tokens.js";
 import { aiChatCompletionsRoute } from "./routes/ai-chat-completions.js";
 import { goalsRoutes } from "./routes/goals.js";
 import { readingRoutes } from "./routes/reading.js";
+import { approvalRoutes } from "./routes/approval.js";
 import { type ChatClient } from "./llm/client.js";
 import { logger, shortKey } from "./logger.js";
 import { proxyToVite, shouldProxyToVite, type WebConfig } from "./web/proxy.js";
@@ -144,6 +145,7 @@ export function createApp(config: AppConfig) {
   // Business routes
   app.route("/api", soulRoutes);
   app.route("/api", profileRoutes);
+  app.route("/api", approvalRoutes);
   app.route("/api", anchorRoutes);
   app.route("/api", interviewRoutes);
   app.route("/api", readingRoutes);
