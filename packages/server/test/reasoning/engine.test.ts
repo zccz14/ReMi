@@ -105,7 +105,7 @@ describe("ReasoningEngine", () => {
     expect((errorEvent!.data as { code: string }).code).toBe("LLM_ERROR");
   });
 
-  it("should use full injection and skip recall at threshold", async () => {
+  it("should use full injection and skip recall loop at threshold while allowing assessment", async () => {
     const deps = createMockDeps();
     deps.saveMessage.mockReset();
     deps.saveMessage
@@ -130,10 +130,10 @@ describe("ReasoningEngine", () => {
     await engine.handleMessage("你好", "visitor-key", emitter);
 
     expect(deps.getCachedAnchorIds).not.toHaveBeenCalled();
-    expect(deps.chatClient.chat).not.toHaveBeenCalled();
+    expect(deps.chatClient.chat).toHaveBeenCalledTimes(1);
     expect(deps.embeddingClient.embed).not.toHaveBeenCalled();
     expect(deps.listAnchors).toHaveBeenCalled();
-    expect(emitThinking).not.toHaveBeenCalled();
+    expect(emitThinking).toHaveBeenCalledWith("思考中...");
     expect(emitDone).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 2, recalledAnchors: ["a1", "a2"] }),
     );
