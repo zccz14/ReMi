@@ -75,21 +75,6 @@ describe("reasoning integration", () => {
     return done ? JSON.parse(done.data ?? "{}") : null;
   }
 
-  async function readWithTimeout(
-    readPromise: Promise<ReadableStreamReadResult<Uint8Array>>,
-    timeoutMs: number,
-  ) {
-    const resultPromise = Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
-      readPromise,
-      new Promise((resolve) => {
-        setTimeout(() => resolve("timeout"), timeoutMs);
-      }),
-    ]);
-
-    await vi.advanceTimersByTimeAsync(timeoutMs);
-    return resultPromise;
-  }
-
   function seedAnchor(id: string, question: string, withEmbedding = true) {
     const conn = connMgr.getConnection(ownerPubKey);
     const now = Date.now();
@@ -304,9 +289,7 @@ describe("reasoning integration", () => {
       const reader = res.body!.getReader();
       const firstChunkRead = reader.read();
       await vi.advanceTimersByTimeAsync(5000);
-      const firstChunkResultPromise = readWithTimeout(firstChunkRead, 50);
-      const firstChunkResult = await firstChunkResultPromise;
-      expect(firstChunkResult).not.toBe("timeout");
+      const firstChunkResult = await firstChunkRead;
       expect(typeof firstChunkResult).toBe("object");
       expect(firstChunkResult).toMatchObject({ done: false });
 
