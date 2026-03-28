@@ -3,7 +3,32 @@
     "messages": "Messages",
     "contacts": "Contacts",
     "discover": "Discover",
+    "approval": "Approval",
     "me": "Me"
+  },
+  "approval": {
+    "navLabel": "Approval center",
+    "title": "Review soul candidates",
+    "pending": "Pending: {{count}}",
+    "probePlaceholder": "Question only candidate",
+    "tabs": {
+      "anchors": "Anchors",
+      "probes": "Probes"
+    },
+    "empty": {
+      "anchors": "No anchor candidates right now",
+      "probes": "No probe candidates right now",
+      "description": "New candidates from reading or interview will arrive here for review."
+    },
+    "gestures": {
+      "right": "Swipe right: approve",
+      "up": "Swipe up: reject",
+      "down": "Swipe down: undo",
+      "left": {
+        "anchors": "Swipe left: keep question only",
+        "probes": "Swipe left: skip for now"
+      }
+    }
   },
   "messages": {
     "title": "Messages",

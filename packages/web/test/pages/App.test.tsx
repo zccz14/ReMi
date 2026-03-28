@@ -58,6 +58,9 @@ function mockSharedPages() {
     AvatarChatPage: () => <div>avatar-chat-page</div>,
   }));
   vi.doMock("../../src/pages/AnchorsPage", () => ({ AnchorsPage: () => <div>anchors-page</div> }));
+  vi.doMock("../../src/pages/ApprovalPage", () => ({
+    ApprovalPage: () => <div>approval-page</div>,
+  }));
   vi.doMock("../../src/pages/ReadingPage", () => ({ ReadingPage: () => <div>reading-page</div> }));
   vi.doMock("../../src/pages/SharePage", () => ({ SharePage: () => <div>share-page</div> }));
   vi.doMock("../../src/pages/SettingsPage", () => ({
@@ -186,7 +189,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("treats /stats as a retired route sample by skipping any stats page and redirecting to /messages", async () => {
+  it("treats /stats as a retired route sample by redirecting to /approval/anchors", async () => {
     mockAppModules(({ children }) => <div data-testid="auth-provider">{children}</div>);
     window.history.replaceState({}, "", "/stats");
 
@@ -194,10 +197,22 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("messages-page")).toBeInTheDocument();
+    expect(await screen.findByText("approval-page")).toBeInTheDocument();
     expect(screen.getByText("app-shell")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/messages");
+    expect(window.location.pathname).toBe("/approval/anchors");
     expect(screen.queryByText("stats-page")).not.toBeInTheDocument();
+  });
+
+  it("renders the approval route inside AuthProvider", async () => {
+    mockAppModules(({ children }) => <div data-testid="auth-provider">{children}</div>);
+    window.history.replaceState({}, "", "/approval/probes");
+
+    const { default: App } = await import("../../src/App");
+
+    render(<App />);
+
+    expect(await screen.findByText("approval-page")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-provider")).toBeInTheDocument();
   });
 
   it("renders the reading route as a standalone authenticated page", async () => {

@@ -17,6 +17,7 @@ import { AnchorsPage } from "./pages/AnchorsPage";
 import { ReadingPage } from "./pages/ReadingPage";
 import { SharePage } from "./pages/SharePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { ApprovalPage } from "./pages/ApprovalPage";
 import "./lib/i18n";
 
 function OldShareRedirect() {
@@ -31,6 +32,7 @@ function AuthenticatedRoutes() {
         <Route element={<AppShell />}>
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/approval/:kind" element={<ApprovalPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/me" element={<MePage />} />
         </Route>
@@ -40,7 +42,7 @@ function AuthenticatedRoutes() {
         <Route path="/read" element={<ReadingPage />} />
         <Route path="/share" element={<SharePage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/messages" replace />} />
+        <Route path="*" element={<Navigate to="/approval/anchors" replace />} />
       </Routes>
     </AuthProvider>
   );

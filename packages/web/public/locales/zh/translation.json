@@ -3,7 +3,32 @@
     "messages": "消息",
     "contacts": "通讯录",
     "discover": "发现",
+    "approval": "审批中心",
     "me": "我"
+  },
+  "approval": {
+    "navLabel": "审批中心",
+    "title": "审核灵魂候选",
+    "pending": "待处理：{{count}}",
+    "probePlaceholder": "仅问题候选",
+    "tabs": {
+      "anchors": "锚点",
+      "probes": "探针"
+    },
+    "empty": {
+      "anchors": "当前没有锚点候选",
+      "probes": "当前没有探针候选",
+      "description": "阅读或访谈产出的新候选会先进入这里等待你审核。"
+    },
+    "gestures": {
+      "right": "右滑：认可",
+      "up": "上滑：丢弃",
+      "down": "下滑：撤销",
+      "left": {
+        "anchors": "左滑：只保留问题",
+        "probes": "左滑：暂时跳过"
+      }
+    }
   },
   "messages": {
     "title": "消息",
