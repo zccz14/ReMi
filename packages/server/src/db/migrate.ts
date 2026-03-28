@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 
+const APPROVAL_LAST_ACTIONS_UNDO_TTL_MS = 5 * 60 * 1000;
+
 export function initializeDatabase(db: Database.Database, embeddingDimensions: number): void {
   sqliteVec.load(db);
 
@@ -133,6 +135,22 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
     CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_owner_candidate_request
       ON approval_requests(owner_key, candidate_id, request_id);
   `);
+
+  const approvalLastActionsColumns = db
+    .prepare("PRAGMA table_info(approval_last_actions)")
+    .all() as {
+    name: string;
+  }[];
+  const hasApprovalLastActionsExpiresAt = approvalLastActionsColumns.some(
+    (column) => column.name === "expires_at",
+  );
+
+  if (!hasApprovalLastActionsExpiresAt) {
+    db.exec("ALTER TABLE approval_last_actions ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0");
+    db.prepare(
+      "UPDATE approval_last_actions SET expires_at = created_at + ? WHERE expires_at = 0",
+    ).run(APPROVAL_LAST_ACTIONS_UNDO_TTL_MS);
+  }
 
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS soul_anchors_vec USING vec0(

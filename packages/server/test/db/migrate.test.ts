@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import Database from "better-sqlite3";
+import { APPROVAL_UNDO_TTL_MS } from "../../src/approval/service.js";
 import { initializeDatabase } from "../../src/db/migrate.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -158,6 +159,48 @@ describe("initializeDatabase", () => {
         "expires_at",
       ]),
     );
+
+    db.close();
+  });
+
+  it("should add expires_at when upgrading an existing approval_last_actions table", () => {
+    const dbPath = createTmpDb();
+    const db = new Database(dbPath);
+    const createdAt = 1_717_171_717_000;
+
+    db.exec(`
+      CREATE TABLE approval_last_actions (
+        owner_key TEXT PRIMARY KEY,
+        action_id TEXT NOT NULL,
+        candidate_snapshot TEXT NOT NULL,
+        rollback_payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO approval_last_actions (
+        owner_key,
+        action_id,
+        candidate_snapshot,
+        rollback_payload,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+    ).run("owner-1", "action-1", "{}", "{}", createdAt);
+
+    initializeDatabase(db, 1536);
+
+    const lastActionColumns = db.prepare("PRAGMA table_info(approval_last_actions)").all() as {
+      name: string;
+    }[];
+    expect(lastActionColumns.map((column) => column.name)).toContain("expires_at");
+
+    const upgradedRow = db
+      .prepare("SELECT created_at, expires_at FROM approval_last_actions WHERE owner_key = ?")
+      .get("owner-1") as { created_at: number; expires_at: number };
+    expect(upgradedRow).toEqual({
+      created_at: createdAt,
+      expires_at: createdAt + APPROVAL_UNDO_TTL_MS,
+    });
 
     db.close();
   });
