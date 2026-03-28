@@ -8,6 +8,11 @@ import {
   type ReasoningAnswerGoal,
 } from "../reasoning/prompts.js";
 import {
+  buildReasoningDebugArtifactSummary,
+  type ReasoningDebugArtifactWriter,
+  type ReasoningDebugTurn,
+} from "../reasoning/debug-artifact.js";
+import {
   buildDefaultAnswerGoals,
   collectMissingInformation,
   parseDecomposition,
@@ -15,6 +20,7 @@ import {
   type ParsedDecomposition,
 } from "../reasoning/orchestration.js";
 import { goalBasedRecall } from "../recall/goal-based-recall.js";
+import type { GoalStatus, RecallRoundSummary } from "../recall/goal-based-recall.js";
 import { RECALL_FULL_INJECTION_THRESHOLD } from "../recall/constants.js";
 import { soulAnchors } from "../db/schema.js";
 import type { ConnectionManager } from "../db/connection.js";
@@ -45,14 +51,94 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function parseJsonIfPossible(content: string): unknown | undefined {
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+type RuntimeDebugState = {
+  currentTime: string;
+  userQuery: string;
+  requiredGoalIds: string[];
+  finalAnchorIds: string[];
+  rounds: number;
+  stoppedBecause?: string;
+  goalStatus: GoalStatus[];
+  recallRounds: Array<
+    Omit<RecallRoundSummary, "stoppedCandidate"> & { stoppedCandidate: string | null }
+  >;
+  turns: ReasoningDebugTurn[];
+};
+
 interface AvatarInferenceRuntimeDeps {
   ownerConn: ReturnType<ConnectionManager["getConnection"]>;
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
+  debugArtifactWriter?: ReasoningDebugArtifactWriter;
 }
 
 export class AvatarInferenceRuntime {
+  private debugStateByRequest = new WeakMap<AvatarInferenceRequest, RuntimeDebugState>();
+
   constructor(private deps: AvatarInferenceRuntimeDeps) {}
+
+  private buildRuntimeTracePayload(
+    request: AvatarInferenceRequest,
+    messages: ChatMessage[],
+    responseText: string,
+  ) {
+    const debugState = this.debugStateByRequest.get(request);
+    if (!debugState) {
+      return null;
+    }
+
+    return {
+      turns: [
+        ...debugState.turns,
+        {
+          turnId: "03-final-generation",
+          promptMessages: messages,
+          responseText,
+        },
+      ],
+      finalMessages: messages,
+      recallRounds: debugState.recallRounds,
+      response: responseText,
+      summary: buildReasoningDebugArtifactSummary({
+        currentTime: debugState.currentTime,
+        userQuery: debugState.userQuery,
+        rounds: debugState.rounds,
+        stoppedBecause: debugState.stoppedBecause,
+        finalAnchorIds: debugState.finalAnchorIds,
+        goalStatus: debugState.goalStatus,
+        requiredGoalIds: debugState.requiredGoalIds,
+      }),
+    };
+  }
+
+  private async writeRuntimeTraceBestEffort(
+    request: AvatarInferenceRequest,
+    messages: ChatMessage[],
+    responseText: string,
+  ): Promise<void> {
+    if (!this.deps.debugArtifactWriter) {
+      return;
+    }
+
+    const payload = this.buildRuntimeTracePayload(request, messages, responseText);
+    if (!payload) {
+      return;
+    }
+
+    try {
+      await this.deps.debugArtifactWriter.writeLatestRuntimeTrace(payload);
+    } catch {
+      // Best-effort only: debug artifacts must not break successful inference paths.
+    }
+  }
 
   private async countAnchors(): Promise<number> {
     const row = this.deps.ownerConn.drizzle
@@ -90,13 +176,23 @@ export class AvatarInferenceRuntime {
     currentTime: string;
     answerGoals: ReasoningAnswerGoal[];
     visitorKey?: string;
+    debugTurns?: ReasoningDebugTurn[];
   }) {
+    const sufficiencyTurns: Array<{ promptMessages: ChatMessage[]; responseText: string }> = [];
+    const tracingChatClient: ChatClient = {
+      chat: async (options) => {
+        const response = await this.deps.chatClient.chat(options);
+        sufficiencyTurns.push({ promptMessages: options.messages, responseText: response.content });
+        return response;
+      },
+      chatStream: (options) => this.deps.chatClient.chatStream(options),
+    };
     const anchorCount = await this.countAnchors();
 
     if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD || !this.deps.embeddingClient) {
       const anchors = await this.listAnchors();
-      return await goalBasedRecall({
-        chatClient: this.deps.chatClient,
+      const recall = await goalBasedRecall({
+        chatClient: tracingChatClient,
         goals: input.answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
         context: input.conversationTurns
           .map((turn) => `${turn.role}: ${turn.content}`)
@@ -121,6 +217,15 @@ export class AvatarInferenceRuntime {
           return parsed.judgment;
         },
       });
+      input.debugTurns?.push(
+        ...sufficiencyTurns.map((turn, index) => ({
+          turnId: `02-sufficiency-round-${index + 1}`,
+          promptMessages: turn.promptMessages,
+          responseText: turn.responseText,
+          responseJson: parseJsonIfPossible(turn.responseText),
+        })),
+      );
+      return recall;
     }
 
     const context = input.conversationTurns
@@ -130,7 +235,7 @@ export class AvatarInferenceRuntime {
     let lastReasoningChain: string[] = [];
 
     const recall = await goalBasedRecall({
-      chatClient: this.deps.chatClient,
+      chatClient: tracingChatClient,
       embeddingClient: this.deps.embeddingClient,
       goals: input.answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
       context,
@@ -157,6 +262,15 @@ export class AvatarInferenceRuntime {
       },
     });
 
+    input.debugTurns?.push(
+      ...sufficiencyTurns.map((turn, index) => ({
+        turnId: `02-sufficiency-round-${index + 1}`,
+        promptMessages: turn.promptMessages,
+        responseText: turn.responseText,
+        responseJson: parseJsonIfPossible(turn.responseText),
+      })),
+    );
+
     return { ...recall, reasoningChain: lastReasoningChain };
   }
 
@@ -168,14 +282,22 @@ export class AvatarInferenceRuntime {
     const profile = readProfileSummary(this.deps.ownerConn);
     const userQuery = findLatestUserQuery(input.conversationTurns);
     const currentTime = isoNow();
+    const debugTurns: ReasoningDebugTurn[] = [];
 
     let decomposition: ParsedDecomposition;
     try {
+      const decompositionPrompt = buildReasoningDecompositionPrompt({
+        currentTime,
+        userQuery,
+      });
       const decompositionResponse = await this.deps.chatClient.chat({
-        messages: buildReasoningDecompositionPrompt({
-          currentTime,
-          userQuery,
-        }),
+        messages: decompositionPrompt,
+      });
+      debugTurns.push({
+        turnId: "01-decomposition",
+        promptMessages: decompositionPrompt,
+        responseText: decompositionResponse.content,
+        responseJson: parseJsonIfPossible(decompositionResponse.content),
       });
       decomposition = parseDecomposition(decompositionResponse.content, userQuery, currentTime);
     } catch {
@@ -191,10 +313,11 @@ export class AvatarInferenceRuntime {
       currentTime,
       answerGoals: decomposition.answerGoals,
       visitorKey: undefined,
+      debugTurns,
     });
     const missingInformation = collectMissingInformation(recall.goalStatus);
 
-    return {
+    const request: AvatarInferenceRequest = {
       avatarTarget: input.avatarTarget,
       instructionSegments: {
         platform: buildPlatformSegment(),
@@ -214,6 +337,29 @@ export class AvatarInferenceRuntime {
       contentParts: [],
       stream: input.stream,
     };
+
+    this.debugStateByRequest.set(request, {
+      currentTime,
+      userQuery: decomposition.userQuery,
+      requiredGoalIds: decomposition.answerGoals
+        .filter((goal) => goal.required)
+        .map((goal) => goal.id),
+      rounds: recall.rounds,
+      stoppedBecause: recall.stoppedBecause,
+      finalAnchorIds: recall.anchors.map((anchor) => anchor.id),
+      goalStatus: recall.goalStatus,
+      recallRounds: recall.roundSummaries.map((roundSummary) => ({
+        round: roundSummary.round,
+        query: roundSummary.query,
+        newAnchorIds: roundSummary.newAnchorIds,
+        allAnchorIds: roundSummary.allAnchorIds,
+        normalizedGoalStatus: roundSummary.normalizedGoalStatus,
+        stoppedCandidate: roundSummary.stoppedCandidate ?? null,
+      })),
+      turns: debugTurns,
+    });
+
+    return request;
   }
 
   buildMessages(request: AvatarInferenceRequest): ChatMessage[] {
@@ -226,9 +372,10 @@ export class AvatarInferenceRuntime {
   }
 
   async run(request: AvatarInferenceRequest): Promise<AvatarInferenceResponse> {
-    const response = await this.deps.chatClient.chat({
-      messages: this.buildMessages(request),
-    });
+    const messages = this.buildMessages(request);
+    const response = await this.deps.chatClient.chat({ messages });
+    await this.writeRuntimeTraceBestEffort(request, messages, response.content);
+    this.debugStateByRequest.delete(request);
 
     return {
       message: { role: "assistant", content: response.content },
@@ -240,15 +387,19 @@ export class AvatarInferenceRuntime {
   async *runStream(
     request: AvatarInferenceRequest,
   ): AsyncGenerator<AvatarInferenceEvent, void, unknown> {
-    const upstream = this.deps.chatClient.chatStream({
-      messages: this.buildMessages(request),
-    });
+    const messages = this.buildMessages(request);
+    const upstream = this.deps.chatClient.chatStream({ messages });
+    let fullContent = "";
 
     yield { type: "message_start", message: { role: "assistant" } };
 
     for await (const token of upstream) {
+      fullContent += token;
       yield { type: "text_delta", text: token };
     }
+
+    await this.writeRuntimeTraceBestEffort(request, messages, fullContent);
+    this.debugStateByRequest.delete(request);
 
     yield { type: "message_end", finishReason: "stop" };
   }

@@ -1,6 +1,7 @@
 import { lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
+import type { ChatMessage } from "../llm/client.js";
 import type { GoalStatus, RecallRoundSummary } from "../recall/goal-based-recall.js";
 
 export interface ReasoningDebugArtifactSummary {
@@ -25,6 +26,25 @@ export interface ReasoningDebugArtifactPayload {
 
 export interface ReasoningDebugArtifactWriter {
   writeLatest(payload: ReasoningDebugArtifactPayload): Promise<void>;
+  writeLatestRuntimeTrace(payload: ReasoningRuntimeDebugArtifactPayload): Promise<void>;
+}
+
+export interface ReasoningDebugTurn {
+  turnId: string;
+  promptMessages?: ChatMessage[];
+  promptText?: string;
+  responseText: string;
+  responseJson?: unknown;
+}
+
+export interface ReasoningRuntimeDebugArtifactPayload {
+  turns: ReasoningDebugTurn[];
+  finalMessages: ChatMessage[];
+  recallRounds: Array<
+    Omit<RecallRoundSummary, "stoppedCandidate"> & { stoppedCandidate: string | null }
+  >;
+  response: string;
+  summary: ReasoningDebugArtifactSummary;
 }
 
 interface ReasoningDebugArtifactTestHooks {
@@ -33,6 +53,28 @@ interface ReasoningDebugArtifactTestHooks {
 
 function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function renderReadableMessages(messages: ChatMessage[]): string {
+  return `${messages
+    .map((message) => `[role: ${message.role}]\n${message.content}`)
+    .join("\n\n")}\n`;
+}
+
+function renderPromptMarkdown(turn: ReasoningDebugTurn): string {
+  if (turn.promptMessages) {
+    return renderReadableMessages(turn.promptMessages);
+  }
+
+  return `${turn.promptText ?? ""}\n`;
+}
+
+function getPromptJson(turn: ReasoningDebugTurn): unknown {
+  if (turn.promptMessages) {
+    return turn.promptMessages;
+  }
+
+  return { promptText: turn.promptText ?? "" };
 }
 
 function isWithinDirectory(rootDir: string, candidatePath: string): boolean {
@@ -44,6 +86,68 @@ async function writeLatestReasoningDirectory(
   baseDir: string,
   payload: ReasoningDebugArtifactPayload,
   testHooks?: ReasoningDebugArtifactTestHooks,
+): Promise<void> {
+  return writeLatestReasoningFiles(baseDir, testHooks, async (versionDir) => {
+    await Promise.all([
+      writeFile(join(versionDir, "request.json"), formatJson(payload.request), "utf8"),
+      writeFile(join(versionDir, "decomposition.json"), formatJson(payload.decomposition), "utf8"),
+      writeFile(join(versionDir, "recall-rounds.json"), formatJson(payload.recallRounds), "utf8"),
+      writeFile(join(versionDir, "final-prompt.md"), payload.finalPrompt, "utf8"),
+      writeFile(join(versionDir, "response.txt"), payload.response, "utf8"),
+      writeFile(join(versionDir, "summary.json"), formatJson(payload.summary), "utf8"),
+    ]);
+  });
+}
+
+async function writeLatestRuntimeTraceDirectory(
+  baseDir: string,
+  payload: ReasoningRuntimeDebugArtifactPayload,
+  testHooks?: ReasoningDebugArtifactTestHooks,
+): Promise<void> {
+  return writeLatestReasoningFiles(baseDir, testHooks, async (versionDir) => {
+    const writes = payload.turns.flatMap((turn) => {
+      const entries = [
+        writeFile(join(versionDir, `${turn.turnId}-prompt.md`), renderPromptMarkdown(turn), "utf8"),
+        writeFile(
+          join(versionDir, `${turn.turnId}-prompt.json`),
+          formatJson(getPromptJson(turn)),
+          "utf8",
+        ),
+        writeFile(join(versionDir, `${turn.turnId}-response.txt`), turn.responseText, "utf8"),
+      ];
+
+      if (turn.responseJson !== undefined) {
+        entries.push(
+          writeFile(
+            join(versionDir, `${turn.turnId}-response.json`),
+            formatJson(turn.responseJson),
+            "utf8",
+          ),
+        );
+      }
+
+      return entries;
+    });
+
+    await Promise.all([
+      ...writes,
+      writeFile(join(versionDir, "final-messages.json"), formatJson(payload.finalMessages), "utf8"),
+      writeFile(
+        join(versionDir, "final-prompt.md"),
+        renderReadableMessages(payload.finalMessages),
+        "utf8",
+      ),
+      writeFile(join(versionDir, "recall-rounds.json"), formatJson(payload.recallRounds), "utf8"),
+      writeFile(join(versionDir, "response.txt"), payload.response, "utf8"),
+      writeFile(join(versionDir, "summary.json"), formatJson(payload.summary), "utf8"),
+    ]);
+  });
+}
+
+async function writeLatestReasoningFiles(
+  baseDir: string,
+  testHooks: ReasoningDebugArtifactTestHooks | undefined,
+  writeVersionFiles: (versionDir: string) => Promise<void>,
 ): Promise<void> {
   const debugDir = join(baseDir, "debug");
   const versionsDir = join(debugDir, ".reasoning-last-versions");
@@ -62,14 +166,7 @@ async function writeLatestReasoningDirectory(
   await rm(legacyBackupDir, { recursive: true, force: true });
   await mkdir(versionDir, { recursive: true });
 
-  await Promise.all([
-    writeFile(join(versionDir, "request.json"), formatJson(payload.request), "utf8"),
-    writeFile(join(versionDir, "decomposition.json"), formatJson(payload.decomposition), "utf8"),
-    writeFile(join(versionDir, "recall-rounds.json"), formatJson(payload.recallRounds), "utf8"),
-    writeFile(join(versionDir, "final-prompt.md"), payload.finalPrompt, "utf8"),
-    writeFile(join(versionDir, "response.txt"), payload.response, "utf8"),
-    writeFile(join(versionDir, "summary.json"), formatJson(payload.summary), "utf8"),
-  ]);
+  await writeVersionFiles(versionDir);
 
   try {
     const latestStat = await lstat(latestDir);
@@ -125,6 +222,9 @@ export function createLatestReasoningDebugArtifactWriter(options: {
   return {
     async writeLatest(payload) {
       await writeLatestReasoningDirectory(options.rootDir, payload, options.testHooks);
+    },
+    async writeLatestRuntimeTrace(payload) {
+      await writeLatestRuntimeTraceDirectory(options.rootDir, payload, options.testHooks);
     },
   };
 }

@@ -1,3 +1,6 @@
+import { access, lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AvatarInferenceRuntime } from "../../src/avatar/runtime.js";
 import type { AvatarInferenceRequest } from "../../src/avatar/model.js";
@@ -6,6 +9,7 @@ import { readProfileSummary } from "../../src/routes/profile.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatResponse } from "../../src/llm/client.js";
+import { createLatestReasoningDebugArtifactWriter } from "../../src/reasoning/debug-artifact.js";
 import type { SoulAnchor } from "../../src/types.js";
 
 vi.mock("../../src/recall/goal-based-recall.js", () => ({
@@ -126,7 +130,11 @@ function createOwnerConn(anchorCount: number): OwnerConn {
         }),
       })),
     },
-    raw: {},
+    raw: {
+      prepare: vi.fn(() => ({
+        all: vi.fn(() => anchors.map((anchor) => ({ id: anchor.id, distance: 0.1 }))),
+      })),
+    },
   } as unknown as OwnerConn;
 }
 
@@ -208,6 +216,10 @@ function createBuildMessagesRequest(
     contentParts: [],
     stream: false,
   };
+}
+
+async function readJson<T>(filePath: string): Promise<T> {
+  return JSON.parse(await readFile(filePath, "utf8")) as T;
 }
 
 describe("AvatarInferenceRuntime", () => {
@@ -567,5 +579,299 @@ describe("AvatarInferenceRuntime", () => {
     expect(request.instructionSegments.recall).toContain("本轮充分性判断未能稳定完成");
     expect(request.instructionSegments.recall).not.toContain("这条链路不该泄漏");
     expect(request.instructionSegments.recall).not.toContain("这条链路也不该泄漏");
+  });
+
+  it("writes turn-based runtime debug artifacts for decomposition sufficiency and final generation", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-artifact-"));
+
+    try {
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("我最近怎么样？")))
+        .mockResolvedValueOnce(
+          createChatResponse(
+            createAssessmentResponse({
+              sufficient: false,
+              goalStatus: [
+                {
+                  goalId: "domain_answer",
+                  sufficient: false,
+                  known: ["已有部分信息"],
+                  missing: ["缺少更近期更新"],
+                  knownAnchorIds: ["anchor-1"],
+                  missingKeys: ["recent-position"],
+                },
+              ],
+              nextQuery: "补充查询",
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("你好，我是分身"));
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "我最近怎么样？" }],
+        stream: false,
+      });
+      await runtime.run(request);
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect((await readdir(latestDir)).sort()).toEqual([
+        "01-decomposition-prompt.json",
+        "01-decomposition-prompt.md",
+        "01-decomposition-response.json",
+        "01-decomposition-response.txt",
+        "02-sufficiency-round-1-prompt.json",
+        "02-sufficiency-round-1-prompt.md",
+        "02-sufficiency-round-1-response.json",
+        "02-sufficiency-round-1-response.txt",
+        "02-sufficiency-round-2-prompt.json",
+        "02-sufficiency-round-2-prompt.md",
+        "02-sufficiency-round-2-response.json",
+        "02-sufficiency-round-2-response.txt",
+        "03-final-generation-prompt.json",
+        "03-final-generation-prompt.md",
+        "03-final-generation-response.txt",
+        "final-messages.json",
+        "final-prompt.md",
+        "recall-rounds.json",
+        "response.txt",
+        "summary.json",
+      ]);
+      expect(await readFile(join(latestDir, "03-final-generation-prompt.md"), "utf8")).toContain(
+        "[role: system]",
+      );
+      expect(await readFile(join(latestDir, "final-prompt.md"), "utf8")).toContain("[role: user]");
+      expect(await readFile(join(latestDir, "03-final-generation-response.txt"), "utf8")).toBe(
+        "你好，我是分身",
+      );
+      expect(await readJson(join(latestDir, "final-messages.json"))).toEqual(
+        runtime.buildMessages(request),
+      );
+      expect(await readJson(join(latestDir, "summary.json"))).toEqual(
+        expect.objectContaining({
+          userQuery: "我最近怎么样？",
+          rounds: 2,
+        }),
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps successful non-stream inference even when runtime artifact write fails", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-artifact-"));
+
+    try {
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      const stableClient = createChatClient();
+      vi.mocked(stableClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("第一次问题")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("第一次回答"));
+      const stableRuntime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient: stableClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const firstRequest = await stableRuntime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "第一次问题" }],
+        stream: false,
+      });
+      await stableRuntime.run(firstRequest);
+
+      const failingClient = createChatClient();
+      vi.mocked(failingClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("第二次问题")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+        .mockResolvedValueOnce(createChatResponse("第二次回答"));
+      const failingRuntime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient: failingClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({
+          rootDir: tempRoot,
+          testHooks: {
+            beforeSwap() {
+              throw new Error("swap failed");
+            },
+          },
+        }),
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const secondRequest = await failingRuntime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "第二次问题" }],
+        stream: false,
+      });
+
+      const response = await failingRuntime.run(secondRequest);
+
+      expect(response).toEqual({
+        message: { role: "assistant", content: "第二次回答" },
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect(await readJson(join(latestDir, "summary.json"))).toEqual(
+        expect.objectContaining({ userQuery: "第一次问题" }),
+      );
+      expect(await readFile(join(latestDir, "response.txt"), "utf8")).toBe("第一次回答");
+      await expect(access(join(latestDir, "final-messages.json"))).resolves.toBeUndefined();
+      await expect(
+        access(join(latestDir, "03-final-generation-prompt.md")),
+      ).resolves.toBeUndefined();
+      await expect(
+        writeFile(join(tempRoot, "debug", "can-still-write.txt"), "ok", "utf8"),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes matching runtime trace artifacts for stream completion", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-stream-artifact-"));
+
+    try {
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("流式问题")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+      vi.mocked(chatClient.chatStream).mockImplementation(async function* () {
+        yield "你好";
+        yield "，我是流式分身";
+      });
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "流式问题" }],
+        stream: true,
+      });
+      const events: unknown[] = [];
+      for await (const event of runtime.runStream(request)) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        { type: "message_start", message: { role: "assistant" } },
+        { type: "text_delta", text: "你好" },
+        { type: "text_delta", text: "，我是流式分身" },
+        { type: "message_end", finishReason: "stop" },
+      ]);
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await readdir(latestDir)).sort()).toEqual([
+        "01-decomposition-prompt.json",
+        "01-decomposition-prompt.md",
+        "01-decomposition-response.json",
+        "01-decomposition-response.txt",
+        "02-sufficiency-round-1-prompt.json",
+        "02-sufficiency-round-1-prompt.md",
+        "02-sufficiency-round-1-response.json",
+        "02-sufficiency-round-1-response.txt",
+        "03-final-generation-prompt.json",
+        "03-final-generation-prompt.md",
+        "03-final-generation-response.txt",
+        "final-messages.json",
+        "final-prompt.md",
+        "recall-rounds.json",
+        "response.txt",
+        "summary.json",
+      ]);
+      expect(await readFile(join(latestDir, "03-final-generation-response.txt"), "utf8")).toBe(
+        "你好，我是流式分身",
+      );
+      expect(await readJson(join(latestDir, "final-messages.json"))).toEqual(
+        runtime.buildMessages(request),
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps successful stream inference even when runtime artifact write fails", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-runtime-stream-artifact-"));
+
+    try {
+      const chatClient = createChatClient();
+      const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+        typeof import("../../src/recall/goal-based-recall.js")
+      >("../../src/recall/goal-based-recall.js");
+      mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+      vi.mocked(chatClient.chat)
+        .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("流式失败写盘")))
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+      vi.mocked(chatClient.chatStream).mockImplementation(async function* () {
+        yield "流式";
+        yield "成功";
+      });
+
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({
+          rootDir: tempRoot,
+          testHooks: {
+            beforeSwap() {
+              throw new Error("swap failed");
+            },
+          },
+        }),
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "流式失败写盘" }],
+        stream: true,
+      });
+
+      const events: unknown[] = [];
+      for await (const event of runtime.runStream(request)) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        { type: "message_start", message: { role: "assistant" } },
+        { type: "text_delta", text: "流式" },
+        { type: "text_delta", text: "成功" },
+        { type: "message_end", finishReason: "stop" },
+      ]);
+      await expect(access(join(tempRoot, "debug", "reasoning-last"))).rejects.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
