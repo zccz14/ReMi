@@ -231,7 +231,7 @@ describe("anchor routes", () => {
     expect(json.data.asset.answer).toBeNull();
   });
 
-  it("DELETE /api/:pubKey/anchors/:id → 204", async () => {
+  it("DELETE /api/:pubKey/anchors/:id → 405 legacy delete path disabled", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
@@ -246,10 +246,14 @@ describe("anchor routes", () => {
     const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
       method: "DELETE",
     });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(405);
+
+    const listRes = await app.request(`/api/${PUB_KEY}/anchors`);
+    const listJson = await listRes.json();
+    expect(listJson.data.items).toEqual([expect.objectContaining({ id: created.asset.id })]);
   });
 
-  it("DELETE /api/:pubKey/anchors → 204 clears all", async () => {
+  it("DELETE /api/:pubKey/anchors → 405 legacy delete path disabled", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const conn = connMgr.getConnection(PUB_KEY);
     const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
@@ -261,12 +265,12 @@ describe("anchor routes", () => {
       requestId: "seed-clear-anchor",
     });
     const res = await app.request(`/api/${PUB_KEY}/anchors`, { method: "DELETE" });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(405);
 
-    // Confirm cleared
+    // Confirm untouched
     const listRes = await app.request(`/api/${PUB_KEY}/anchors`);
     const json = await listRes.json();
-    expect(json.data.total).toBe(0);
+    expect(json.data.total).toBe(1);
   });
 
   it("visitor should be rejected with 403", async () => {

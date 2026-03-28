@@ -202,11 +202,15 @@ anchorRoutes.delete("/:pubKey/anchors/:id", (c) => {
 
   const pubKey = c.req.param("pubKey");
   const id = c.req.param("id");
-  const conn = c.get("connMgr").getConnection(pubKey);
-  conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, id)).run();
 
-  log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor deleted");
-  return c.body(null, 204);
+  log.warn({ soul: shortKey(pubKey), anchorId: id }, "Legacy single-anchor delete path disabled");
+  return c.json(
+    {
+      error: "METHOD_NOT_ALLOWED",
+      message: "Legacy delete is disabled; use the approval gateway instead",
+    },
+    405,
+  );
 });
 
 // DELETE /:pubKey/anchors (clear all)
@@ -215,11 +219,13 @@ anchorRoutes.delete("/:pubKey/anchors", (c) => {
   if (forbidden) return forbidden;
 
   const pubKey = c.req.param("pubKey");
-  const conn = c.get("connMgr").getConnection(pubKey);
-  conn.drizzle.delete(soulAnchors).run();
-  // Clear vector table
-  conn.raw.exec("DELETE FROM soul_anchors_vec");
 
-  log.warn({ soul: shortKey(pubKey) }, "All anchors cleared");
-  return c.body(null, 204);
+  log.warn({ soul: shortKey(pubKey) }, "Legacy bulk anchor delete path disabled");
+  return c.json(
+    {
+      error: "METHOD_NOT_ALLOWED",
+      message: "Legacy bulk delete is disabled; use the approval gateway instead",
+    },
+    405,
+  );
 });
