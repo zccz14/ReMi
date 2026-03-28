@@ -147,11 +147,11 @@ describe("goalBasedRecall", () => {
         strategy: "full-injection",
         rounds: 0,
         sufficient: false,
-        stoppedBecause: RECALL_STOP_REASONS.NO_NEW_ANCHORS,
         goalStatus: expect.any(Array),
         roundSummaries: [],
       }),
     );
+    expect(result.stoppedBecause).toBeUndefined();
     expect(result.goalStatus).toEqual([
       expect.objectContaining({
         goalId: "identity_style",

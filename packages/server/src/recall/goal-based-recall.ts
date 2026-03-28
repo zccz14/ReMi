@@ -76,7 +76,7 @@ export interface GoalBasedRecallResult {
   sufficient: boolean;
   strategy: "full-injection" | "recall-loop";
   goalStatus: GoalStatus[];
-  stoppedBecause: RecallStopReason;
+  stoppedBecause?: RecallStopReason;
   roundSummaries: RecallRoundSummary[];
 }
 
@@ -343,9 +343,7 @@ export async function goalBasedRecall(
       sufficient,
       strategy: "full-injection",
       goalStatus,
-      stoppedBecause: sufficient
-        ? RECALL_STOP_REASONS.SUFFICIENT
-        : RECALL_STOP_REASONS.NO_NEW_ANCHORS,
+      stoppedBecause: sufficient ? RECALL_STOP_REASONS.SUFFICIENT : undefined,
       roundSummaries: [],
     };
   }
