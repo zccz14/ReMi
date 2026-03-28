@@ -116,6 +116,22 @@ function assertProtocolInvariants(events: { type: string; data?: unknown }[]) {
 const mockExtractAnchors = vi.mocked(extractAnchors);
 const mockGoalBasedRecall = vi.mocked(goalBasedRecall);
 const mockDetectContradictions = vi.mocked(detectContradictions);
+type GoalBasedRecallCompatResult = Awaited<ReturnType<typeof goalBasedRecall>> & {
+  goalStatus: {
+    goalId: string;
+    sufficient: boolean;
+    knownAnchorIds: string[];
+    missingKeys: string[];
+  }[];
+  stoppedBecause: string;
+  roundSummaries: {
+    round: number;
+    query: string;
+    newAnchorIds: string[];
+    allAnchorIds: string[];
+    normalizedGoalStatus: unknown[];
+  }[];
+};
 
 describe("InterviewEngine", () => {
   const env = { ...process.env };
@@ -466,5 +482,55 @@ describe("InterviewEngine", () => {
     await engine.handleMessage("hello", emitter);
 
     expect(events.some((e) => e.type === "thinking")).toBe(false);
+  });
+
+  it("message flow ignores extra shared recall runtime fields", async () => {
+    process.env.REMI_CONVERSATION_FLOW_V2 = "full";
+    const recallResult: GoalBasedRecallCompatResult = {
+      anchors: [
+        {
+          id: "anchor-1",
+          question: "偏好",
+          answer: "喜欢简洁回答",
+          source: "interview",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+      narratives: ["已覆盖回答风格目标"],
+      rounds: 1,
+      sufficient: true,
+      strategy: "recall-loop",
+      goalStatus: [
+        {
+          goalId: "style",
+          sufficient: true,
+          knownAnchorIds: ["anchor-1"],
+          missingKeys: [],
+        },
+      ],
+      stoppedBecause: "sufficient",
+      roundSummaries: [
+        {
+          round: 1,
+          query: "回答风格",
+          newAnchorIds: ["anchor-1"],
+          allAnchorIds: ["anchor-1"],
+          normalizedGoalStatus: [],
+        },
+      ],
+    };
+    mockGoalBasedRecall.mockResolvedValue(recallResult);
+
+    const deps = createMockDeps();
+    const engine = new InterviewEngine(deps);
+    const { events, emitter } = createRecorderEmitter();
+
+    await engine.handleMessage("hello", emitter);
+
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(events.some((e) => e.type === "token")).toBe(true);
+    assertProtocolInvariants(events);
   });
 });
