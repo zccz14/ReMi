@@ -8,7 +8,11 @@ describe("DiscoverPage", () => {
 
     const link = screen.getByRole("link", { name: /阅读|Reading/i });
     expect(link).toHaveAttribute("href", "/read");
+    expect(
+      screen.getByText(
+        /发现其他用户，浏览社区，也发现自己|Discover users, browse community, and discover yourself/i,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/把一段长文本交给 AI|Give AI a long text/i)).toBeInTheDocument();
-    expect(screen.getByText(/发现自己|Discover yourself/i)).toBeInTheDocument();
   });
 });

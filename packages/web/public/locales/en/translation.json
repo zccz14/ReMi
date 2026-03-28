@@ -17,8 +17,7 @@
   },
   "discover": {
     "title": "Discover",
-    "subtitle": "Discover users, browse community",
-    "selfSubtitle": "Discover yourself",
+    "subtitle": "Discover users, browse community, and discover yourself",
     "comingSoon": "Coming Soon",
     "reading": {
       "title": "Reading",
@@ -175,6 +174,7 @@
     "charCount": "Characters: {{count}}",
     "start": "Start reading",
     "starting": "Thinking... AI is reading",
+    "nextRoundThinking": "Thinking... AI is thinking about what to extract next",
     "shortHint": "This text is a bit short. It may not yield stable soul anchors, but you can still try.",
     "tooLong": "This text is too long. To keep the reading flow reliable, shorten it to 50000 characters or fewer.",
     "progress": "Answered {{answered}} / {{total}}",

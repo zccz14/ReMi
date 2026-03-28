@@ -21,7 +21,6 @@ export function DiscoverPage() {
 
       <div className="p-4 pt-2 space-y-4">
         <p className={cn("text-sm text-muted-foreground")}>{t("discover.subtitle")}</p>
-        <p className={cn("text-sm text-muted-foreground")}>{t("discover.selfSubtitle")}</p>
         <div className="rounded-xl bg-card ring-1 ring-foreground/10 overflow-hidden">
           {entries.map((entry) => (
             <Link

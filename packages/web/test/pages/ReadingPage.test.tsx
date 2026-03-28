@@ -210,6 +210,55 @@ describe("ReadingPage", () => {
     }
   });
 
+  it("shows a thinking hint while submitting a round summary", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(READING_SESSION_STORAGE_KEY, JSON.stringify(makeSession()));
+    const deferred: {
+      resolve?: (value: { data: { coveredTopics: string[]; missingTopics: string[] } }) => void;
+    } = {};
+    const post = vi.fn((path: string) => {
+      if (path.endsWith("/reading/summarize")) {
+        return new Promise<{ data: { coveredTopics: string[]; missingTopics: string[] } }>(
+          (resolve) => {
+            deferred.resolve = resolve;
+          },
+        );
+      }
+
+      if (path.endsWith("/anchors")) {
+        return Promise.resolve({ data: { ok: true } });
+      }
+
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const apiClient = {
+      ownerPath: (path: string) => `/api/mock-public-key${path}`,
+      post,
+      get: vi.fn(),
+      put: vi.fn(),
+      del: vi.fn(),
+      streamPost: vi.fn(),
+    } as unknown as ApiClient;
+
+    renderWithProviders(<ReadingPage />, {
+      route: "/read",
+      authState: { apiClient },
+    });
+
+    await answerAllVisibleItems(user);
+    await user.click(screen.getByRole("button", { name: /提交本轮|Submit round/i }));
+
+    expect(
+      screen.getByRole("button", {
+        name: /AI 正在思考下一轮可以提取什么|AI is thinking about what to extract next/i,
+      }),
+    ).toBeDisabled();
+
+    deferred.resolve?.({
+      data: { coveredTopics: ["价值观判断"], missingTopics: ["冲突处理", "长期关系", "边界条件"] },
+    });
+  });
+
   it("keeps start disabled for whitespace-only input", () => {
     renderWithProviders(<ReadingPage />, { route: "/read" });
 
@@ -314,6 +363,49 @@ describe("ReadingPage", () => {
 
     await user.click(suggestionButtons[0]);
     await user.type(screen.getByLabelText(/补充关注点|Add focus/i), "如何处理长期冲突");
+  });
+
+  it("shows a thinking hint while preparing the next round", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      READING_SESSION_STORAGE_KEY,
+      JSON.stringify(seedSummaryStageSession()),
+    );
+    const deferred: {
+      resolve?: (value: { data: { items: never[]; candidatePool: never[] } }) => void;
+    } = {};
+    const post = vi.fn((path: string) => {
+      if (path.endsWith("/reading/next-round")) {
+        return new Promise<{ data: { items: never[]; candidatePool: never[] } }>((resolve) => {
+          deferred.resolve = resolve;
+        });
+      }
+
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const apiClient = {
+      ownerPath: (path: string) => `/api/mock-public-key${path}`,
+      post,
+      get: vi.fn(),
+      put: vi.fn(),
+      del: vi.fn(),
+      streamPost: vi.fn(),
+    } as unknown as ApiClient;
+
+    renderWithProviders(<ReadingPage />, {
+      route: "/read",
+      authState: { apiClient },
+    });
+
+    await user.click(screen.getByRole("button", { name: /继续挖掘|Keep digging/i }));
+
+    expect(
+      screen.getByRole("button", {
+        name: /AI 正在思考下一轮可以提取什么|AI is thinking about what to extract next/i,
+      }),
+    ).toBeDisabled();
+
+    deferred.resolve?.({ data: { items: [], candidatePool: [] } });
   });
 
   it("closes the session when the user chooses already enough", async () => {

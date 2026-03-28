@@ -160,7 +160,7 @@ export function ReadingPage() {
                     });
                   }}
                 >
-                  {t("reading.keepDigging")}
+                  {reading.isContinuing ? t("reading.nextRoundThinking") : t("reading.keepDigging")}
                 </Button>
                 <Button
                   className="flex-1"
@@ -295,7 +295,7 @@ export function ReadingPage() {
               });
             }}
           >
-            {t("reading.submitRound")}
+            {reading.isSubmitting ? t("reading.nextRoundThinking") : t("reading.submitRound")}
           </Button>
           {!reading.progress.complete ? (
             <p className="text-xs text-muted-foreground">{t("reading.submitHint")}</p>
