@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AvatarInferenceRuntime } from "../../src/avatar/runtime.js";
+import type { AvatarInferenceRequest } from "../../src/avatar/model.js";
 import { goalBasedRecall } from "../../src/recall/goal-based-recall.js";
 import { readProfileSummary } from "../../src/routes/profile.js";
 import type { ChatClient } from "../../src/llm/client.js";
@@ -48,8 +49,8 @@ function createRecallCompatResult(): GoalBasedRecallCompatResult {
         question: "沟通边界",
         answer: "先确认约束再给建议",
         source: "interview",
-        createdAt: 1,
-        updatedAt: 1,
+        createdAt: Date.parse("2026-03-26T12:00:00.000Z"),
+        updatedAt: Date.parse("2026-03-27T21:13:08.000Z"),
       },
     ],
     narratives: ["已命中边界锚点"],
@@ -193,6 +194,22 @@ function createChatClient(): ChatClient {
   };
 }
 
+function createBuildMessagesRequest(
+  conversationTurns: AvatarInferenceRequest["conversationTurns"],
+): AvatarInferenceRequest {
+  return {
+    avatarTarget: { publicKey: "owner-pubkey" },
+    instructionSegments: {
+      platform: "platform",
+      avatar: "avatar",
+      recall: "recall tail",
+    },
+    conversationTurns,
+    contentParts: [],
+    stream: false,
+  };
+}
+
 describe("AvatarInferenceRuntime", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -231,6 +248,93 @@ describe("AvatarInferenceRuntime", () => {
     expect(request.instructionSegments.recall).not.toContain("stoppedBecause");
     expect(request.instructionSegments.recall).not.toContain("goalStatus");
     expect(request.instructionSegments.avatar).toContain("display name: ReMi");
+  });
+
+  it("keeps a mid-conversation system turn in place for user system assistant ordering", () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient: createChatClient(),
+      embeddingClient: null,
+    });
+
+    const messages = runtime.buildMessages(
+      createBuildMessagesRequest([
+        { role: "user", content: "first user" },
+        { role: "system", content: "late system" },
+        { role: "assistant", content: "assistant reply" },
+      ]),
+    );
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "system",
+      "assistant",
+      "assistant",
+    ]);
+    expect(messages[1]?.content).toBe("first user");
+    expect(messages[2]?.content).toBe("late system");
+    expect(messages[3]?.content).toBe("assistant reply");
+    expect(messages[4]?.content).toBe("recall tail");
+  });
+
+  it("only folds leading contiguous system turns and preserves later system positions", () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient: createChatClient(),
+      embeddingClient: null,
+    });
+
+    const messages = runtime.buildMessages(
+      createBuildMessagesRequest([
+        { role: "system", content: "caller system 1" },
+        { role: "system", content: "caller system 2" },
+        { role: "user", content: "first user" },
+        { role: "system", content: "late system 3" },
+        { role: "assistant", content: "assistant reply" },
+        { role: "system", content: "late system 4" },
+      ]),
+    );
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "system",
+      "assistant",
+      "system",
+      "assistant",
+    ]);
+    expect(messages[0]?.content).toContain("caller system 1");
+    expect(messages[0]?.content).toContain("caller system 2");
+    expect(messages[0]?.content).not.toContain("late system 3");
+    expect(messages[0]?.content).not.toContain("late system 4");
+    expect(messages[2]?.content).toBe("late system 3");
+    expect(messages[4]?.content).toBe("late system 4");
+    expect(messages[5]?.content).toBe("recall tail");
+  });
+
+  it("keeps recall as final assistant message when there is no caller system message", () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(0),
+      chatClient: createChatClient(),
+      embeddingClient: null,
+    });
+
+    const messages = runtime.buildMessages(
+      createBuildMessagesRequest([
+        { role: "user", content: "first user" },
+        { role: "assistant", content: "assistant reply" },
+      ]),
+    );
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "assistant",
+    ]);
+    expect(messages[0]?.content).not.toContain("Caller system supplement");
+    expect(messages[3]?.content).toBe("recall tail");
   });
 
   it("falls back to default goals when decomposition JSON is invalid", async () => {
@@ -359,6 +463,12 @@ describe("AvatarInferenceRuntime", () => {
 
     expect(request.instructionSegments.recall).toContain("缺少更近期更新");
     expect(request.instructionSegments.recall).toContain("没有找到新的可用锚点");
+    expect(request.instructionSegments.recall).toContain("## Evidence");
+    expect(request.instructionSegments.recall).toContain("UpdatedAt: 2026-03-27T21:13:08.000Z");
+    expect(request.instructionSegments.recall).toContain("## Missing Information");
+    expect(request.instructionSegments.recall).toContain("## Non-evidence Reasoning");
+    expect(request.instructionSegments.recall).toContain("GoalId: domain_answer");
+    expect(request.instructionSegments.recall).toContain("Boundary: 没有找到新的可用锚点。");
     expect(request.instructionSegments.recall).not.toContain("StoppedBecause");
     expect(request.instructionSegments.recall).not.toContain("recent-position");
     expect(request.instructionSegments.recall).not.toContain("MissingKeys");
@@ -406,6 +516,8 @@ describe("AvatarInferenceRuntime", () => {
 
     expect(request.instructionSegments.recall).toContain("相关信息的时间有效性还不够确定");
     expect(request.instructionSegments.recall).toContain("本轮充分性判断未能稳定完成");
+    expect(request.instructionSegments.recall).toContain("GoalId: domain_answer");
+    expect(request.instructionSegments.recall).toContain("Boundary: 本轮充分性判断未能稳定完成。");
     expect(request.instructionSegments.recall).not.toContain("time-validity-uncertain");
     expect(request.instructionSegments.recall).not.toContain("parse-failure");
   });

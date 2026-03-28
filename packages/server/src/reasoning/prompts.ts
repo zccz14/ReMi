@@ -45,6 +45,10 @@ function formatIsoTime(timestamp: number): string {
   return new Date(timestamp).toISOString();
 }
 
+function renderReadableList(items?: string[]): string {
+  return items?.length ? items.join("；") : "(none)";
+}
+
 function renderAnchorEvidence(anchor: SoulAnchor): string {
   return `- ID: ${anchor.id}\n  Q: ${anchor.question}\n  A: ${anchor.answer ?? "(未回答)"}\n  UpdatedAt: ${formatIsoTime(anchor.updatedAt)}`;
 }
@@ -54,13 +58,28 @@ function renderGoal(goal: ReasoningAnswerGoal): string {
 }
 
 function renderGoalStatus(status: ReasoningGoalStatus): string {
-  const known = status.known?.length ? status.known.join("；") : "(none)";
-  const missing = status.missing?.length ? status.missing.join("；") : "(none)";
+  const known = renderReadableList(status.known);
+  const missing = renderReadableList(status.missing);
   const knownAnchorIds = status.knownAnchorIds?.length
     ? status.knownAnchorIds.join(", ")
     : "(none)";
   const missingKeys = status.missingKeys?.length ? status.missingKeys.join(", ") : "(none)";
   return `- GoalId: ${status.goalId}\n  Sufficient: ${status.sufficient ? "true" : "false"}\n  Known: ${known}\n  Missing: ${missing}\n  KnownAnchorIds: ${knownAnchorIds}\n  MissingKeys: ${missingKeys}`;
+}
+
+export function renderRuntimeGoalStatus(status: ReasoningGoalStatus): string {
+  return [
+    `- GoalId: ${status.goalId}`,
+    `  Sufficient: ${status.sufficient ? "yes" : "no"}`,
+    `  Known: ${renderReadableList(status.known)}`,
+    `  Missing: ${renderReadableList(status.missing)}`,
+  ].join("\n");
+}
+
+export function renderReadableMessages(messages: ChatMessage[]): string {
+  return messages
+    .map((message, index) => `## Message ${index + 1}\nRole: ${message.role}\n\n${message.content}`)
+    .join("\n\n");
 }
 
 export function buildReasoningDecompositionPrompt(

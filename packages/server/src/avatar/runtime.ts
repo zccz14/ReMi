@@ -207,6 +207,7 @@ export class AvatarInferenceRuntime {
           anchors: recall.anchors,
           missingInformation,
           stoppedBecause: recall.stoppedBecause,
+          goalStatus: recall.goalStatus,
         }),
       },
       conversationTurns: input.conversationTurns,

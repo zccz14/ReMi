@@ -634,36 +634,48 @@ describe("avatar openapi integration", () => {
         model: `ReMi-${ownerPubKey}`,
         messages: [
           { role: "system", content: "Caller system context" },
-          { role: "assistant", content: "Earlier answer" },
+          { role: "system", content: "Caller system context 2" },
           { role: "user", content: "caller message" },
+          { role: "system", content: "late caller system" },
+          { role: "assistant", content: "Earlier answer" },
         ],
         stream: false,
       }),
     });
 
     expect(res.status).toBe(200);
-    expect(recording.recordedCalls).toHaveLength(1);
-    expect(recording.recordedCalls[0]?.map((message) => message.role)).toEqual([
+    const finalMessages = recording.recordedCalls[recording.recordedCalls.length - 1];
+    expect(finalMessages).toBeDefined();
+    expect(finalMessages?.map((message) => message.role)).toEqual([
+      "system",
+      "user",
       "system",
       "assistant",
-      "user",
       "assistant",
     ]);
-    expect(recording.recordedCalls[0]?.map((message) => message.content)).toEqual([
+    expect(finalMessages?.map((message) => message.content)).toEqual([
       expect.stringContaining("ReMi avatar inference runtime."),
-      "Earlier answer",
       "caller message",
+      "late caller system",
+      "Earlier answer",
       expect.stringContaining("Favorite workflow"),
     ]);
+    const recallTail = finalMessages?.[finalMessages.length - 1]?.content;
+    expect(recallTail).toContain("## Evidence");
+    expect(recallTail).toContain("UpdatedAt:");
+    expect(recallTail).toContain("## Missing Information");
+    expect(recallTail).toContain("## Non-evidence Reasoning");
 
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain(ownerPubKey);
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain("Avatar identity:");
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain("Caller system context");
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain(
+    expect(finalMessages?.[0]?.content).toContain(ownerPubKey);
+    expect(finalMessages?.[0]?.content).toContain("Avatar identity:");
+    expect(finalMessages?.[0]?.content).toContain("Caller system context");
+    expect(finalMessages?.[0]?.content).toContain("Caller system context 2");
+    expect(finalMessages?.[0]?.content).not.toContain("late caller system");
+    expect(finalMessages?.[0]?.content).toContain(
       "Do not jump into reasoning before understanding the caller's environment",
     );
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain("minimum necessary questions");
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain("existing context");
-    expect(recording.recordedCalls[0]?.[0]?.content).toContain("state assumptions explicitly");
+    expect(finalMessages?.[0]?.content).toContain("minimum necessary questions");
+    expect(finalMessages?.[0]?.content).toContain("existing context");
+    expect(finalMessages?.[0]?.content).toContain("state assumptions explicitly");
   });
 });

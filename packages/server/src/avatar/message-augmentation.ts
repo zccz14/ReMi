@@ -1,4 +1,9 @@
 import type { ChatMessage } from "../llm/client.js";
+import {
+  renderRuntimeGoalStatus,
+  renderReadableMessages,
+  type ReasoningGoalStatus,
+} from "../reasoning/prompts.js";
 import type { SoulAnchor } from "../types.js";
 
 const MISSING_INFORMATION_SUMMARIES: Record<string, string> = {
@@ -54,10 +59,33 @@ export function buildAvatarIdentitySegment(input: {
   ].join("\n");
 }
 
+export function buildCallerSystemSegment(callerMessages: ChatMessage[]) {
+  const callerSystem = callerMessages
+    .slice(
+      0,
+      callerMessages.findIndex((message) => message.role !== "system") === -1
+        ? callerMessages.length
+        : callerMessages.findIndex((message) => message.role !== "system"),
+    )
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!callerSystem) {
+    return "";
+  }
+
+  return [
+    "Caller system supplement (lower priority than platform and avatar policy):",
+    callerSystem,
+  ].join("\n");
+}
+
 export function buildRecallSegment(input: {
   anchors: SoulAnchor[];
   missingInformation?: string[];
   stoppedBecause?: string;
+  goalStatus?: ReasoningGoalStatus[];
 }) {
   const evidenceLines = input.anchors.map(
     (anchor) =>
@@ -70,9 +98,14 @@ export function buildRecallSegment(input: {
   const missingLines = input.missingInformation?.length
     ? missingInformation.map((item) => `- ${item}`).join("\n")
     : "- (none)";
-  const reasoningLines = input.stoppedBecause
-    ? [`- ${STOP_REASON_SUMMARIES[input.stoppedBecause] ?? "本轮召回在边界条件下提前结束。"}`]
-    : ["- (none)"];
+  const reasoningLines = [
+    ...(input.goalStatus?.map((status) => renderRuntimeGoalStatus(status)) ?? []),
+    ...(input.stoppedBecause
+      ? [
+          `- Boundary: ${STOP_REASON_SUMMARIES[input.stoppedBecause] ?? "本轮召回在边界条件下提前结束。"}`,
+        ]
+      : []),
+  ];
 
   return [
     "Supplementary recalled anchors (lower priority than platform, avatar, and caller context):",
@@ -81,8 +114,12 @@ export function buildRecallSegment(input: {
     "## Missing Information",
     missingLines,
     "## Non-evidence Reasoning",
-    reasoningLines.join("\n"),
+    reasoningLines.join("\n\n") || "- (none)",
   ].join("\n\n");
+}
+
+export function renderDownstreamMessages(messages: ChatMessage[]) {
+  return renderReadableMessages(messages);
 }
 
 export function buildDownstreamMessages(input: {
@@ -91,12 +128,11 @@ export function buildDownstreamMessages(input: {
   callerMessages: ChatMessage[];
   recall: string;
 }): ChatMessage[] {
-  const callerSystem = input.callerMessages
-    .filter((message) => message.role === "system")
-    .map((message) => message.content.trim())
-    .filter(Boolean)
-    .join("\n\n");
-  const callerMessages = input.callerMessages.filter((message) => message.role !== "system");
+  const callerSystem = buildCallerSystemSegment(input.callerMessages);
+  const leadingSystemCount = input.callerMessages.findIndex((message) => message.role !== "system");
+  const callerMessages = input.callerMessages.slice(
+    leadingSystemCount === -1 ? input.callerMessages.length : leadingSystemCount,
+  );
   const mergedSystem = [input.platform, input.avatar, callerSystem].filter(Boolean).join("\n\n");
 
   return [
