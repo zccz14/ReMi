@@ -25,6 +25,7 @@ interface ReasoningJudgmentPromptInput {
   currentTime: string;
   goals: ReasoningAnswerGoal[];
   anchors: SoulAnchor[];
+  visitorKey?: string;
   visitorContext?: string;
 }
 
@@ -74,9 +75,10 @@ ${input.currentTime}
 
 ## Hard Rules
 1. 输出必须是 JSON，不要输出 XML、Markdown code fence 或额外解释。
-2. 必须返回 answerGoals 与 successCriteria。
+2. 必须返回 userQuery、currentTime、answerGoals、successCriteria。
 3. answerGoals 中每一项都要包含 id、goal、required。
-4. reasoning 只能用于拆解信息需求，不能当作事实证据。`,
+4. userQuery 必须回填原始用户问题；currentTime 必须回填当前时间。
+5. reasoning 只能用于拆解信息需求，不能当作事实证据。`,
     },
     {
       role: "user",
@@ -87,6 +89,8 @@ ${input.userQuery}
 
 请输出 JSON，格式示例：
 {
+  "userQuery": "${input.userQuery}",
+  "currentTime": "${input.currentTime}",
   "answerGoals": [
     { "id": "identity_style", "goal": "...", "required": true }
   ],
@@ -108,8 +112,10 @@ ${input.currentTime}
 ## Hard Rules
 1. 输出必须是 JSON，不要输出 XML。
 2. 必须输出 sufficient、goalStatus、nextQuery、reasoningChain、narrative。
-3. reasoningChain 只用于组织回答边界，不是事实证据，不能替代 anchor。
-4. 结论是否充分要逐个 goal 判断，不能只给总体印象。`,
+3. goalStatus 中每一项都必须包含 goalId、known、missing、sufficient、knownAnchorIds、missingKeys。
+4. 如果 sufficient 为 true，nextQuery 必须为空字符串。
+5. reasoningChain 只用于组织回答边界，不是事实证据，不能替代 anchor。
+6. 结论是否充分要逐个 goal 判断，不能只给总体印象。`,
     },
     {
       role: "user",
@@ -120,6 +126,9 @@ ${input.goals.map(renderGoal).join("\n") || "(none)"}
 
 ## Evidence Anchors
 ${input.anchors.map(renderAnchorEvidence).join("\n") || "(暂无)"}
+
+## Visitor Key
+${input.visitorKey ?? "(none)"}
 
 ## Visitor Context
 ${input.visitorContext ?? "(none)"}
@@ -247,19 +256,20 @@ ${visitorKey}`,
 
 /** 分身回复 system prompt */
 export function buildAvatarSystemPrompt(recalledAnchors: SoulAnchor[]): string {
-  const anchorSummary = recalledAnchors
-    .map((a) => `- Q: ${a.question}\n  A: ${a.answer ?? "(未回答)"}`)
-    .join("\n");
-
-  return `你是本体的分身。基于本体的认知和价值观，像本体一样回答问题。
-
-## 已知的本体认知（锚点）
-${anchorSummary || "(暂无锚点，坦诚说明你还不够了解本体)"}
-
-## 规则
-1. 只基于已知锚点回答，不编造本体没有表达过的观点
-2. 如果锚点不足以回答，坦诚说明"我还没有足够了解本体在这方面的想法"
-3. 保持本体的表达风格（从锚点中推断）
-4. 宁可说"不知道"，也不编造
-5. 自然地融入对话，不要列举锚点`;
+  return buildReasoningGenerationPrompt({
+    currentTime: new Date(0).toISOString(),
+    userQuestion: "请基于已知锚点自然回答当前用户问题。",
+    answerGoals: [
+      {
+        id: "domain_answer",
+        goal: "只基于已知锚点回答当前问题，并在信息不足时明确说明边界",
+        required: true,
+      },
+    ],
+    evidenceAnchors: recalledAnchors,
+    missingInformation:
+      recalledAnchors.length > 0 ? [] : ["暂无锚点，需坦诚说明还不够了解本体在这方面的想法"],
+    reasoningChain: ["保持本体表达风格，但不要把推断当成事实证据。"],
+    temporalValiditySatisfied: true,
+  });
 }
