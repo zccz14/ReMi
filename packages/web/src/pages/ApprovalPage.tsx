@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,11 @@ import { ApprovalTabs } from "../components/approval/ApprovalTabs";
 import { useApprovalCenter } from "../hooks/use-approval-center";
 import { useAuth } from "../hooks/use-auth";
 import { createApprovalApi, type ApprovalKind } from "../lib/approval-api";
+import { CandidateCard } from "../components/approval/CandidateCard";
+import type {
+  ApprovalTargetAsset,
+  CandidateDetailSubmitPayload,
+} from "../components/approval/CandidateDetailSheet";
 
 const LAST_APPROVAL_PATH_STORAGE_KEY = "remi.last-approval-path";
 
@@ -32,6 +37,7 @@ export function ApprovalPage() {
   const pageKind = routeKind === "probes" ? "probes" : "anchors";
   const isInvalidRoute = routeKind !== "anchors" && routeKind !== "probes";
   const approvalApi = useMemo(() => createApprovalApi(apiClient), [apiClient]);
+  const [assets, setAssets] = useState<ApprovalTargetAsset[]>([]);
 
   useEffect(() => {
     if (routeKind === "anchors" || routeKind === "probes") {
@@ -39,10 +45,62 @@ export function ApprovalPage() {
     }
   }, [location.pathname, routeKind]);
 
-  const { candidates, loading, total } = useApprovalCenter({
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAssets() {
+      try {
+        const response = await apiClient.get<{
+          data: {
+            items: Array<{
+              id: string;
+              question: string;
+              answer: string | null;
+              updatedAt: number;
+            }>;
+          };
+        }>(apiClient.ownerPath("/anchors?limit=200"));
+
+        if (!cancelled) {
+          setAssets(response.data.items);
+        }
+      } catch {
+        if (!cancelled) {
+          setAssets([]);
+        }
+      }
+    }
+
+    void loadAssets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient]);
+
+  const approvalCenter = useApprovalCenter({
     api: approvalApi,
     kind: approvalKind,
   });
+  const { candidates, loading, total, lastActionId } = approvalCenter;
+
+  const handleApprove = async ({
+    candidate,
+    mode,
+    targetAssetId,
+    targetUpdatedAt,
+  }: CandidateDetailSubmitPayload) => {
+    await approvalCenter.approve(candidate, { mode, targetAssetId, targetUpdatedAt });
+  };
+
+  const handleQuestionOnly = async ({
+    candidate,
+    mode,
+    targetAssetId,
+    targetUpdatedAt,
+  }: CandidateDetailSubmitPayload) => {
+    await approvalCenter.keepQuestionOnly(candidate, { mode, targetAssetId, targetUpdatedAt });
+  };
 
   if (isInvalidRoute) {
     return <Navigate to="/approval/anchors" replace />;
@@ -74,20 +132,23 @@ export function ApprovalPage() {
                 <Skeleton className="h-24 w-full rounded-2xl" />
               </div>
             ) : candidates[0] ? (
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">{candidates[0].question}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {candidates[0].answer ?? t("approval.probePlaceholder")}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4">
-                  <div>{t("approval.gestures.right")}</div>
-                  <div>{t(`approval.gestures.left.${pageKind}`)}</div>
-                  <div>{t("approval.gestures.up")}</div>
-                  <div>{t("approval.gestures.down")}</div>
-                </div>
-              </div>
+              <CandidateCard
+                candidate={candidates[0]}
+                kind={approvalKind}
+                assets={assets}
+                lastActionId={lastActionId}
+                onApprove={handleApprove}
+                onKeepQuestionOnly={handleQuestionOnly}
+                onReject={async (candidate) => {
+                  await approvalCenter.reject(candidate);
+                }}
+                onSkipProbe={async (candidate) => {
+                  await approvalCenter.skipProbe(candidate);
+                }}
+                onUndo={async () => {
+                  await approvalCenter.undo();
+                }}
+              />
             ) : (
               <div className="space-y-2 text-center">
                 <p className="text-sm font-medium">{t(`approval.empty.${pageKind}`)}</p>
