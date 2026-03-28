@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type Database from "better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { EmbeddingClient } from "../embedding/client.js";
@@ -35,7 +35,7 @@ interface CreateApprovalServiceInput {
 
 interface ApprovalResult {
   actionId: string;
-  asset: SoulAnchor;
+  asset: SoulAnchor | null;
 }
 
 interface ApprovalMutationResult {
@@ -45,6 +45,10 @@ interface ApprovalMutationResult {
 
 type CandidateRow = typeof soulCandidateQueue.$inferSelect;
 type AnchorRow = typeof soulAnchors.$inferSelect;
+
+function isSqliteUniqueConstraint(error: unknown) {
+  return error instanceof Error && /unique constraint/i.test(error.message);
+}
 
 function mapCandidate(row: CandidateRow): ApprovalCandidate {
   return {
@@ -80,15 +84,29 @@ function mapAnchor(row: AnchorRow): SoulAnchor {
 }
 
 export function createApprovalService(input: CreateApprovalServiceInput) {
-  async function syncAnchorEmbedding(anchor: Pick<SoulAnchor, "id" | "question" | "answer">) {
+  async function buildAnchorEmbedding(anchor: Pick<SoulAnchor, "question" | "answer">) {
     if (!input.embeddingClient) {
-      return;
+      return null;
     }
 
     const [embedding] = await input.embeddingClient.embed([
       `${anchor.question}\n${anchor.answer ?? ""}`,
     ]);
-    upsertEmbedding(input.conn.raw, "soul_anchors_vec", anchor.id, embedding);
+    return embedding;
+  }
+
+  function upsertAnchorEmbeddingInTxn(anchorId: string, embedding: number[] | null) {
+    if (!embedding) {
+      return;
+    }
+    upsertEmbedding(input.conn.raw, "soul_anchors_vec", anchorId, embedding);
+  }
+
+  function deleteAnchorEmbeddingInTxn(anchorId: string) {
+    if (!input.embeddingClient) {
+      return;
+    }
+    deleteEmbedding(input.conn.raw, "soul_anchors_vec", anchorId);
   }
 
   function writeLastAction(params: {
@@ -163,20 +181,34 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
     };
   }
 
-  function getRecordedRequest(candidateId: string, requestId: string) {
+  function getRecordedRequest(targetId: string, requestId: string) {
     return input.conn.drizzle
       .select()
       .from(approvalRequests)
-      .where(eq(approvalRequests.ownerKey, input.ownerKey))
-      .all()
-      .find((row) => row.candidateId === candidateId && row.requestId === requestId);
+      .where(
+        and(
+          eq(approvalRequests.ownerKey, input.ownerKey),
+          eq(approvalRequests.candidateId, targetId),
+          eq(approvalRequests.requestId, requestId),
+        ),
+      )
+      .get();
+  }
+
+  function getRecordedRequestOrThrow<T>(targetId: string, requestId: string): T {
+    const recorded = getRecordedRequest(targetId, requestId);
+    if (!recorded) {
+      throw new Error("Idempotent approval request result not found");
+    }
+
+    return JSON.parse(recorded.responsePayload) as T;
   }
 
   function recordRequest(params: {
-    candidateId: string;
+    targetId: string;
     requestId: string;
     action: string;
-    responsePayload: Record<string, unknown>;
+    responsePayload: unknown;
     createdAt: number;
   }) {
     input.conn.drizzle
@@ -184,7 +216,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       .values({
         id: crypto.randomUUID(),
         ownerKey: input.ownerKey,
-        candidateId: params.candidateId,
+        candidateId: params.targetId,
         requestId: params.requestId,
         action: params.action,
         responsePayload: JSON.stringify(params.responsePayload),
@@ -253,15 +285,6 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       }
 
       const candidate = getCandidateOrThrow(inputParams.candidateId);
-
-      if (inputParams.action === "reject") {
-        input.conn.drizzle
-          .delete(soulCandidateQueue)
-          .where(eq(soulCandidateQueue.id, candidate.id))
-          .run();
-        return Promise.reject(new Error("Reject flow is not implemented in Chunk 1"));
-      }
-
       const now = Date.now();
       const actionId = crypto.randomUUID();
 
@@ -276,89 +299,134 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
         }
       }
 
-      const approvedAsset = input.conn.raw.transaction(() => {
-        const candidateInsideTxn = getCandidateOrThrow(inputParams.candidateId);
+      const assetForWrite =
+        inputParams.action === "reject"
+          ? null
+          : inputParams.mode === "create_new"
+            ? buildCandidateAssetValues({
+                candidate,
+                action: inputParams.action,
+                now,
+                id: crypto.randomUUID(),
+              })
+            : (() => {
+                const existing = getAnchorOrThrow(inputParams.targetAssetId!);
+                return {
+                  ...existing,
+                  question: candidate.question,
+                  answer: inputParams.action === "question_only" ? null : candidate.answer,
+                  source: candidate.source,
+                  updatedAt: now,
+                } satisfies AnchorRow;
+              })();
+      const embedding = assetForWrite ? await buildAnchorEmbedding(assetForWrite) : null;
 
-        if (inputParams.mode === "create_new") {
-          const asset = buildCandidateAssetValues({
-            candidate: candidateInsideTxn,
-            action: inputParams.action,
-            now,
-            id: crypto.randomUUID(),
-          });
+      try {
+        return input.conn.raw.transaction(() => {
+          const recorded = getRecordedRequest(inputParams.candidateId, inputParams.requestId);
+          if (recorded) {
+            return JSON.parse(recorded.responsePayload) as ApprovalResult;
+          }
 
-          input.conn.drizzle.insert(soulAnchors).values(asset).run();
+          const candidateInsideTxn = getCandidateOrThrow(inputParams.candidateId);
+
+          if (inputParams.action === "reject") {
+            input.conn.drizzle
+              .delete(soulCandidateQueue)
+              .where(eq(soulCandidateQueue.id, candidateInsideTxn.id))
+              .run();
+
+            const responsePayload: ApprovalResult = { actionId, asset: null };
+            writeLastAction({
+              actionId,
+              candidateSnapshot: candidateInsideTxn,
+              rollbackPayload: { type: "delete_candidate" },
+              createdAt: now,
+            });
+            recordRequest({
+              targetId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+              action: inputParams.action,
+              responsePayload,
+              createdAt: now,
+            });
+
+            return responsePayload;
+          }
+
+          if (inputParams.mode === "create_new") {
+            const asset = assetForWrite!;
+            input.conn.drizzle.insert(soulAnchors).values(asset).run();
+            upsertAnchorEmbeddingInTxn(asset.id, embedding);
+            input.conn.drizzle
+              .delete(soulCandidateQueue)
+              .where(eq(soulCandidateQueue.id, candidateInsideTxn.id))
+              .run();
+            const responsePayload: ApprovalResult = { actionId, asset };
+            writeLastAction({
+              actionId,
+              candidateSnapshot: candidateInsideTxn,
+              rollbackPayload: { type: "create_asset", assetAfter: asset },
+              createdAt: now,
+            });
+            recordRequest({
+              targetId: candidateInsideTxn.id,
+              requestId: inputParams.requestId,
+              action: inputParams.action,
+              responsePayload,
+              createdAt: now,
+            });
+
+            return responsePayload;
+          }
+
+          const existing = getAnchorOrThrow(inputParams.targetAssetId!);
+          if (existing.updatedAt !== inputParams.targetUpdatedAt) {
+            throw new Error("Target asset is stale; updatedAt mismatch");
+          }
+
+          const updated = assetForWrite!;
+          input.conn.drizzle
+            .update(soulAnchors)
+            .set({
+              question: updated.question,
+              answer: updated.answer,
+              source: updated.source,
+              updatedAt: updated.updatedAt,
+            })
+            .where(eq(soulAnchors.id, existing.id))
+            .run();
+          upsertAnchorEmbeddingInTxn(updated.id, embedding);
           input.conn.drizzle
             .delete(soulCandidateQueue)
             .where(eq(soulCandidateQueue.id, candidateInsideTxn.id))
             .run();
+          const responsePayload: ApprovalResult = { actionId, asset: updated };
           writeLastAction({
             actionId,
             candidateSnapshot: candidateInsideTxn,
-            rollbackPayload: { type: "create_asset", assetAfter: asset },
+            rollbackPayload: { type: "restore_asset", before: existing, after: updated },
             createdAt: now,
           });
           recordRequest({
-            candidateId: candidateInsideTxn.id,
+            targetId: candidateInsideTxn.id,
             requestId: inputParams.requestId,
             action: inputParams.action,
-            responsePayload: { actionId, asset },
+            responsePayload,
             createdAt: now,
           });
 
-          return asset;
+          return responsePayload;
+        })();
+      } catch (error) {
+        if (isSqliteUniqueConstraint(error)) {
+          return getRecordedRequestOrThrow<ApprovalResult>(
+            inputParams.candidateId,
+            inputParams.requestId,
+          );
         }
-
-        const existing = getAnchorOrThrow(inputParams.targetAssetId!);
-        if (existing.updatedAt !== inputParams.targetUpdatedAt) {
-          throw new Error("Target asset is stale; updatedAt mismatch");
-        }
-
-        const updated: AnchorRow = {
-          ...existing,
-          question: candidateInsideTxn.question,
-          answer: inputParams.action === "question_only" ? null : candidateInsideTxn.answer,
-          source: candidateInsideTxn.source,
-          updatedAt: now,
-        };
-
-        input.conn.drizzle
-          .update(soulAnchors)
-          .set({
-            question: updated.question,
-            answer: updated.answer,
-            source: updated.source,
-            updatedAt: updated.updatedAt,
-          })
-          .where(eq(soulAnchors.id, existing.id))
-          .run();
-        input.conn.drizzle
-          .delete(soulCandidateQueue)
-          .where(eq(soulCandidateQueue.id, candidateInsideTxn.id))
-          .run();
-        writeLastAction({
-          actionId,
-          candidateSnapshot: candidateInsideTxn,
-          rollbackPayload: { type: "restore_asset", before: existing, after: updated },
-          createdAt: now,
-        });
-        recordRequest({
-          candidateId: candidateInsideTxn.id,
-          requestId: inputParams.requestId,
-          action: inputParams.action,
-          responsePayload: { actionId, asset: updated },
-          createdAt: now,
-        });
-
-        return updated;
-      })();
-
-      await syncAnchorEmbedding(approvedAsset);
-
-      return {
-        actionId,
-        asset: approvedAsset,
-      };
+        throw error;
+      }
     },
 
     async microEditAsset(inputParams: {
@@ -368,64 +436,96 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       source: SoulAnchorSource;
       requestId: string;
     }): Promise<ApprovalMutationResult> {
+      const targetId = inputParams.assetId ? `asset:${inputParams.assetId}` : "asset:new";
+      const existingRequest = getRecordedRequest(targetId, inputParams.requestId);
+      if (existingRequest) {
+        return JSON.parse(existingRequest.responsePayload) as ApprovalMutationResult;
+      }
+
       const now = Date.now();
       const actionId = crypto.randomUUID();
       const normalizedQuestion = normalizeQuestion(inputParams.question);
       const normalizedAnswer = normalizeAnswer(inputParams.answer);
-
-      const asset = input.conn.raw.transaction(() => {
-        if (!inputParams.assetId) {
-          const created: AnchorRow = {
+      const assetForWrite: AnchorRow = !inputParams.assetId
+        ? {
             id: crypto.randomUUID(),
             question: normalizedQuestion,
             answer: normalizedAnswer,
             source: inputParams.source,
             createdAt: now,
             updatedAt: now,
+          }
+        : {
+            ...getAnchorOrThrow(inputParams.assetId),
+            question: normalizedQuestion,
+            answer: normalizedAnswer,
+            source: inputParams.source,
+            updatedAt: now,
           };
+      const embedding = await buildAnchorEmbedding(assetForWrite);
 
-          input.conn.drizzle.insert(soulAnchors).values(created).run();
+      try {
+        return input.conn.raw.transaction(() => {
+          const recorded = getRecordedRequest(targetId, inputParams.requestId);
+          if (recorded) {
+            return JSON.parse(recorded.responsePayload) as ApprovalMutationResult;
+          }
+
+          if (!inputParams.assetId) {
+            input.conn.drizzle.insert(soulAnchors).values(assetForWrite).run();
+            upsertAnchorEmbeddingInTxn(assetForWrite.id, embedding);
+            const responsePayload: ApprovalMutationResult = { actionId, asset: assetForWrite };
+            writeLastAction({
+              actionId,
+              candidateSnapshot: null,
+              rollbackPayload: { type: "create_asset", assetAfter: assetForWrite },
+              createdAt: now,
+            });
+            recordRequest({
+              targetId,
+              requestId: inputParams.requestId,
+              action: "micro_edit",
+              responsePayload,
+              createdAt: now,
+            });
+            return responsePayload;
+          }
+
+          const existing = getAnchorOrThrow(inputParams.assetId);
+          input.conn.drizzle
+            .update(soulAnchors)
+            .set({
+              question: assetForWrite.question,
+              answer: assetForWrite.answer,
+              source: assetForWrite.source,
+              updatedAt: assetForWrite.updatedAt,
+            })
+            .where(eq(soulAnchors.id, existing.id))
+            .run();
+          upsertAnchorEmbeddingInTxn(assetForWrite.id, embedding);
+          const responsePayload: ApprovalMutationResult = { actionId, asset: assetForWrite };
           writeLastAction({
             actionId,
             candidateSnapshot: null,
-            rollbackPayload: { type: "create_asset", assetAfter: created },
+            rollbackPayload: { type: "restore_asset", before: existing, after: assetForWrite },
             createdAt: now,
           });
-          return created;
+          recordRequest({
+            targetId,
+            requestId: inputParams.requestId,
+            action: "micro_edit",
+            responsePayload,
+            createdAt: now,
+          });
+
+          return responsePayload;
+        })();
+      } catch (error) {
+        if (isSqliteUniqueConstraint(error)) {
+          return getRecordedRequestOrThrow<ApprovalMutationResult>(targetId, inputParams.requestId);
         }
-
-        const existing = getAnchorOrThrow(inputParams.assetId);
-        const updated: AnchorRow = {
-          ...existing,
-          question: normalizedQuestion,
-          answer: normalizedAnswer,
-          source: inputParams.source,
-          updatedAt: now,
-        };
-
-        input.conn.drizzle
-          .update(soulAnchors)
-          .set({
-            question: updated.question,
-            answer: updated.answer,
-            source: updated.source,
-            updatedAt: updated.updatedAt,
-          })
-          .where(eq(soulAnchors.id, existing.id))
-          .run();
-        writeLastAction({
-          actionId,
-          candidateSnapshot: null,
-          rollbackPayload: { type: "restore_asset", before: existing, after: updated },
-          createdAt: now,
-        });
-
-        return updated;
-      })();
-
-      await syncAnchorEmbedding(asset);
-
-      return { actionId, asset };
+        throw error;
+      }
     },
 
     async denyAsset(inputParams: {
@@ -433,13 +533,63 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       requestId: string;
     }): Promise<ApprovalMutationResult> {
       const existing = getAnchorOrThrow(inputParams.assetId);
-      return this.microEditAsset({
-        assetId: existing.id,
-        question: existing.question,
+      const targetId = `asset:${existing.id}`;
+      const existingRequest = getRecordedRequest(targetId, inputParams.requestId);
+      if (existingRequest) {
+        return JSON.parse(existingRequest.responsePayload) as ApprovalMutationResult;
+      }
+
+      const now = Date.now();
+      const actionId = crypto.randomUUID();
+      const updated: AnchorRow = {
+        ...existing,
         answer: null,
-        source: existing.source,
-        requestId: inputParams.requestId,
-      });
+        updatedAt: now,
+      };
+      const embedding = await buildAnchorEmbedding(updated);
+
+      try {
+        return input.conn.raw.transaction(() => {
+          const recorded = getRecordedRequest(targetId, inputParams.requestId);
+          if (recorded) {
+            return JSON.parse(recorded.responsePayload) as ApprovalMutationResult;
+          }
+
+          const current = getAnchorOrThrow(existing.id);
+          input.conn.drizzle
+            .update(soulAnchors)
+            .set({
+              question: updated.question,
+              answer: updated.answer,
+              source: updated.source,
+              updatedAt: updated.updatedAt,
+            })
+            .where(eq(soulAnchors.id, current.id))
+            .run();
+          upsertAnchorEmbeddingInTxn(updated.id, embedding);
+          const responsePayload: ApprovalMutationResult = { actionId, asset: updated };
+          writeLastAction({
+            actionId,
+            candidateSnapshot: null,
+            rollbackPayload: { type: "restore_asset", before: current, after: updated },
+            createdAt: now,
+          });
+          recordRequest({
+            targetId,
+            requestId: inputParams.requestId,
+            action: "deny",
+            responsePayload,
+            createdAt: now,
+          });
+
+          return responsePayload;
+        })();
+      } catch (error) {
+        if (isSqliteUniqueConstraint(error)) {
+          return getRecordedRequestOrThrow<ApprovalMutationResult>(targetId, inputParams.requestId);
+        }
+        throw error;
+      }
     },
 
     deleteAnchorEmbedding(assetId: string) {
@@ -459,8 +609,13 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
 
       const rollbackPayload = JSON.parse(lastAction.rollbackPayload) as
         | { type: "create_asset"; assetAfter: AnchorRow }
-        | { type: "restore_asset"; before: AnchorRow; after: AnchorRow };
+        | { type: "restore_asset"; before: AnchorRow; after: AnchorRow }
+        | { type: "delete_candidate" };
       const candidateSnapshot = JSON.parse(lastAction.candidateSnapshot) as CandidateRow | null;
+      const rollbackEmbedding =
+        rollbackPayload.type === "restore_asset"
+          ? await buildAnchorEmbedding(mapAnchor(rollbackPayload.before))
+          : null;
 
       const restoredCandidate = input.conn.raw.transaction(() => {
         if (rollbackPayload.type === "create_asset") {
@@ -469,7 +624,8 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             throw new Error("Undo conflict: asset changed after the last action");
           }
           input.conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, current.id)).run();
-        } else {
+          deleteAnchorEmbeddingInTxn(rollbackPayload.assetAfter.id);
+        } else if (rollbackPayload.type === "restore_asset") {
           const current = getAnchorOrThrow(rollbackPayload.after.id);
           if (current.updatedAt !== rollbackPayload.after.updatedAt) {
             throw new Error("Undo conflict: asset changed after the last action");
@@ -485,6 +641,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
             })
             .where(eq(soulAnchors.id, rollbackPayload.before.id))
             .run();
+          upsertAnchorEmbeddingInTxn(rollbackPayload.before.id, rollbackEmbedding);
         }
 
         if (candidateSnapshot) {
@@ -498,12 +655,6 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
 
         return candidateSnapshot ? mapCandidate(candidateSnapshot) : null;
       })();
-
-      if (rollbackPayload.type === "create_asset") {
-        deleteEmbedding(input.conn.raw, "soul_anchors_vec", rollbackPayload.assetAfter.id);
-      } else {
-        await syncAnchorEmbedding(mapAnchor(rollbackPayload.before));
-      }
 
       return {
         actionId: inputParams.actionId,

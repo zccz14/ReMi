@@ -34,14 +34,16 @@ describe("approval normalization", () => {
 });
 
 describe("approval service candidate ingestion", () => {
-  function createService() {
+  function createService(options?: { embedImpl?: (texts: string[]) => Promise<number[][]> }) {
     const tmpDir = path.join(os.tmpdir(), `remi-approval-service-${crypto.randomUUID()}`);
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const connMgr = new ConnectionManager(tmpDir, { maxSize: 2, embeddingDimensions: 4 });
     const ownerKey = "owner-pub-key";
     const conn = connMgr.getConnection(ownerKey, { create: true });
-    const embedMock = vi.fn(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3, 0.4]));
+    const embedMock = vi.fn(
+      options?.embedImpl ?? (async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3, 0.4])),
+    );
     const embeddingClient: EmbeddingClient = {
       embed: embedMock,
     };
@@ -176,6 +178,40 @@ describe("approval service candidate ingestion", () => {
     }
   });
 
+  it("rejects a candidate without formal write and restores it on undo", async () => {
+    const { service, conn, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "reading",
+      });
+
+      const rejected = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "reject",
+        mode: "create_new",
+        requestId: "req-reject-1",
+      });
+
+      expect(rejected.asset).toBeNull();
+      expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toHaveLength(
+        0,
+      );
+
+      const anchorCount = conn.raw.prepare("SELECT COUNT(*) as count FROM soul_anchors").get() as {
+        count: number;
+      };
+      expect(anchorCount.count).toBe(0);
+
+      const undone = await service.undoLastAction({ actionId: rejected.actionId });
+      expect(undone.restoredCandidate).toEqual(expect.objectContaining({ id: candidate.id }));
+    } finally {
+      cleanup();
+    }
+  });
+
   it("rejects stale update_existing requests and keeps candidate pending", async () => {
     const { service, cleanup } = createService();
 
@@ -253,17 +289,19 @@ describe("approval service candidate ingestion", () => {
         mode: "create_new",
         requestId: "req-vector-create",
       });
+      expect(approved.asset).not.toBeNull();
+      const approvedAsset = approved.asset!;
 
       const afterCreate = conn.raw
         .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
-        .get(approved.asset.id) as { count: number };
+        .get(approvedAsset.id) as { count: number };
       expect(afterCreate.count).toBe(1);
 
       const edited = await service.microEditAsset({
-        assetId: approved.asset.id,
+        assetId: approvedAsset.id,
         question: "What matters most now?",
         answer: "Trust and steadiness",
-        source: approved.asset.source,
+        source: approvedAsset.source,
         requestId: "req-vector-update",
       });
 
@@ -309,6 +347,86 @@ describe("approval service candidate ingestion", () => {
       });
 
       expect(second).toEqual(first);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("dedupes micro edits and deny requests via approval_requests", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const created = await service.microEditAsset({
+        assetId: null,
+        question: "What matters most?",
+        answer: "Trust",
+        source: "manual",
+        requestId: "req-micro-create-1",
+      });
+
+      const firstEdit = await service.microEditAsset({
+        assetId: created.asset.id,
+        question: "What matters most now?",
+        answer: "Trust and steadiness",
+        source: "manual",
+        requestId: "req-micro-edit-1",
+      });
+      const secondEdit = await service.microEditAsset({
+        assetId: created.asset.id,
+        question: "ignored duplicate payload",
+        answer: "ignored duplicate payload",
+        source: "reading",
+        requestId: "req-micro-edit-1",
+      });
+
+      expect(secondEdit).toEqual(firstEdit);
+
+      const firstDeny = await service.denyAsset({
+        assetId: created.asset.id,
+        requestId: "req-deny-idempotent-1",
+      });
+      const secondDeny = await service.denyAsset({
+        assetId: created.asset.id,
+        requestId: "req-deny-idempotent-1",
+      });
+
+      expect(secondDeny).toEqual(firstDeny);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps candidate pending when embedding sync fails before approval commit", async () => {
+    const { service, conn, cleanup } = createService({
+      embedImpl: async () => {
+        throw new Error("embedding failed");
+      },
+    });
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "manual",
+      });
+
+      await expect(
+        service.approveCandidate({
+          candidateId: candidate.id,
+          action: "approve",
+          mode: "create_new",
+          requestId: "req-embed-fail-1",
+        }),
+      ).rejects.toThrow(/embedding failed/i);
+
+      expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+      );
+
+      const anchorCount = conn.raw.prepare("SELECT COUNT(*) as count FROM soul_anchors").get() as {
+        count: number;
+      };
+      expect(anchorCount.count).toBe(0);
     } finally {
       cleanup();
     }
