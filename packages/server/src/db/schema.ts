@@ -96,9 +96,9 @@ export const soulCandidateQueue = sqliteTable("soul_candidate_queue", {
 
 export const approvalLastActions = sqliteTable("approval_last_actions", {
   ownerKey: text("owner_key").primaryKey(),
-  candidateId: text("candidate_id").notNull(),
-  actionType: text("action_type").notNull(),
-  payload: text("payload").notNull(),
+  actionId: text("action_id").notNull(),
+  candidateSnapshot: text("candidate_snapshot").notNull(),
+  rollbackPayload: text("rollback_payload").notNull(),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
 });
 
@@ -109,6 +109,7 @@ export const approvalRequests = sqliteTable(
     ownerKey: text("owner_key").notNull(),
     candidateId: text("candidate_id").notNull(),
     requestId: text("request_id").notNull(),
+    action: text("action").notNull(),
     createdAt: integer("created_at", { mode: "number" }).notNull(),
   },
   (table) => ({

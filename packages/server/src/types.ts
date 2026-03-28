@@ -59,6 +59,10 @@ export interface ApprovalCandidate {
   kind: SoulAssetKind;
 }
 
+export type ApprovalAction = "approve" | "question_only" | "reject";
+
+export type ApprovalWriteMode = "create_new" | "update_existing";
+
 export interface SoulAnchor {
   id: string;
   question: string;

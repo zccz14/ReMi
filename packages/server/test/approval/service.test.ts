@@ -9,6 +9,7 @@ import {
 } from "../../src/approval/normalize.js";
 import { ConnectionManager } from "../../src/db/connection.js";
 import { createApprovalService } from "../../src/approval/service.js";
+import type { EmbeddingClient } from "../../src/embedding/client.js";
 
 describe("approval normalization", () => {
   it("trims a question before persistence", () => {
@@ -40,10 +41,14 @@ describe("approval service candidate ingestion", () => {
     const connMgr = new ConnectionManager(tmpDir, { maxSize: 2, embeddingDimensions: 4 });
     const ownerKey = "owner-pub-key";
     const conn = connMgr.getConnection(ownerKey, { create: true });
-    const service = createApprovalService({ ownerKey, conn });
+    const embeddingClient: EmbeddingClient = {
+      embed: async (texts) => texts.map(() => [0.1, 0.2, 0.3, 0.4]),
+    };
+    const service = createApprovalService({ ownerKey, conn, embeddingClient });
 
     return {
       service,
+      conn,
       cleanup() {
         connMgr.closeAll();
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -127,6 +132,152 @@ describe("approval service candidate ingestion", () => {
       expect(probeCandidates.items[0]).toEqual(
         expect.objectContaining({ answer: null, kind: "probe", source: "reading" }),
       );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("approves candidate into formal asset and deletes candidate atomically", async () => {
+    const { service, conn, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "  What matters most?  ",
+        answer: "  Trust  ",
+        source: "reading",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-approve-1",
+      });
+
+      expect(approved.asset).toEqual(
+        expect.objectContaining({
+          question: "What matters most?",
+          answer: "Trust",
+          source: "reading",
+        }),
+      );
+      expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toHaveLength(
+        0,
+      );
+
+      const lastAction = conn.raw
+        .prepare("SELECT action_id FROM approval_last_actions WHERE owner_key = ?")
+        .get("owner-pub-key") as { action_id: string } | undefined;
+      expect(lastAction?.action_id).toBeTruthy();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects stale update_existing requests and keeps candidate pending", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const existing = await service.microEditAsset({
+        assetId: null,
+        question: "Existing question",
+        answer: "Existing answer",
+        source: "manual",
+        requestId: "seed-existing-asset",
+      });
+      const candidate = service.createCandidate({
+        question: "Existing question",
+        answer: "Updated answer",
+        source: "reading",
+      });
+
+      await expect(
+        service.approveCandidate({
+          candidateId: candidate.id,
+          action: "approve",
+          mode: "update_existing",
+          targetAssetId: existing.asset.id,
+          targetUpdatedAt: existing.asset.updatedAt - 1,
+          requestId: "req-stale-1",
+        }),
+      ).rejects.toThrow(/stale|updated/i);
+
+      expect(service.listCandidates({ kind: "anchor", limit: 10, offset: 0 }).items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: candidate.id })]),
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("routes deny to answer=null and recalculates kind as probe", async () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const created = await service.microEditAsset({
+        assetId: null,
+        question: "What matters most?",
+        answer: "Trust",
+        source: "reading",
+        requestId: "seed-deny-asset",
+      });
+
+      const denied = await service.denyAsset({
+        assetId: created.asset.id,
+        requestId: "deny-1",
+      });
+
+      expect(denied.asset.answer).toBeNull();
+      expect(denied.asset.source).toBe("reading");
+      expect(getSoulAssetKind({ answer: denied.asset.answer })).toBe("probe");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps soul_anchors_vec in sync for create, update, and deny", async () => {
+    const { service, conn, cleanup } = createService();
+
+    try {
+      const candidate = service.createCandidate({
+        question: "What matters most?",
+        answer: "Trust",
+        source: "manual",
+      });
+
+      const approved = await service.approveCandidate({
+        candidateId: candidate.id,
+        action: "approve",
+        mode: "create_new",
+        requestId: "req-vector-create",
+      });
+
+      const afterCreate = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
+        .get(approved.asset.id) as { count: number };
+      expect(afterCreate.count).toBe(1);
+
+      const edited = await service.microEditAsset({
+        assetId: approved.asset.id,
+        question: "What matters most now?",
+        answer: "Trust and steadiness",
+        source: approved.asset.source,
+        requestId: "req-vector-update",
+      });
+
+      const afterUpdate = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
+        .get(edited.asset.id) as { count: number };
+      expect(afterUpdate.count).toBe(1);
+
+      const denied = await service.denyAsset({
+        assetId: edited.asset.id,
+        requestId: "req-vector-deny",
+      });
+      const afterDeny = conn.raw
+        .prepare("SELECT COUNT(*) as count FROM soul_anchors_vec WHERE id = ?")
+        .get(denied.asset.id) as { count: number };
+      expect(afterDeny.count).toBe(1);
     } finally {
       cleanup();
     }

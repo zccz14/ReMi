@@ -104,9 +104,9 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
 
     CREATE TABLE IF NOT EXISTS approval_last_actions (
       owner_key TEXT PRIMARY KEY,
-      candidate_id TEXT NOT NULL,
-      action_type TEXT NOT NULL,
-      payload TEXT NOT NULL,
+      action_id TEXT NOT NULL,
+      candidate_snapshot TEXT NOT NULL,
+      rollback_payload TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
 
@@ -115,6 +115,7 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       owner_key TEXT NOT NULL,
       candidate_id TEXT NOT NULL,
       request_id TEXT NOT NULL,
+      action TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
 
