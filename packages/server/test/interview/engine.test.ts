@@ -131,7 +131,61 @@ type GoalBasedRecallCompatResult = Awaited<ReturnType<typeof goalBasedRecall>> &
     allAnchorIds: string[];
     normalizedGoalStatus: unknown[];
   }[];
+} & {
+  debug: { traceId: string; nested: { shouldNotLeak: string } };
+  metadata: { ignored: string[]; flags: { experimental: boolean } };
+  unexpected: { deeply: { nested: { object: string } } };
+  __experimental: string;
 };
+
+function createRecallCompatResult() {
+  return {
+    anchors: [
+      {
+        id: "anchor-1",
+        question: "偏好",
+        answer: "喜欢简洁回答",
+        source: "interview" as const,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    narratives: ["已覆盖回答风格目标"],
+    rounds: 1,
+    sufficient: true,
+    strategy: "recall-loop" as const,
+    goalStatus: [
+      {
+        goalId: "style",
+        sufficient: true,
+        knownAnchorIds: ["anchor-1"],
+        missingKeys: [],
+      },
+    ],
+    stoppedBecause: "sufficient",
+    roundSummaries: [
+      {
+        round: 1,
+        query: "回答风格",
+        newAnchorIds: ["anchor-1"],
+        allAnchorIds: ["anchor-1"],
+        normalizedGoalStatus: [],
+      },
+    ],
+    debug: {
+      traceId: "debug-trace-token",
+      nested: { shouldNotLeak: "debug-nested-value" },
+    },
+    metadata: {
+      ignored: ["metadata-flag"],
+      flags: { experimental: true },
+    },
+    unexpected: {
+      deeply: { nested: { object: "totally-irrelevant-object" } },
+    },
+    __experimental: "unknown-top-level-field",
+  } satisfies GoalBasedRecallCompatResult;
+}
 
 describe("InterviewEngine", () => {
   const env = { ...process.env };
@@ -486,40 +540,7 @@ describe("InterviewEngine", () => {
 
   it("message flow ignores extra shared recall runtime fields", async () => {
     process.env.REMI_CONVERSATION_FLOW_V2 = "full";
-    const recallResult: GoalBasedRecallCompatResult = {
-      anchors: [
-        {
-          id: "anchor-1",
-          question: "偏好",
-          answer: "喜欢简洁回答",
-          source: "interview",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ],
-      narratives: ["已覆盖回答风格目标"],
-      rounds: 1,
-      sufficient: true,
-      strategy: "recall-loop",
-      goalStatus: [
-        {
-          goalId: "style",
-          sufficient: true,
-          knownAnchorIds: ["anchor-1"],
-          missingKeys: [],
-        },
-      ],
-      stoppedBecause: "sufficient",
-      roundSummaries: [
-        {
-          round: 1,
-          query: "回答风格",
-          newAnchorIds: ["anchor-1"],
-          allAnchorIds: ["anchor-1"],
-          normalizedGoalStatus: [],
-        },
-      ],
-    };
+    const recallResult = createRecallCompatResult();
     mockGoalBasedRecall.mockResolvedValue(recallResult);
 
     const deps = createMockDeps();
@@ -531,6 +552,23 @@ describe("InterviewEngine", () => {
     expect(events.some((e) => e.type === "error")).toBe(false);
     expect(events.some((e) => e.type === "done")).toBe(true);
     expect(events.some((e) => e.type === "token")).toBe(true);
+    expect(mockDetectContradictions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newAnchors: [{ question: "价值观", answer: "诚实" }],
+        existingAnchors: recallResult.anchors,
+      }),
+    );
+
+    const streamedMessages =
+      vi.mocked(deps.chatClient.chatStream).mock.calls[0]?.[0]?.messages ?? [];
+    const promptText = streamedMessages.map((message) => message.content).join("\n");
+    expect(promptText).toContain("偏好");
+    expect(promptText).toContain("喜欢简洁回答");
+    expect(promptText).not.toContain("debug-trace-token");
+    expect(promptText).not.toContain("debug-nested-value");
+    expect(promptText).not.toContain("metadata-flag");
+    expect(promptText).not.toContain("totally-irrelevant-object");
+    expect(promptText).not.toContain("unknown-top-level-field");
     assertProtocolInvariants(events);
   });
 });

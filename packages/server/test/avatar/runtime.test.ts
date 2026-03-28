@@ -31,7 +31,61 @@ type GoalBasedRecallCompatResult = Awaited<ReturnType<typeof goalBasedRecall>> &
     allAnchorIds: string[];
     normalizedGoalStatus: unknown[];
   }[];
+} & {
+  debug: { traceId: string; nested: { shouldNotLeak: string } };
+  metadata: { ignored: string[]; flags: { experimental: boolean } };
+  unexpected: { deeply: { nested: { object: string } } };
+  __experimental: string;
 };
+
+function createRecallCompatResult(): GoalBasedRecallCompatResult {
+  return {
+    anchors: [
+      {
+        id: "anchor-1",
+        question: "沟通边界",
+        answer: "先确认约束再给建议",
+        source: "interview",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    narratives: ["已命中边界锚点"],
+    rounds: 1,
+    sufficient: true,
+    strategy: "recall-loop",
+    goalStatus: [
+      {
+        goalId: "boundary",
+        sufficient: true,
+        knownAnchorIds: ["anchor-1"],
+        missingKeys: [],
+      },
+    ],
+    stoppedBecause: "sufficient",
+    roundSummaries: [
+      {
+        round: 1,
+        query: "沟通边界",
+        newAnchorIds: ["anchor-1"],
+        allAnchorIds: ["anchor-1"],
+        normalizedGoalStatus: [],
+      },
+    ],
+    debug: {
+      traceId: "debug-trace-token",
+      nested: { shouldNotLeak: "debug-nested-value" },
+    },
+    metadata: {
+      ignored: ["metadata-flag"],
+      flags: { experimental: true },
+    },
+    unexpected: {
+      deeply: { nested: { object: "totally-irrelevant-object" } },
+    },
+    __experimental: "unknown-top-level-field",
+  };
+}
 
 function createOwnerConn(anchorCount: number): OwnerConn {
   return {
@@ -63,41 +117,7 @@ describe("AvatarInferenceRuntime", () => {
       avatarVersion: null,
       updatedAt: null,
     });
-    const recallResult: GoalBasedRecallCompatResult = {
-      anchors: [
-        {
-          id: "anchor-1",
-          question: "沟通边界",
-          answer: "先确认约束再给建议",
-          source: "interview",
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      ],
-      narratives: ["已命中边界锚点"],
-      rounds: 1,
-      sufficient: true,
-      strategy: "recall-loop",
-      goalStatus: [
-        {
-          goalId: "boundary",
-          sufficient: true,
-          knownAnchorIds: ["anchor-1"],
-          missingKeys: [],
-        },
-      ],
-      stoppedBecause: "sufficient",
-      roundSummaries: [
-        {
-          round: 1,
-          query: "沟通边界",
-          newAnchorIds: ["anchor-1"],
-          allAnchorIds: ["anchor-1"],
-          normalizedGoalStatus: [],
-        },
-      ],
-    };
-    mockGoalBasedRecall.mockResolvedValue(recallResult);
+    mockGoalBasedRecall.mockResolvedValue(createRecallCompatResult());
   });
 
   it("createRequest tolerates extra recall fields and keeps anchors in recall segment", async () => {
@@ -117,6 +137,13 @@ describe("AvatarInferenceRuntime", () => {
     expect(request.instructionSegments.recall).toContain("Supplementary recalled anchors");
     expect(request.instructionSegments.recall).toContain("Q: 沟通边界");
     expect(request.instructionSegments.recall).toContain("A: 先确认约束再给建议");
+    expect(request.instructionSegments.recall).not.toContain("debug-trace-token");
+    expect(request.instructionSegments.recall).not.toContain("debug-nested-value");
+    expect(request.instructionSegments.recall).not.toContain("metadata-flag");
+    expect(request.instructionSegments.recall).not.toContain("totally-irrelevant-object");
+    expect(request.instructionSegments.recall).not.toContain("unknown-top-level-field");
+    expect(request.instructionSegments.recall).not.toContain("stoppedBecause");
+    expect(request.instructionSegments.recall).not.toContain("goalStatus");
     expect(request.instructionSegments.avatar).toContain("display name: ReMi");
   });
 });
