@@ -1,4 +1,14 @@
-import { access, lstat, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -630,11 +640,39 @@ describe("ReasoningEngine", () => {
           stoppedCandidate: string | null;
         }>
       >(join(latestDir, "recall-rounds.json"));
+      const request = await readJson<{
+        visitorKey: string;
+        userQuery: string;
+        currentTime: string;
+        messageCount: number;
+        context: string;
+      }>(join(latestDir, "request.json"));
+      const decomposition = await readJson<{
+        userQuery: string;
+        currentTime: string;
+        answerGoals: Array<{ id: string; goal: string; required: boolean }>;
+      }>(join(latestDir, "decomposition.json"));
 
-      expect(await readFile(join(latestDir, "request.json"), "utf8")).toContain("visitor-key");
-      expect(await readFile(join(latestDir, "decomposition.json"), "utf8")).toContain(
-        "identity_style",
-      );
+      expect(request).toEqual({
+        visitorKey: "visitor-key",
+        userQuery: "你好",
+        currentTime: expect.any(String),
+        messageCount: 0,
+        context: "",
+      });
+      expect(decomposition).toEqual({
+        userQuery: "你好",
+        currentTime: expect.any(String),
+        answerGoals: [
+          { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+          {
+            id: "relationship_boundary",
+            goal: "对方是谁，我与对方的关系和沟通边界",
+            required: true,
+          },
+          { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+        ],
+      });
       expect(await readFile(join(latestDir, "final-prompt.md"), "utf8")).toContain(
         "## User Question",
       );
@@ -949,6 +987,73 @@ describe("ReasoningEngine", () => {
       );
       expect(await readJson(join(latestDir, "summary.json"))).toEqual(
         expect.objectContaining({ userQuery: "第一次问题" }),
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a pre-existing real latest directory with the managed artifact contract", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const legacyLatestDir = join(tempRoot, "debug", "reasoning-last");
+      await mkdir(legacyLatestDir, { recursive: true });
+      await writeFile(join(legacyLatestDir, "obsolete.txt"), "legacy", "utf8");
+
+      await new ReasoningEngine({
+        ...createMockDeps(),
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      }).handleMessage("替换旧目录", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      expect((await lstat(latestDir)).isSymbolicLink()).toBe(true);
+      expect((await readdir(latestDir)).sort()).toEqual([
+        "decomposition.json",
+        "final-prompt.md",
+        "recall-rounds.json",
+        "request.json",
+        "response.txt",
+        "summary.json",
+      ]);
+      await expect(access(join(latestDir, "obsolete.txt"))).rejects.toThrow();
+      expect(await readJson(join(latestDir, "request.json"))).toEqual(
+        expect.objectContaining({ userQuery: "替换旧目录" }),
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not delete outside directories when latest symlink target is tampered", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "remi-reasoning-artifact-"));
+
+    try {
+      const outsideDir = join(tempRoot, "outside-target");
+      const latestDir = join(tempRoot, "debug", "reasoning-last");
+      await mkdir(outsideDir, { recursive: true });
+      await writeFile(join(outsideDir, "keep.txt"), "safe", "utf8");
+      await mkdir(join(tempRoot, "debug"), { recursive: true });
+      await symlink("../outside-target", latestDir, "dir");
+
+      await new ReasoningEngine({
+        ...createMockDeps(),
+        debugArtifactWriter: createLatestReasoningDebugArtifactWriter({ rootDir: tempRoot }),
+      }).handleMessage("tampered", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      await expect(access(join(outsideDir, "keep.txt"))).resolves.toBeUndefined();
+      expect(await readJson(join(latestDir, "request.json"))).toEqual(
+        expect.objectContaining({ userQuery: "tampered" }),
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

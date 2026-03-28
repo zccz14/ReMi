@@ -1,4 +1,4 @@
-import { mkdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import type { GoalStatus, RecallRoundSummary } from "../recall/goal-based-recall.js";
@@ -35,6 +35,11 @@ function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function isWithinDirectory(rootDir: string, candidatePath: string): boolean {
+  const relativePath = relative(rootDir, candidatePath);
+  return relativePath !== "" && !relativePath.startsWith("..") && !relativePath.includes(`..`);
+}
+
 async function writeLatestReasoningDirectory(
   baseDir: string,
   payload: ReasoningDebugArtifactPayload,
@@ -46,12 +51,15 @@ async function writeLatestReasoningDirectory(
   const versionSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const versionDir = join(versionsDir, versionSuffix);
   const nextLink = join(debugDir, `.reasoning-last-link-${versionSuffix}`);
+  const legacyBackupDir = join(debugDir, `.reasoning-last-legacy-${versionSuffix}`);
   let previousVersionDir: string | null = null;
+  let existingLatestIsRealDirectory = false;
 
   await mkdir(debugDir, { recursive: true });
   await mkdir(versionsDir, { recursive: true });
   await rm(versionDir, { recursive: true, force: true });
   await rm(nextLink, { recursive: true, force: true });
+  await rm(legacyBackupDir, { recursive: true, force: true });
   await mkdir(versionDir, { recursive: true });
 
   await Promise.all([
@@ -64,7 +72,12 @@ async function writeLatestReasoningDirectory(
   ]);
 
   try {
-    previousVersionDir = resolve(debugDir, await readlink(latestDir));
+    const latestStat = await lstat(latestDir);
+    if (latestStat.isSymbolicLink()) {
+      previousVersionDir = resolve(debugDir, await readlink(latestDir));
+    } else if (latestStat.isDirectory()) {
+      existingLatestIsRealDirectory = true;
+    }
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException).code !== "ENOENT" &&
@@ -77,14 +90,30 @@ async function writeLatestReasoningDirectory(
   try {
     await symlink(relative(debugDir, versionDir), nextLink, "dir");
     await testHooks?.beforeSwap?.();
+    if (existingLatestIsRealDirectory) {
+      await rename(latestDir, legacyBackupDir);
+    }
     await rename(nextLink, latestDir);
   } catch (error) {
+    if (existingLatestIsRealDirectory) {
+      try {
+        await rename(legacyBackupDir, latestDir);
+      } catch {
+        // Best effort restore; keep original error path.
+      }
+    }
     await rm(nextLink, { recursive: true, force: true });
     await rm(versionDir, { recursive: true, force: true });
     throw error;
   }
 
-  if (previousVersionDir && previousVersionDir !== versionDir) {
+  await rm(legacyBackupDir, { recursive: true, force: true });
+
+  if (
+    previousVersionDir &&
+    previousVersionDir !== versionDir &&
+    isWithinDirectory(versionsDir, previousVersionDir)
+  ) {
     await rm(previousVersionDir, { recursive: true, force: true });
   }
 }
