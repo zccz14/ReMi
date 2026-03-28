@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { anchorRoutes } from "../../src/routes/anchors.js";
 import { ConnectionManager } from "../../src/db/connection.js";
+import { createApprovalService } from "../../src/approval/service.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -53,16 +54,24 @@ describe("anchor routes", () => {
     const json = await res.json();
     expect(json.data.question).toBe("测试问题");
     expect(json.data.answer).toBeNull();
+    expect(json.data.kind).toBe("probe");
     expect(json.data.id).toBeTruthy();
+
+    const listRes = await app.request(`/api/${PUB_KEY}/anchors`);
+    const listJson = await listRes.json();
+    expect(listJson.data.total).toBe(0);
   });
 
   it("GET /api/:pubKey/anchors → 200 lists anchors", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
-    // Create one first
-    await app.request(`/api/${PUB_KEY}/anchors`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: "Q1", source: "manual" }),
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: "A1",
+      source: "manual",
+      requestId: "seed-list-anchor",
     });
     const res = await app.request(`/api/${PUB_KEY}/anchors`);
     expect(res.status).toBe(200);
@@ -78,22 +87,28 @@ describe("anchor routes", () => {
 
     try {
       const app = createTestApp(connMgr, PUB_KEY);
+      const conn = connMgr.getConnection(PUB_KEY);
+      const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
 
-      const olderRes = await app.request(`/api/${PUB_KEY}/anchors`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: "Older", source: "manual" }),
+      const olderRes = await service.microEditAsset({
+        assetId: null,
+        question: "Older",
+        answer: null,
+        source: "manual",
+        requestId: "seed-older-anchor",
       });
 
       currentTime = 2000;
-      const newerRes = await app.request(`/api/${PUB_KEY}/anchors`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: "Newer", source: "manual" }),
+      const newerRes = await service.microEditAsset({
+        assetId: null,
+        question: "Newer",
+        answer: null,
+        source: "manual",
+        requestId: "seed-newer-anchor",
       });
 
-      const { data: olderAnchor } = await olderRes.json();
-      const { data: newerAnchor } = await newerRes.json();
+      const olderAnchor = olderRes.asset;
+      const newerAnchor = newerRes.asset;
 
       expect(olderAnchor.question).toBe("Older");
       expect(newerAnchor.question).toBe("Newer");
@@ -104,11 +119,11 @@ describe("anchor routes", () => {
       const updateRes = await app.request(`/api/${PUB_KEY}/anchors/${olderAnchor.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answer: "edited later" }),
+        body: JSON.stringify({ requestId: "route-edit-ordering", answer: "edited later" }),
       });
       expect(updateRes.status).toBe(200);
       const updatedJson = await updateRes.json();
-      expect(updatedJson.data.updatedAt).toBe(3000);
+      expect(updatedJson.data.asset.updatedAt).toBe(3000);
 
       const res = await app.request(`/api/${PUB_KEY}/anchors`);
       expect(res.status).toBe(200);
@@ -161,33 +176,74 @@ describe("anchor routes", () => {
 
   it("PUT /api/:pubKey/anchors/:id → 200 updates anchor", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
-    const createRes = await app.request(`/api/${PUB_KEY}/anchors`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: "Q1", source: "manual" }),
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: null,
+      source: "manual",
+      requestId: "seed-put-anchor",
     });
-    const { data: created } = await createRes.json();
 
-    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.id}`, {
+    const missingRequestIdRes = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer: "A1" }),
+      body: JSON.stringify({ answer: "A1", source: "manual", question: "Q1" }),
+    });
+    expect(missingRequestIdRes.status).toBe(400);
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "route-put-anchor",
+        question: "Q1",
+        answer: "A1",
+        source: "manual",
+      }),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.answer).toBe("A1");
+    expect(json.data.asset.answer).toBe("A1");
+  });
+
+  it("POST /api/:pubKey/anchors/:id/deny routes through gateway", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: "A1",
+      source: "reading",
+      requestId: "seed-deny-anchor",
+    });
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}/deny`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: "route-deny-anchor" }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.asset.answer).toBeNull();
   });
 
   it("DELETE /api/:pubKey/anchors/:id → 204", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
-    const createRes = await app.request(`/api/${PUB_KEY}/anchors`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: "Q1", source: "manual" }),
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: null,
+      source: "manual",
+      requestId: "seed-delete-anchor",
     });
-    const { data: created } = await createRes.json();
 
-    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.id}`, {
+    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
@@ -195,10 +251,14 @@ describe("anchor routes", () => {
 
   it("DELETE /api/:pubKey/anchors → 204 clears all", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
-    await app.request(`/api/${PUB_KEY}/anchors`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: "Q1", source: "manual" }),
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: null,
+      source: "manual",
+      requestId: "seed-clear-anchor",
     });
     const res = await app.request(`/api/${PUB_KEY}/anchors`, { method: "DELETE" });
     expect(res.status).toBe(204);

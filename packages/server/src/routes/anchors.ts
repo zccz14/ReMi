@@ -3,13 +3,13 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, sql, desc } from "drizzle-orm";
 import { soulAnchors } from "../db/schema.js";
-import { upsertEmbedding, deleteEmbedding } from "../embedding/index.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { ChatClient } from "../llm/client.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { Role } from "../middleware/role.js";
 import type { Context } from "hono";
 import { logger, shortKey } from "../logger.js";
+import { getApprovalServiceFromContext, mapApprovalError } from "./approval.js";
 
 const log = logger.child({ module: "anchors" });
 
@@ -25,14 +25,19 @@ declare module "hono" {
 
 const createAnchorSchema = z.object({
   question: z.string().min(1),
-  answer: z.string().optional(),
-  source: z.enum(["interview", "manual"]),
+  answer: z.string().nullable().optional(),
+  source: z.enum(["interview", "manual", "reading"]),
 });
 
 const updateAnchorSchema = z.object({
   question: z.string().min(1).optional(),
   answer: z.string().nullable().optional(),
-  source: z.enum(["interview", "manual"]).optional(),
+  source: z.enum(["interview", "manual", "reading"]).optional(),
+  requestId: z.string().trim().min(1).optional(),
+});
+
+const denyAnchorSchema = z.object({
+  requestId: z.string().trim().min(1).optional(),
 });
 
 function requireOwner(c: Context): Response | null {
@@ -88,47 +93,20 @@ anchorRoutes.post(
       return c.json({ error: "VALIDATION_ERROR", message: result.error.message }, 422);
     }
   }),
-  (c) => {
+  async (c) => {
     const forbidden = requireOwner(c);
     if (forbidden) return forbidden;
 
-    const pubKey = c.req.param("pubKey");
     const body = c.req.valid("json");
-    const now = Date.now();
-    const id = crypto.randomUUID();
+    const pubKey = c.req.param("pubKey");
+    const candidate = getApprovalServiceFromContext(c).createCandidate(body);
 
-    const conn = c.get("connMgr").getConnection(pubKey);
-    conn.drizzle
-      .insert(soulAnchors)
-      .values({
-        id,
-        question: body.question,
-        answer: body.answer ?? null,
-        source: body.source,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
+    log.info(
+      { soul: shortKey(pubKey), candidateId: candidate.id, source: body.source },
+      "Manual candidate created",
+    );
 
-    const anchor = conn.drizzle.select().from(soulAnchors).where(eq(soulAnchors.id, id)).get();
-
-    log.info({ soul: shortKey(pubKey), anchorId: id, source: body.source }, "Anchor created");
-
-    // Async embedding generation (fire-and-forget, non-blocking)
-    const embeddingClient = c.get("embeddingClient");
-    if (embeddingClient) {
-      const text = body.question + "\n" + (body.answer ?? "");
-      embeddingClient
-        .embed([text])
-        .then((vectors) => {
-          upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
-        })
-        .catch((err) => {
-          log.error({ err, anchorId: id }, "Failed to generate embedding for anchor");
-        });
-    }
-
-    return c.json({ data: anchor }, 201);
+    return c.json({ data: candidate }, 201);
   },
 );
 
@@ -156,15 +134,19 @@ anchorRoutes.put(
       return c.json({ error: "VALIDATION_ERROR", message: result.error.message }, 422);
     }
   }),
-  (c) => {
+  async (c) => {
     const forbidden = requireOwner(c);
     if (forbidden) return forbidden;
 
-    const pubKey = c.req.param("pubKey");
     const id = c.req.param("id");
     const body = c.req.valid("json");
-    const now = Date.now();
+    const requestId = body.requestId?.trim();
 
+    if (!requestId) {
+      return c.json({ error: "VALIDATION_ERROR", message: "requestId is required" }, 400);
+    }
+
+    const pubKey = c.req.param("pubKey");
     const conn = c.get("connMgr").getConnection(pubKey);
     const existing = conn.drizzle.select().from(soulAnchors).where(eq(soulAnchors.id, id)).get();
 
@@ -172,33 +154,44 @@ anchorRoutes.put(
       return c.json({ error: "ANCHOR_NOT_FOUND", message: "Anchor not found" }, 404);
     }
 
-    conn.drizzle
-      .update(soulAnchors)
-      .set({ ...body, updatedAt: now })
-      .where(eq(soulAnchors.id, id))
-      .run();
+    try {
+      const data = await getApprovalServiceFromContext(c).microEditAsset({
+        assetId: id,
+        question: body.question ?? existing.question,
+        answer: body.answer === undefined ? existing.answer : body.answer,
+        source: body.source ?? existing.source,
+        requestId,
+      });
 
-    const updated = conn.drizzle.select().from(soulAnchors).where(eq(soulAnchors.id, id)).get();
+      log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor updated through approval gateway");
+      return c.json({ data });
+    } catch (error) {
+      return mapApprovalError(c, error);
+    }
+  },
+);
 
-    log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor updated");
+anchorRoutes.post(
+  "/:pubKey/anchors/:id/deny",
+  zValidator("json", denyAnchorSchema.partial(), () => undefined),
+  async (c) => {
+    const forbidden = requireOwner(c);
+    if (forbidden) return forbidden;
 
-    // Async embedding update (fire-and-forget)
-    if (updated) {
-      const embeddingClient = c.get("embeddingClient");
-      if (embeddingClient) {
-        const text = updated.question + "\n" + (updated.answer ?? "");
-        embeddingClient
-          .embed([text])
-          .then((vectors) => {
-            upsertEmbedding(conn.raw, "soul_anchors_vec", id, vectors[0]);
-          })
-          .catch((err) => {
-            log.error({ err, anchorId: id }, "Failed to update embedding for anchor");
-          });
-      }
+    const requestId = c.req.valid("json").requestId?.trim();
+    if (!requestId) {
+      return c.json({ error: "VALIDATION_ERROR", message: "requestId is required" }, 400);
     }
 
-    return c.json({ data: updated });
+    try {
+      const data = await getApprovalServiceFromContext(c).denyAsset({
+        assetId: c.req.param("id"),
+        requestId,
+      });
+      return c.json({ data });
+    } catch (error) {
+      return mapApprovalError(c, error);
+    }
   },
 );
 
@@ -211,7 +204,6 @@ anchorRoutes.delete("/:pubKey/anchors/:id", (c) => {
   const id = c.req.param("id");
   const conn = c.get("connMgr").getConnection(pubKey);
   conn.drizzle.delete(soulAnchors).where(eq(soulAnchors.id, id)).run();
-  deleteEmbedding(conn.raw, "soul_anchors_vec", id);
 
   log.info({ soul: shortKey(pubKey), anchorId: id }, "Anchor deleted");
   return c.body(null, 204);
