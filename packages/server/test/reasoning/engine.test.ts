@@ -161,6 +161,80 @@ describe("ReasoningEngine", () => {
     expect(events.some((event) => event.type === "done")).toBe(true);
   });
 
+  it("should fallback to default goals when decomposition JSON misses required goals", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            userQuery: "被模型改写的问题",
+            currentTime: "1999-01-01T00:00:00.000Z",
+            answerGoals: [{ id: "domain_answer", goal: "只回答问题", required: true }],
+            successCriteria: ["..."],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+    await new ReasoningEngine(deps).handleMessage("你好", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone: vi.fn(),
+      emitError: vi.fn(),
+    });
+
+    const assessmentPrompt = deps.chatClient.chat.mock.calls[1][0].messages[1].content;
+    expect(assessmentPrompt).toContain("identity_style");
+    expect(assessmentPrompt).toContain("relationship_boundary");
+    expect(assessmentPrompt).toContain("domain_answer");
+  });
+
+  it("should ignore model supplied userQuery and currentTime in favor of engine owned values", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-28T12:34:56.000Z"));
+
+    try {
+      const deps = createMockDeps();
+      deps.chatClient.chat.mockReset();
+      deps.chatClient.chat
+        .mockResolvedValueOnce(
+          createChatResponse(
+            JSON.stringify({
+              userQuery: "被模型改写的问题",
+              currentTime: "1999-01-01T00:00:00.000Z",
+              answerGoals: [
+                { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+                {
+                  id: "relationship_boundary",
+                  goal: "对方是谁，我与对方的关系和沟通边界",
+                  required: true,
+                },
+                { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+              ],
+              successCriteria: ["基于证据回答"],
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+      await new ReasoningEngine(deps).handleMessage("真实用户问题", "visitor-key", {
+        emitThinking: vi.fn(),
+        emitToken: vi.fn(),
+        emitDone: vi.fn(),
+        emitError: vi.fn(),
+      });
+
+      const prompt = getGenerationPrompt(deps);
+      expect(prompt).toContain("## User Question\n真实用户问题");
+      expect(prompt).not.toContain("被模型改写的问题");
+      expect(prompt).toContain("## Current Time\n2026-03-28T12:34:56.000Z");
+      expect(prompt).not.toContain("1999-01-01T00:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("should include current time in final structured generation prompt", async () => {
     const deps = createMockDeps();
 
@@ -259,6 +333,48 @@ describe("ReasoningEngine", () => {
     expect(prompt).toContain("- 缺少更近期更新");
     expect(prompt).toContain("## Non-evidence Reasoning");
     expect(prompt).toContain("已有锚点能部分回答，但近期性仍需保守处理");
+    expect(prompt).toContain("StoppedBecause: no-new-anchors");
+  });
+
+  it("should not leak reasoning chain when judgment parsing fails", async () => {
+    const deps = createMockDeps();
+    deps.chatClient.chat.mockReset();
+    deps.chatClient.chat
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("test")))
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            sufficient: "false",
+            goalStatus: [],
+            nextQuery: "继续找",
+            reasoningChain: ["这条链路不该泄漏"],
+            narrative: "思考中...",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            sufficient: "false",
+            goalStatus: [],
+            nextQuery: "继续找",
+            reasoningChain: ["这条链路也不该泄漏"],
+            narrative: "思考中...",
+          }),
+        ),
+      );
+
+    await new ReasoningEngine(deps).handleMessage("test", "visitor-key", {
+      emitThinking: vi.fn(),
+      emitToken: vi.fn(),
+      emitDone: vi.fn(),
+      emitError: vi.fn(),
+    });
+
+    const prompt = getGenerationPrompt(deps);
+    expect(prompt).toContain("StoppedBecause: parse-failure");
+    expect(prompt).not.toContain("这条链路不该泄漏");
+    expect(prompt).not.toContain("这条链路也不该泄漏");
   });
 
   it("should continue to final answer generation when recall is insufficient", async () => {

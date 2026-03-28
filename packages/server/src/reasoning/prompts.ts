@@ -37,6 +37,7 @@ interface ReasoningGenerationPromptInput {
   goalStatus?: ReasoningGoalStatus[];
   missingInformation?: string[];
   reasoningChain?: string[];
+  stoppedBecause?: string;
   temporalValiditySatisfied?: boolean;
 }
 
@@ -162,6 +163,7 @@ export function buildReasoningGenerationPrompt(input: ReasoningGenerationPromptI
     : "- (none)";
   const reasoningSection = [
     ...(input.goalStatus?.map(renderGoalStatus) ?? []),
+    ...(input.stoppedBecause ? [`- StoppedBecause: ${input.stoppedBecause}`] : []),
     ...((input.reasoningChain?.length
       ? input.reasoningChain.map((item) => `- ${item}`)
       : ["- (none)"]) as string[]),

@@ -66,11 +66,10 @@ type ParsedDecomposition = {
   answerGoals: ReasoningAnswerGoal[];
 };
 
-export class ReasoningEngine {
-  constructor(private deps: ReasoningEngineDeps) {}
-
-  private parseRecallJudgment(content: string): {
-    sufficient: boolean;
+type ParsedJudgmentResult = {
+  valid: boolean;
+  judgment: {
+    sufficient?: boolean;
     nextQuery?: string;
     narrative?: string;
     goalStatus?: {
@@ -81,28 +80,65 @@ export class ReasoningEngine {
       knownAnchorIds?: unknown;
       missingKeys?: unknown;
     }[];
-    reasoningChain?: string[];
-  } {
+  };
+  reasoningChain?: string[];
+};
+
+function isValidGoalStatusEntry(entry: Record<string, unknown>): boolean {
+  if (typeof entry.goalId !== "string" || !entry.goalId.trim()) {
+    return false;
+  }
+
+  if (entry.sufficient !== undefined && typeof entry.sufficient !== "boolean") {
+    return false;
+  }
+
+  for (const key of ["known", "missing", "knownAnchorIds", "missingKeys"] as const) {
+    const value = entry[key];
+    if (value !== undefined && !Array.isArray(value)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export class ReasoningEngine {
+  constructor(private deps: ReasoningEngineDeps) {}
+
+  private parseRecallJudgment(content: string): ParsedJudgmentResult {
     const parsed = JSON.parse(content) as {
-      sufficient?: boolean;
-      nextQuery?: string;
-      narrative?: string;
+      sufficient?: unknown;
+      nextQuery?: unknown;
+      narrative?: unknown;
       goalStatus?: unknown[];
       reasoningChain?: unknown;
     };
 
+    const goalStatus = Array.isArray(parsed.goalStatus)
+      ? parsed.goalStatus.filter(
+          (item): item is Record<string, unknown> => !!item && typeof item === "object",
+        )
+      : undefined;
+    const reasoningChain = Array.isArray(parsed.reasoningChain)
+      ? parsed.reasoningChain.filter((item): item is string => typeof item === "string")
+      : undefined;
+    const valid =
+      (parsed.sufficient === undefined || typeof parsed.sufficient === "boolean") &&
+      (parsed.nextQuery === undefined || typeof parsed.nextQuery === "string") &&
+      (parsed.narrative === undefined || typeof parsed.narrative === "string") &&
+      (parsed.goalStatus === undefined ||
+        (goalStatus !== undefined && goalStatus.every((entry) => isValidGoalStatusEntry(entry))));
+
     return {
-      sufficient: parsed.sufficient === true,
-      nextQuery: typeof parsed.nextQuery === "string" ? parsed.nextQuery : undefined,
-      narrative: typeof parsed.narrative === "string" ? parsed.narrative : undefined,
-      goalStatus: Array.isArray(parsed.goalStatus)
-        ? parsed.goalStatus.filter(
-            (item): item is Record<string, unknown> => !!item && typeof item === "object",
-          )
-        : undefined,
-      reasoningChain: Array.isArray(parsed.reasoningChain)
-        ? parsed.reasoningChain.filter((item): item is string => typeof item === "string")
-        : undefined,
+      valid,
+      judgment: {
+        sufficient: typeof parsed.sufficient === "boolean" ? parsed.sufficient : undefined,
+        nextQuery: typeof parsed.nextQuery === "string" ? parsed.nextQuery : undefined,
+        narrative: typeof parsed.narrative === "string" ? parsed.narrative : undefined,
+        goalStatus,
+      },
+      reasoningChain: valid ? reasoningChain : undefined,
     };
   }
 
@@ -186,15 +222,21 @@ export class ReasoningEngine {
       return fallback;
     }
 
+    const requiredGoalIds = new Set(
+      answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
+    );
+    const hasRequiredDefaults =
+      requiredGoalIds.has("identity_style") &&
+      requiredGoalIds.has("relationship_boundary") &&
+      requiredGoalIds.has("domain_answer");
+
+    if (!hasRequiredDefaults) {
+      return fallback;
+    }
+
     return {
-      userQuery:
-        typeof parsed.userQuery === "string" && parsed.userQuery.trim()
-          ? parsed.userQuery
-          : fallback.userQuery,
-      currentTime:
-        typeof parsed.currentTime === "string" && parsed.currentTime.trim()
-          ? parsed.currentTime
-          : fallback.currentTime,
+      userQuery: fallback.userQuery,
+      currentTime: fallback.currentTime,
       answerGoals,
     };
   }
@@ -293,8 +335,13 @@ export class ReasoningEngine {
           }),
         parseJudgment: (value) => {
           const parsed = this.parseRecallJudgment(value);
-          lastReasoningChain = parsed.reasoningChain ?? lastReasoningChain;
-          return parsed;
+          if (!parsed.valid) {
+            throw new Error("Invalid reasoning judgment");
+          }
+          if (parsed.valid && parsed.reasoningChain?.length) {
+            lastReasoningChain = parsed.reasoningChain;
+          }
+          return parsed.judgment;
         },
         onNarrative: (n) => emitter.emitThinking(n),
       });
@@ -309,6 +356,7 @@ export class ReasoningEngine {
         evidenceAnchors: selectedAnchors,
         goalStatus: recall.goalStatus,
         missingInformation,
+        stoppedBecause: recall.stoppedBecause,
         reasoningChain: lastReasoningChain,
         temporalValiditySatisfied: !requiredGoalIds.includes("temporal_validity")
           ? undefined
