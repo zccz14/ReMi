@@ -139,6 +139,40 @@ describe("useAnchors", () => {
     expect(toast.success).toHaveBeenCalledWith("Done");
   });
 
+  it("should reuse the same requestId when retrying the same micro-edit", async () => {
+    vi.spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce("33333333-3333-3333-3333-333333333333")
+      .mockReturnValueOnce("44444444-4444-4444-4444-444444444444");
+    const api = createMockApiClient();
+    (api.put as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({ data: { actionId: "action-1", asset: mockAnchors[0] } });
+    const { result } = renderHook(() => useAnchors(api));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.update("a1", { question: "Updated question", answer: null });
+    });
+
+    await act(async () => {
+      await result.current.update("a1", { question: "Updated question", answer: null });
+    });
+
+    expect(api.put).toHaveBeenNthCalledWith(1, "/api/test-key/anchors/a1", {
+      question: "Updated question",
+      answer: null,
+      requestId: "33333333-3333-3333-3333-333333333333",
+    });
+    expect(api.put).toHaveBeenNthCalledWith(2, "/api/test-key/anchors/a1", {
+      question: "Updated question",
+      answer: null,
+      requestId: "33333333-3333-3333-3333-333333333333",
+    });
+  });
+
   it("should deny an anchor instead of calling legacy delete", async () => {
     const requestId = "22222222-2222-2222-2222-222222222222";
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValueOnce(requestId);
@@ -163,6 +197,57 @@ describe("useAnchors", () => {
     expect(result.current.anchors).toEqual(reloadedAnchors);
     expect(result.current.total).toBe(1);
     expect(toast.success).toHaveBeenCalledWith("Done");
+  });
+
+  it("should reuse the same requestId when retrying the same deny", async () => {
+    vi.spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce("55555555-5555-5555-5555-555555555555")
+      .mockReturnValueOnce("66666666-6666-6666-6666-666666666666");
+    const api = createMockApiClient();
+    (api.post as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        data: { actionId: "action-2", asset: { ...mockAnchors[0], answer: null } },
+      });
+    const { result } = renderHook(() => useAnchors(api));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.remove("a1");
+    });
+
+    await act(async () => {
+      await result.current.remove("a1");
+    });
+
+    expect(api.post).toHaveBeenNthCalledWith(1, "/api/test-key/anchors/a1/deny", {
+      requestId: "55555555-5555-5555-5555-555555555555",
+    });
+    expect(api.post).toHaveBeenNthCalledWith(2, "/api/test-key/anchors/a1/deny", {
+      requestId: "55555555-5555-5555-5555-555555555555",
+    });
+  });
+
+  it("keeps null answers and reading sources intact when loading formal assets", async () => {
+    const api = createMockApiClient();
+    const { result } = renderHook(() => useAnchors(api));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.anchors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "a2",
+          answer: null,
+          source: "reading",
+        }),
+      ]),
+    );
   });
 
   it("should call toast.error when load fails", async () => {

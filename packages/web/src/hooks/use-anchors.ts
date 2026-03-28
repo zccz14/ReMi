@@ -1,15 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import type { ApiClient } from "../lib/api-client";
+import type { ApprovalAsset } from "../lib/approval-api";
 
-interface Anchor {
-  id: string;
-  question: string;
-  answer: string | null;
-  source: "interview" | "manual" | "reading";
-  createdAt: number;
-  updatedAt: number;
-}
+type Anchor = ApprovalAsset;
 
 function createRequestId() {
   return globalThis.crypto.randomUUID();
@@ -19,6 +13,22 @@ export function useAnchors(apiClient: ApiClient) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const requestIdsRef = useRef(new Map<string, string>());
+
+  const claimRequestId = useCallback((mutationKey: string) => {
+    const existing = requestIdsRef.current.get(mutationKey);
+    if (existing) {
+      return existing;
+    }
+
+    const requestId = createRequestId();
+    requestIdsRef.current.set(mutationKey, requestId);
+    return requestId;
+  }, []);
+
+  const clearRequestId = useCallback((mutationKey: string) => {
+    requestIdsRef.current.delete(mutationKey);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,10 +64,22 @@ export function useAnchors(apiClient: ApiClient) {
   };
 
   const update = async (id: string, data: { question?: string; answer?: string | null }) => {
+    const mutationKey = JSON.stringify([
+      "micro-edit",
+      id,
+      data.question ?? null,
+      data.answer ?? null,
+    ]);
+    const requestId = claimRequestId(mutationKey);
+
     try {
       const path = apiClient.ownerPath(`/anchors/${id}`);
-      await apiClient.put(path, { ...data, requestId: createRequestId() });
+      await apiClient.put<{ data: { actionId: string; asset: Anchor } }>(path, {
+        ...data,
+        requestId,
+      });
       await load();
+      clearRequestId(mutationKey);
       toast.success("Done");
     } catch {
       toast.error("Operation failed");
@@ -65,10 +87,14 @@ export function useAnchors(apiClient: ApiClient) {
   };
 
   const remove = async (id: string) => {
+    const mutationKey = JSON.stringify(["deny", id]);
+    const requestId = claimRequestId(mutationKey);
+
     try {
       const path = apiClient.ownerPath(`/anchors/${id}/deny`);
-      await apiClient.post(path, { requestId: createRequestId() });
+      await apiClient.post<{ data: { actionId: string; asset: Anchor } }>(path, { requestId });
       await load();
+      clearRequestId(mutationKey);
       toast.success("Done");
     } catch {
       toast.error("Operation failed");

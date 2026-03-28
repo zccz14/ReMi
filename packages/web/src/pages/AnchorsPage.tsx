@@ -25,7 +25,14 @@ import { cn } from "@/lib/utils";
 export function AnchorsPage() {
   const { t, i18n } = useTranslation();
   const { apiClient } = useAuth();
-  const { anchors, total, loading, create, update, remove } = useAnchors(apiClient);
+  const {
+    anchors,
+    total,
+    loading,
+    create,
+    update: gatewayMicroEdit,
+    remove: gatewayDeny,
+  } = useAnchors(apiClient);
   const [search, setSearch] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editQ, setEditQ] = useState("");
@@ -63,7 +70,7 @@ export function AnchorsPage() {
 
   const saveEdit = async () => {
     if (!editId) return;
-    await update(editId, { question: editQ, answer: editA || null });
+    await gatewayMicroEdit(editId, { question: editQ, answer: editA || null });
     setEditId(null);
   };
 
@@ -154,7 +161,10 @@ export function AnchorsPage() {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                          <AlertDialogAction variant="destructive" onClick={() => remove(a.id)}>
+                          <AlertDialogAction
+                            variant="destructive"
+                            onClick={() => gatewayDeny(a.id)}
+                          >
                             {t("anchors.delete")}
                           </AlertDialogAction>
                         </AlertDialogFooter>
