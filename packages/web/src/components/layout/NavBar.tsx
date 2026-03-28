@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { MessageSquare, Users, CheckSquare2, User, type LucideIcon } from "lucide-react";
+import { MessageSquare, Users, CheckSquare2, Compass, User, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getStoredApprovalPath } from "../../lib/approval-path";
 
@@ -8,6 +8,7 @@ const navItems: { path: string; labelKey: string; icon: LucideIcon }[] = [
   { path: "/messages", labelKey: "nav.messages", icon: MessageSquare },
   { path: "/contacts", labelKey: "nav.contacts", icon: Users },
   { path: "/approval/anchors", labelKey: "nav.approval", icon: CheckSquare2 },
+  { path: "/discover", labelKey: "nav.discover", icon: Compass },
   { path: "/me", labelKey: "nav.me", icon: User },
 ];
 

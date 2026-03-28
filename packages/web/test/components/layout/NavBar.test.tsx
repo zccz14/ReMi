@@ -12,6 +12,16 @@ describe("NavBar", () => {
     cleanup();
   });
 
+  it("keeps five bottom-nav items including discover", () => {
+    renderWithProviders(<NavBar />, { route: "/messages" });
+
+    expect(screen.getAllByRole("link")).toHaveLength(5);
+    expect(screen.getByRole("link", { name: /发现|Discover/i })).toHaveAttribute(
+      "href",
+      "/discover",
+    );
+  });
+
   it("links the center tab to /approval/anchors by default", () => {
     renderWithProviders(<NavBar />, { route: "/messages" });
 
