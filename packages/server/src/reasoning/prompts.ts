@@ -257,7 +257,7 @@ ${visitorKey}`,
 /** 分身回复 system prompt */
 export function buildAvatarSystemPrompt(recalledAnchors: SoulAnchor[]): string {
   return buildReasoningGenerationPrompt({
-    currentTime: new Date(0).toISOString(),
+    currentTime: new Date().toISOString(),
     userQuestion: "请基于已知锚点自然回答当前用户问题。",
     answerGoals: [
       {

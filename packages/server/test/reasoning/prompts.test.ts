@@ -124,6 +124,7 @@ describe("reasoning prompts", () => {
     const prompt = buildAvatarSystemPrompt([createAnchor()]);
 
     expect(prompt).toContain("## Current Time");
+    expect(prompt).not.toContain("1970-01-01T00:00:00.000Z");
     expect(prompt).toContain("## Evidence");
     expect(prompt).toContain("UpdatedAt: 2026-03-27T21:13:08.000Z");
     expect(prompt).toContain("## Missing Information");
