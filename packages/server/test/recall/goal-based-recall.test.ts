@@ -117,6 +117,7 @@ describe("goalBasedRecall", () => {
 
   it("returns normalized metadata for full injection", async () => {
     const options = createOptions({
+      goals: ["identity_style", "domain_answer"],
       countAnchors: vi.fn().mockResolvedValue(RECALL_FULL_INJECTION_THRESHOLD),
       listAnchors: vi.fn().mockResolvedValue([createAnchor("a1", "问题1")]),
     });
@@ -127,11 +128,100 @@ describe("goalBasedRecall", () => {
       expect.objectContaining({
         strategy: "full-injection",
         rounds: 0,
-        stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
+        sufficient: false,
+        stoppedBecause: RECALL_STOP_REASONS.MAX_ROUNDS,
         goalStatus: expect.any(Array),
         roundSummaries: [],
       }),
     );
+    expect(result.goalStatus).toEqual([
+      expect.objectContaining({
+        goalId: "identity_style",
+        sufficient: false,
+        knownAnchorIds: ["a1"],
+        missingKeys: ["unassessed-required-goal"],
+      }),
+      expect.objectContaining({
+        goalId: "domain_answer",
+        sufficient: false,
+        knownAnchorIds: ["a1"],
+        missingKeys: ["unassessed-required-goal"],
+      }),
+    ]);
+  });
+
+  it("treats invalid parsed nextQuery shape as parse-failure", async () => {
+    const options = createOptions({
+      parseJudgment: vi.fn().mockReturnValue({
+        sufficient: false,
+        nextQuery: 123,
+        goalStatus: [createGoalStatus({ sufficient: false, missingKeys: ["domain-fact-missing"] })],
+      }),
+    });
+
+    const result = await goalBasedRecall(options as never);
+
+    expect(result.stoppedBecause).toBe(RECALL_STOP_REASONS.PARSE_FAILURE);
+    expect(result.sufficient).toBe(false);
+  });
+
+  it("treats invalid goalStatus arrays as parse-failure", async () => {
+    const options = createOptions({
+      parseJudgment: vi.fn().mockReturnValue({
+        sufficient: false,
+        nextQuery: "继续问",
+        goalStatus: [{ goalId: "domain_answer", sufficient: false, missingKeys: "bad-shape" }],
+      }),
+    });
+
+    const result = await goalBasedRecall(options as never);
+
+    expect(result.stoppedBecause).toBe(RECALL_STOP_REASONS.PARSE_FAILURE);
+  });
+
+  it("drops unknown goal ids and backfills required goals deterministically", async () => {
+    const options = createOptions({
+      goals: ["domain_answer"],
+      parseJudgment: vi.fn().mockReturnValue({
+        sufficient: false,
+        nextQuery: "继续问",
+        goalStatus: [createGoalStatus({ goalId: "invented_goal", missingKeys: [] })],
+      }),
+    });
+
+    const result = await goalBasedRecall(options as never);
+
+    expect(result.goalStatus).toEqual([
+      expect.objectContaining({
+        goalId: "domain_answer",
+        sufficient: false,
+        missingKeys: ["unassessed-required-goal"],
+      }),
+    ]);
+  });
+
+  it("uses the last duplicate goal entry when goal ids repeat", async () => {
+    const options = createOptions({
+      goals: ["domain_answer"],
+      parseJudgment: vi.fn().mockReturnValue({
+        sufficient: false,
+        nextQuery: "继续问",
+        goalStatus: [
+          createGoalStatus({ sufficient: false, missingKeys: ["domain-fact-missing"] }),
+          createGoalStatus({ sufficient: true, missingKeys: [] }),
+        ],
+      }),
+    });
+
+    const result = await goalBasedRecall(options as never);
+
+    expect(result.goalStatus).toEqual([
+      expect.objectContaining({
+        goalId: "domain_answer",
+        sufficient: true,
+        missingKeys: [],
+      }),
+    ]);
   });
 
   it("computes overall sufficient from required goal status instead of trusting the model", async () => {
@@ -185,6 +275,7 @@ describe("goalBasedRecall", () => {
 
   it("normalizes unknown missing keys to other", async () => {
     const options = createOptions({
+      goals: ["domain_answer"],
       maxRounds: 2,
       searchAnchors: vi
         .fn()
@@ -303,7 +394,7 @@ describe("goalBasedRecall", () => {
     expect(options.parseJudgment).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["", "user: hello", "  user: hello  "])(
+  it.each(["", "   ", "user: hello", "  user: hello  "])(
     "stops with empty-next-query for %j",
     async (nextQuery) => {
       const options = createOptions({

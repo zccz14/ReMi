@@ -43,6 +43,13 @@ type ParsedJudgment = {
   goalStatus?: ParsedGoalStatus[];
 };
 
+type ValidatedJudgment = {
+  sufficient?: boolean;
+  nextQuery?: string;
+  narrative?: string;
+  goalStatus?: ParsedGoalStatus[];
+};
+
 export interface GoalBasedRecallOptions {
   chatClient: ChatClient;
   embeddingClient?: EmbeddingClient;
@@ -108,6 +115,7 @@ function normalizeGoalStatuses(
   requiredGoals: string[],
 ): GoalStatus[] {
   const normalizedByGoal = new Map<string, GoalStatus>();
+  const requiredGoalSet = new Set(requiredGoals);
 
   for (const entry of parsedStatus ?? []) {
     if (!entry || typeof entry !== "object") {
@@ -116,6 +124,10 @@ function normalizeGoalStatuses(
 
     const goalId = typeof entry.goalId === "string" ? entry.goalId.trim() : "";
     if (!goalId) {
+      continue;
+    }
+
+    if (!requiredGoalSet.has(goalId)) {
       continue;
     }
 
@@ -140,7 +152,6 @@ function normalizeGoalStatuses(
     }
   }
 
-  const requiredGoalSet = new Set(requiredGoals);
   const orderedStatuses: GoalStatus[] = [];
 
   for (const goalId of requiredGoals) {
@@ -198,11 +209,80 @@ function isEmptyNextQuery(nextQuery: string | undefined, currentQuery: string): 
     return true;
   }
 
+  if (!nextQuery.trim()) {
+    return true;
+  }
+
   if (nextQuery === currentQuery) {
     return true;
   }
 
   return nextQuery.trim() === currentQuery.trim();
+}
+
+function isValidGoalStatusEntry(entry: unknown): entry is ParsedGoalStatus {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+
+  const record = entry as Record<string, unknown>;
+
+  if (typeof record.goalId !== "string" || !record.goalId.trim()) {
+    return false;
+  }
+
+  if (record.sufficient !== undefined && typeof record.sufficient !== "boolean") {
+    return false;
+  }
+
+  for (const key of ["knownAnchorIds", "missingKeys", "known", "missing"] as const) {
+    const value = record[key];
+    if (value !== undefined && !Array.isArray(value)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function validateJudgmentShape(judgment: ParsedJudgment): ValidatedJudgment | undefined {
+  if (!judgment || typeof judgment !== "object") {
+    return undefined;
+  }
+
+  if (judgment.sufficient !== undefined && typeof judgment.sufficient !== "boolean") {
+    return undefined;
+  }
+
+  if (judgment.nextQuery !== undefined && typeof judgment.nextQuery !== "string") {
+    return undefined;
+  }
+
+  if (judgment.narrative !== undefined && typeof judgment.narrative !== "string") {
+    return undefined;
+  }
+
+  if (judgment.goalStatus !== undefined) {
+    if (!Array.isArray(judgment.goalStatus)) {
+      return undefined;
+    }
+
+    if (!judgment.goalStatus.every((entry) => isValidGoalStatusEntry(entry))) {
+      return undefined;
+    }
+  }
+
+  return judgment;
+}
+
+function buildFullInjectionGoalStatus(anchors: SoulAnchor[], goals: string[]): GoalStatus[] {
+  const anchorIds = anchors.map((anchor) => anchor.id);
+  return goals.map((goalId) => ({
+    goalId,
+    sufficient: false,
+    knownAnchorIds: anchorIds,
+    missingKeys: ["unassessed-required-goal"],
+  }));
 }
 
 async function getJudgmentWithRetry(
@@ -221,7 +301,12 @@ async function getJudgmentWithRetry(
     const response = await options.chatClient.chat({ messages });
 
     try {
-      const judgment = options.parseJudgment(response.content);
+      const parsedJudgment = options.parseJudgment(response.content);
+      const judgment = validateJudgmentShape(parsedJudgment);
+      if (!judgment) {
+        parseFailures += 1;
+        continue;
+      }
       return { judgment, narrative: judgment.narrative, failed: false };
     } catch {
       parseFailures += 1;
@@ -238,19 +323,15 @@ export async function goalBasedRecall(
 
   if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD) {
     const anchors = await options.listAnchors();
+    const goalStatus = buildFullInjectionGoalStatus(anchors, options.goals);
     return {
       anchors,
       narratives: [],
       rounds: 0,
-      sufficient: true,
+      sufficient: computeOverallSufficient(goalStatus, options.goals),
       strategy: "full-injection",
-      goalStatus: options.goals.map((goalId) => ({
-        goalId,
-        sufficient: true,
-        knownAnchorIds: anchors.map((anchor) => anchor.id),
-        missingKeys: [],
-      })),
-      stoppedBecause: RECALL_STOP_REASONS.SUFFICIENT,
+      goalStatus,
+      stoppedBecause: RECALL_STOP_REASONS.MAX_ROUNDS,
       roundSummaries: [],
     };
   }
@@ -318,6 +399,8 @@ export async function goalBasedRecall(
     let stoppedCandidate: RecallStopReason | undefined;
     if (sufficient) {
       stoppedCandidate = RECALL_STOP_REASONS.SUFFICIENT;
+    } else if (isEmptyNextQuery(judgmentResult.judgment.nextQuery, query)) {
+      stoppedCandidate = RECALL_STOP_REASONS.EMPTY_NEXT_QUERY;
     } else if (newAnchorIds.length === 0) {
       stoppedCandidate = RECALL_STOP_REASONS.NO_NEW_ANCHORS;
     } else if (
@@ -325,8 +408,6 @@ export async function goalBasedRecall(
       missingSignature === previousMissingSignature
     ) {
       stoppedCandidate = RECALL_STOP_REASONS.NO_MISSING_REDUCED;
-    } else if (isEmptyNextQuery(judgmentResult.judgment.nextQuery, query)) {
-      stoppedCandidate = RECALL_STOP_REASONS.EMPTY_NEXT_QUERY;
     }
 
     roundSummaries.push({
