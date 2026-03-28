@@ -889,6 +889,81 @@ describe("AvatarInferenceRuntime", () => {
     }
   });
 
+  it("separates raw runtime metadata from reasoning-facing storage metadata", async () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient: createChatClient(),
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const cachedAnchor: SoulAnchor = {
+      id: "cached-anchor",
+      question: "之前聊过什么",
+      answer: "之前提过路线偏好",
+      source: "interview",
+      createdAt: Date.parse("2026-03-20T12:00:00.000Z"),
+      updatedAt: Date.parse("2026-03-21T12:00:00.000Z"),
+    };
+
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(runtime["deps"].chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("继续之前的话题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "继续之前的话题" }],
+      initialAnchors: [cachedAnchor],
+      stream: true,
+    });
+
+    expect(mockGoalBasedRecall).toHaveBeenCalledWith(
+      expect.objectContaining({ initialAnchors: [cachedAnchor] }),
+    );
+    expect(runtime.getPreparedMetadata(request)).toEqual({
+      thinkingNarratives: ["思考中..."],
+      recalledAnchorIds: ["cached-anchor", "anchor-1"],
+      anchorSelectionStrategy: "recall-loop",
+    });
+    expect(runtime.getPreparedReasoningMetadata(request)).toEqual({
+      thinkingNarratives: ["思考中..."],
+      recalledAnchorIds: ["cached-anchor", "anchor-1"],
+      anchorSelectionStrategy: "batch-recall",
+    });
+  });
+
+  it("returns undefined prepared metadata after prepared state is consumed", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("原问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockResolvedValueOnce(createChatResponse("最终回答"));
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "原问题" }],
+      stream: false,
+    });
+
+    await runtime.run(request);
+
+    expect(runtime.getPreparedMetadata(request)).toBeUndefined();
+    expect(runtime.getPreparedReasoningMetadata(request)).toBeUndefined();
+  });
+
   it("rebuilds downstream messages from the mutable request at send time", async () => {
     const chatClient = createChatClient();
     const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<

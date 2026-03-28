@@ -2,19 +2,18 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { desc, inArray, sql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { verify as verifySignature } from "@remi/crypto";
 import { isAbsolute } from "node:path";
 
+import { AvatarInferenceRuntime } from "../avatar/runtime.js";
+import type { AvatarInferenceMessage } from "../avatar/model.js";
 import { soulAnchors } from "../db/schema.js";
-import { ReasoningEngine, type ReasoningSSEEmitter } from "../reasoning/engine.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { ChatClient } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
-import { searchSimilar } from "../embedding/index.js";
 import type { SoulAnchor } from "../types.js";
 import { logger, shortKey } from "../logger.js";
-import type { ReasoningAnchorSelectionStrategy } from "../reasoning/constants.js";
 import { canonicalizeBodyJson } from "../messaging/body.js";
 import { createLatestReasoningDebugArtifactWriter } from "../reasoning/debug-artifact.js";
 import {
@@ -115,134 +114,80 @@ async function withThreadLock<T>(threadKey: string, fn: () => Promise<T>): Promi
   }
 }
 
-function createEngine(
-  deps: {
-    ownerConn: ReturnType<ConnectionManager["getConnection"]>;
-    requesterConn: ReturnType<ConnectionManager["getConnection"]>;
-    connMgr: ConnectionManager;
-  },
-  ownerPubKey: string,
-  requesterPubKey: string,
-  chatClient: ChatClient,
-  embeddingClient: EmbeddingClient | null,
-  debugArtifactRootDir: string | null,
-): ReasoningEngine {
-  return new ReasoningEngine({
-    chatClient,
-    embeddingClient: embeddingClient ?? undefined,
-    debugArtifactWriter: debugArtifactRootDir
-      ? createLatestReasoningDebugArtifactWriter({ rootDir: debugArtifactRootDir })
+function createRuntime(input: {
+  ownerConn: ReturnType<ConnectionManager["getConnection"]>;
+  chatClient: ChatClient;
+  embeddingClient: EmbeddingClient | null;
+  debugArtifactRootDir: string | null;
+}) {
+  return new AvatarInferenceRuntime({
+    ownerConn: input.ownerConn,
+    chatClient: input.chatClient,
+    embeddingClient: input.embeddingClient,
+    debugArtifactWriter: input.debugArtifactRootDir
+      ? createLatestReasoningDebugArtifactWriter({ rootDir: input.debugArtifactRootDir })
       : undefined,
-
-    async countAnchors(): Promise<number> {
-      const row = deps.ownerConn.drizzle
-        .select({ count: sql<number>`count(*)` })
-        .from(soulAnchors)
-        .get();
-      return Number(row?.count ?? 0);
-    },
-
-    async listAnchors(limit?: number): Promise<SoulAnchor[]> {
-      const query = deps.ownerConn.drizzle
-        .select()
-        .from(soulAnchors)
-        .orderBy(desc(soulAnchors.updatedAt), desc(soulAnchors.createdAt));
-
-      return (limit === undefined ? query : query.limit(limit)).all() as SoulAnchor[];
-    },
-
-    async getMessages(_visitorKey: string, limit: number) {
-      const rows = listConversationRows(
-        deps.requesterConn.raw,
-        buildConversationKeys(ownerPubKey, requesterPubKey),
-        limit,
-      )
-        .slice(0, limit)
-        .reverse();
-      return rows.map((row) => ({
-        id: row.id,
-        role: mapSenderRole(row.sender_key, requesterPubKey),
-        content: extractStoredBodyText(decodeStoredBody(row.ciphertext_c)),
-      }));
-    },
-
-    async saveMessage(
-      _visitorKey: string,
-      role: "user" | "assistant",
-      content: string,
-      recalledAnchors?: string[],
-      anchorSelectionStrategy?: ReasoningAnchorSelectionStrategy,
-    ): Promise<{ messageId: number; sharedMessageId: string }> {
-      const result = await persistDirectMessage({
-        connMgr: deps.connMgr,
-        ownerPubKey,
-        requesterPubKey,
-        senderKey: role === "user" ? requesterPubKey : ownerPubKey,
-        senderKind: role === "assistant" ? "avatar" : "owner",
-        body: {
-          type: "text",
-          version: 1,
-          text: content,
-          recalledAnchors,
-          anchorSelectionStrategy: anchorSelectionStrategy ?? null,
-        },
-      });
-
-      return { messageId: result.localMessageId, sharedMessageId: result.sharedMessageId };
-    },
-
-    async searchAnchors(embedding: number[]): Promise<SoulAnchor[]> {
-      const results = searchSimilar(deps.ownerConn.raw, "soul_anchors_vec", embedding, 10);
-      if (results.length === 0) return [];
-      const ids = results.map((r) => r.id);
-      return deps.ownerConn.drizzle
-        .select()
-        .from(soulAnchors)
-        .where(inArray(soulAnchors.id, ids))
-        .all() as SoulAnchor[];
-    },
-
-    async getCachedAnchorIds(_visitorKey: string): Promise<string[]> {
-      const parties = buildConversationKeys(ownerPubKey, requesterPubKey);
-      const lastAssistant = deps.requesterConn.raw
-        .prepare(
-          `SELECT ciphertext_c
-           FROM direct_messages
-           WHERE party_a_key = ? AND party_b_key = ? AND sender_key = ?
-           ORDER BY id DESC
-           LIMIT 1`,
-        )
-        .get(parties.partyAKey, parties.partyBKey, ownerPubKey) as
-        | { ciphertext_c: string }
-        | undefined;
-      const body = lastAssistant ? decodeStoredBody(lastAssistant.ciphertext_c) : null;
-
-      if (!body) return [];
-      if (
-        body.anchorSelectionStrategy !== null &&
-        body.anchorSelectionStrategy !== undefined &&
-        body.anchorSelectionStrategy !== "batch-recall"
-      ) {
-        return [];
-      }
-
-      return Array.isArray(body.recalledAnchors)
-        ? body.recalledAnchors.filter((value): value is string => typeof value === "string")
-        : [];
-    },
-
-    async getAnchorsByIds(ids: string[]): Promise<SoulAnchor[]> {
-      if (ids.length === 0) return [];
-      const anchors = deps.ownerConn.drizzle
-        .select()
-        .from(soulAnchors)
-        .where(inArray(soulAnchors.id, ids))
-        .all() as SoulAnchor[];
-
-      const anchorMap = new Map(anchors.map((anchor) => [anchor.id, anchor]));
-      return ids.map((id) => anchorMap.get(id)).filter((anchor): anchor is SoulAnchor => !!anchor);
-    },
   });
+}
+
+const CACHE_ELIGIBLE_SELECTION_STRATEGIES = new Set([null, undefined, "batch-recall"]);
+const RUNTIME_CONVERSATION_WINDOW = 20;
+
+function mapConversationRowsToRuntimeMessages(
+  rows: DirectMessageRow[],
+  viewerKey: string,
+): AvatarInferenceMessage[] {
+  return rows.map((row) => ({
+    role: mapSenderRole(row.sender_key, viewerKey),
+    content: extractStoredBodyText(decodeStoredBody(row.ciphertext_c)),
+  }));
+}
+
+function getCachedAnchorIds(
+  db: ReturnType<ConnectionManager["getConnection"]>["raw"],
+  parties: { partyAKey: string; partyBKey: string },
+  ownerPubKey: string,
+): string[] {
+  const lastAssistant = db
+    .prepare(
+      `SELECT ciphertext_c
+       FROM direct_messages
+       WHERE party_a_key = ? AND party_b_key = ? AND sender_key = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+    )
+    .get(parties.partyAKey, parties.partyBKey, ownerPubKey) as { ciphertext_c: string } | undefined;
+  const body = lastAssistant ? decodeStoredBody(lastAssistant.ciphertext_c) : null;
+
+  const anchorSelectionStrategy =
+    typeof body?.anchorSelectionStrategy === "string" ||
+    body?.anchorSelectionStrategy === null ||
+    body?.anchorSelectionStrategy === undefined
+      ? body?.anchorSelectionStrategy
+      : undefined;
+
+  if (!body || !CACHE_ELIGIBLE_SELECTION_STRATEGIES.has(anchorSelectionStrategy)) {
+    return [];
+  }
+
+  return Array.isArray(body.recalledAnchors)
+    ? body.recalledAnchors.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+function getAnchorsByIds(
+  ownerConn: ReturnType<ConnectionManager["getConnection"]>,
+  ids: string[],
+): SoulAnchor[] {
+  if (ids.length === 0) return [];
+  const anchors = ownerConn.drizzle
+    .select()
+    .from(soulAnchors)
+    .where(inArray(soulAnchors.id, ids))
+    .all() as SoulAnchor[];
+
+  const anchorMap = new Map(anchors.map((anchor) => [anchor.id, anchor]));
+  return ids.map((id) => anchorMap.get(id)).filter((anchor): anchor is SoulAnchor => !!anchor);
 }
 
 function resolveReasoningDebugArtifactRootDir(): string | null {
@@ -252,7 +197,7 @@ function resolveReasoningDebugArtifactRootDir(): string | null {
 
 function createSSEEmitter(stream: {
   writeSSE: (message: { event: string; data: string }) => Promise<void>;
-}): ReasoningSSEEmitter {
+}) {
   return {
     async emitThinking(narrative: string) {
       await stream.writeSSE({ event: "thinking", data: narrative });
@@ -772,20 +717,16 @@ reasoningRoutes.post(
     );
 
     const connMgr = c.get("connMgr");
+    const ownerConn = connMgr.getConnection(ownerPubKey, { create: true });
+    const requesterConn = connMgr.getConnection(requesterPubKey, { create: true });
     const requestBody = buildStoredBody(messageInput);
-    const userText = extractStoredBodyText(requestBody);
-    const engine = createEngine(
-      {
-        ownerConn: connMgr.getConnection(ownerPubKey, { create: true }),
-        requesterConn: connMgr.getConnection(requesterPubKey, { create: true }),
-        connMgr,
-      },
-      ownerPubKey,
-      requesterPubKey,
+    const parties = buildConversationKeys(ownerPubKey, requesterPubKey);
+    const runtime = createRuntime({
+      ownerConn,
       chatClient,
       embeddingClient,
-      resolveReasoningDebugArtifactRootDir(),
-    );
+      debugArtifactRootDir: resolveReasoningDebugArtifactRootDir(),
+    });
 
     return streamSSE(c, async (stream) => {
       const emitter = createSSEEmitter(stream);
@@ -798,7 +739,68 @@ reasoningRoutes.post(
           senderKind: "owner",
           body: requestBody,
         });
-        await engine.handleMessage(userText, requesterPubKey, emitter, { skipUserPersist: true });
+
+        const conversationRows = listConversationRows(
+          requesterConn.raw,
+          parties,
+          RUNTIME_CONVERSATION_WINDOW,
+        )
+          .slice(0, RUNTIME_CONVERSATION_WINDOW)
+          .reverse();
+        const request = await runtime.createRequest({
+          avatarTarget: { publicKey: ownerPubKey },
+          conversationTurns: mapConversationRowsToRuntimeMessages(
+            conversationRows,
+            requesterPubKey,
+          ),
+          initialAnchors: getAnchorsByIds(
+            ownerConn,
+            getCachedAnchorIds(requesterConn.raw, parties, ownerPubKey),
+          ),
+          stream: true,
+          visitorKey: requesterPubKey,
+        });
+        const metadata = runtime.getPreparedReasoningMetadata(request);
+        if (!metadata) {
+          throw new Error("Prepared reasoning metadata missing");
+        }
+
+        for (const narrative of metadata.thinkingNarratives) {
+          await emitter.emitThinking(narrative);
+        }
+
+        let fullContent = "";
+        for await (const event of runtime.runStream(request)) {
+          if (event.type === "message_start") {
+            continue;
+          }
+
+          if (event.type === "text_delta") {
+            fullContent += event.text;
+            await emitter.emitToken(event.text);
+          }
+        }
+
+        const savedAssistant = await persistDirectMessage({
+          connMgr,
+          ownerPubKey,
+          requesterPubKey,
+          senderKey: ownerPubKey,
+          senderKind: "avatar",
+          body: {
+            type: "text",
+            version: 1,
+            text: fullContent,
+            recalledAnchors: metadata.recalledAnchorIds,
+            anchorSelectionStrategy: metadata.anchorSelectionStrategy,
+          },
+        });
+        await emitter.emitDone({
+          messageId: savedAssistant.localMessageId,
+          shared_message_id: savedAssistant.sharedMessageId,
+          content: fullContent,
+          recalledAnchors: metadata.recalledAnchorIds,
+        });
       } catch (error) {
         await emitter.emitError(
           "LLM_ERROR",

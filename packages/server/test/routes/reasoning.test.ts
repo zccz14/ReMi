@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { reasoningRoutes } from "../../src/routes/reasoning.js";
+import { AvatarInferenceRuntime } from "../../src/avatar/runtime.js";
 import { ConnectionManager } from "../../src/db/connection.js";
-import { upsertEmbedding } from "../../src/embedding/index.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
 import { generateKeyPair, getPublicKey } from "@remi/crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { decodeStoredBody } from "../../src/messaging/runtime.js";
 
 let tmpDir: string;
 let connMgr: ConnectionManager;
@@ -31,22 +32,11 @@ function createTestApp(
   return app;
 }
 
-function getOwnerConn() {
-  return connMgr.getConnection(testPubKey, { create: true });
-}
-
-function seedAnchor(id: string, question: string, options: { withEmbedding?: boolean } = {}) {
-  const now = Date.now();
-  const conn = getOwnerConn();
-  conn.raw
-    .prepare(
-      `INSERT INTO soul_anchors (id, question, answer, source, created_at, updated_at)
-       VALUES (?, ?, ?, 'interview', ?, ?)`,
-    )
-    .run(id, question, `${question} 的答案`, now, now);
-  if (options.withEmbedding !== false) {
-    upsertEmbedding(conn.raw, "soul_anchors_vec", id, [0.1, 0.2, 0.3, 0.4]);
-  }
+function createChatClient(): ChatClient {
+  return {
+    chat: vi.fn(),
+    chatStream: vi.fn(),
+  };
 }
 
 function seedDirectMessage(options: {
@@ -122,6 +112,18 @@ function seedReasoningMessage(options: {
   });
 }
 
+function listStoredBodies(pubKey: string) {
+  const rows = connMgr
+    .getConnection(pubKey, { create: true })
+    .raw.prepare(`SELECT sender_key, ciphertext_c FROM direct_messages ORDER BY id ASC`)
+    .all() as Array<{ sender_key: string; ciphertext_c: string }>;
+
+  return rows.map((row) => ({
+    senderKey: row.sender_key,
+    body: decodeStoredBody(row.ciphertext_c),
+  }));
+}
+
 describe("reasoning routes", () => {
   beforeEach(() => {
     tmpDir = path.join("test-tmp", "reasoning-routes-" + crypto.randomUUID());
@@ -134,6 +136,7 @@ describe("reasoning routes", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     connMgr.closeAll();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -219,48 +222,42 @@ describe("reasoning routes", () => {
     await res.text();
   });
 
-  it("POST /reasoning/message reuses legacy null strategy cache but ignores full-injection cache", async () => {
-    seedAnchor("anchor-1", "问题 1");
-    seedAnchor("anchor-2", "问题 2", { withEmbedding: false });
-    for (let i = 3; i <= 21; i++) {
-      seedAnchor(`anchor-${i}`, `问题 ${i}`, { withEmbedding: false });
-    }
+  it("POST /reasoning/message maps stored conversation turns into unified runtime input", async () => {
     seedReasoningMessage({
       visitorKey: visitorPubKey,
-      role: "assistant",
-      content: "old recall",
-      recalledAnchors: ["anchor-1"],
-      anchorSelectionStrategy: null,
+      role: "user",
+      content: "第一轮提问",
     });
     seedReasoningMessage({
       visitorKey: visitorPubKey,
       role: "assistant",
-      content: "cold start",
-      recalledAnchors: ["anchor-2"],
-      anchorSelectionStrategy: "full-injection",
+      content: "第一轮回答",
     });
 
-    let generationSystemPrompt = "";
-    const chatClient = {
-      chat: vi.fn().mockResolvedValue({
-        content:
-          "<judgment><sufficient>true</sufficient><next_query></next_query><narrative>thinking</narrative><reason>ok</reason></judgment>",
-        finishReason: "stop",
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      }),
-      chatStream: vi.fn(async function* ({
-        messages,
-      }: {
-        messages: { role: string; content: string }[];
-      }) {
-        generationSystemPrompt = messages[0]?.content ?? "";
-        yield "reply";
-      }),
-    };
-    const embeddingClient = {
-      embed: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3, 0.4]]),
-    };
-    const app = createTestApp(visitorPubKey, { chatClient, embeddingClient });
+    const createRequestSpy = vi
+      .spyOn(AvatarInferenceRuntime.prototype, "createRequest")
+      .mockResolvedValue({
+        avatarTarget: { publicKey: testPubKey },
+        instructionSegments: {
+          platform: "platform",
+          avatar: "avatar",
+          recall: "recall",
+        },
+        conversationTurns: [],
+        contentParts: [],
+        stream: true,
+      });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: [],
+      recalledAnchorIds: ["anchor-1"],
+      anchorSelectionStrategy: "batch-recall",
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "runStream").mockImplementation(async function* () {
+      yield { type: "message_start", message: { role: "assistant" } };
+      yield { type: "text_delta", text: "reply" };
+      yield { type: "message_end", finishReason: "stop" };
+    });
+    const app = createTestApp(visitorPubKey, { chatClient: createChatClient() });
 
     const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
       method: "POST",
@@ -270,8 +267,122 @@ describe("reasoning routes", () => {
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(generationSystemPrompt).toContain("问题 1");
-    expect(generationSystemPrompt).not.toContain("问题 2");
+    expect(createRequestSpy).toHaveBeenCalledWith({
+      avatarTarget: { publicKey: testPubKey },
+      conversationTurns: [
+        { role: "user", content: "第一轮提问" },
+        { role: "assistant", content: "第一轮回答" },
+        { role: "user", content: "继续聊" },
+      ],
+      initialAnchors: [],
+      stream: true,
+      visitorKey: visitorPubKey,
+    });
+  });
+
+  it("POST /reasoning/message forwards runtime thinking/token/done and stores runtime metadata", async () => {
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockResolvedValue({
+      avatarTarget: { publicKey: testPubKey },
+      instructionSegments: {
+        platform: "platform",
+        avatar: "avatar",
+        recall: "recall",
+      },
+      conversationTurns: [],
+      contentParts: [],
+      stream: true,
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: ["thinking"],
+      recalledAnchorIds: ["anchor-1", "anchor-2"],
+      anchorSelectionStrategy: "batch-recall",
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "runStream").mockImplementation(async function* () {
+      yield { type: "message_start", message: { role: "assistant" } };
+      yield { type: "text_delta", text: "hel" };
+      yield { type: "text_delta", text: "lo" };
+      yield { type: "message_end", finishReason: "stop" };
+    });
+
+    const app = createTestApp(visitorPubKey, { chatClient: createChatClient() });
+    const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: thinking");
+    expect(text).toContain("data: thinking");
+    expect(text).toContain("event: token");
+    expect(text).toContain("data: hel");
+    expect(text).toContain("data: lo");
+    expect(text).toContain("event: done");
+    expect(text).toContain('"recalledAnchors":["anchor-1","anchor-2"]');
+
+    const storedBodies = listStoredBodies(visitorPubKey);
+    expect(storedBodies).toHaveLength(2);
+    expect(storedBodies[0]).toMatchObject({
+      senderKey: visitorPubKey,
+      body: { type: "text", version: 1, text: "你好" },
+    });
+    expect(storedBodies[1]).toMatchObject({
+      senderKey: testPubKey,
+      body: {
+        type: "text",
+        version: 1,
+        text: "hello",
+        recalledAnchors: ["anchor-1", "anchor-2"],
+        anchorSelectionStrategy: "batch-recall",
+      },
+    });
+  });
+
+  it("POST /reasoning/message fails fast when prepared reasoning metadata is missing", async () => {
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockResolvedValue({
+      avatarTarget: { publicKey: testPubKey },
+      instructionSegments: {
+        platform: "platform",
+        avatar: "avatar",
+        recall: "recall",
+      },
+      conversationTurns: [],
+      contentParts: [],
+      stream: true,
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockImplementation(
+      () => undefined,
+    );
+    const runStreamSpy = vi
+      .spyOn(AvatarInferenceRuntime.prototype, "runStream")
+      .mockImplementation(async function* () {
+        yield { type: "message_start", message: { role: "assistant" } };
+        yield { type: "text_delta", text: "should-not-run" };
+        yield { type: "message_end", finishReason: "stop" };
+      });
+
+    const app = createTestApp(visitorPubKey, { chatClient: createChatClient() });
+    const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: error");
+    expect(text).toContain('"code":"LLM_ERROR"');
+    expect(text).toContain("Prepared reasoning metadata missing");
+    expect(text).not.toContain("event: done");
+    expect(runStreamSpy).not.toHaveBeenCalled();
+
+    const storedBodies = listStoredBodies(visitorPubKey);
+    expect(storedBodies).toHaveLength(1);
+    expect(storedBodies[0]).toMatchObject({
+      senderKey: visitorPubKey,
+      body: { type: "text", version: 1, text: "你好" },
+    });
   });
 
   it("POST /reasoning/message dual-writes owner and visitor replicas with a chained fact log", async () => {

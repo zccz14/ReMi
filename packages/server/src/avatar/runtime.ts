@@ -26,6 +26,7 @@ import { soulAnchors } from "../db/schema.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { SoulAnchor } from "../types.js";
 import { readProfileSummary } from "../routes/profile.js";
+import { mapRecallRuntimeStrategyToReasoningStrategy } from "../reasoning/constants.js";
 import {
   buildAvatarIdentitySegment,
   buildDownstreamMessages,
@@ -76,6 +77,13 @@ type RuntimeDebugState = {
 
 type PreparedInference = RuntimeDebugState & {
   request: AvatarInferenceRequest;
+  thinkingNarratives: string[];
+};
+
+export type AvatarInferencePreparedMetadata = {
+  thinkingNarratives: string[];
+  recalledAnchorIds: string[];
+  anchorSelectionStrategy: "full-injection" | "recall-loop";
 };
 
 interface AvatarInferenceRuntimeDeps {
@@ -180,8 +188,10 @@ export class AvatarInferenceRuntime {
     conversationTurns: AvatarInferenceMessage[];
     currentTime: string;
     answerGoals: ReasoningAnswerGoal[];
+    initialAnchors?: SoulAnchor[];
     visitorKey?: string;
     debugTurns?: ReasoningDebugTurn[];
+    thinkingNarratives?: string[];
   }) {
     const sufficiencyTurns: Array<{ promptMessages: ChatMessage[]; responseText: string }> = [];
     const tracingChatClient: ChatClient = {
@@ -203,6 +213,7 @@ export class AvatarInferenceRuntime {
           .map((turn) => `${turn.role}: ${turn.content}`)
           .join("\n")
           .slice(-2000),
+        initialAnchors: input.initialAnchors,
         countAnchors: () => this.countAnchors(),
         listAnchors: () => Promise.resolve(anchors),
         searchAnchors: async () => [],
@@ -221,6 +232,7 @@ export class AvatarInferenceRuntime {
           }
           return parsed.judgment;
         },
+        onNarrative: (narrative) => input.thinkingNarratives?.push(narrative),
       });
       input.debugTurns?.push(
         ...sufficiencyTurns.map((turn, index) => ({
@@ -244,6 +256,7 @@ export class AvatarInferenceRuntime {
       embeddingClient: this.deps.embeddingClient,
       goals: input.answerGoals.filter((goal) => goal.required).map((goal) => goal.id),
       context,
+      initialAnchors: input.initialAnchors,
       countAnchors: () => this.countAnchors(),
       listAnchors: (limit?: number) => this.listAnchors(limit),
       searchAnchors: (embedding) => this.searchAnchors(embedding),
@@ -265,6 +278,7 @@ export class AvatarInferenceRuntime {
         }
         return parsed.judgment;
       },
+      onNarrative: (narrative) => input.thinkingNarratives?.push(narrative),
     });
 
     input.debugTurns?.push(
@@ -282,12 +296,15 @@ export class AvatarInferenceRuntime {
   private async prepareInference(input: {
     avatarTarget: { publicKey: string };
     conversationTurns: AvatarInferenceMessage[];
+    initialAnchors?: SoulAnchor[];
     stream: boolean;
+    visitorKey?: string;
   }): Promise<PreparedInference> {
     const profile = readProfileSummary(this.deps.ownerConn);
     const userQuery = findLatestUserQuery(input.conversationTurns);
     const currentTime = isoNow();
     const debugTurns: ReasoningDebugTurn[] = [];
+    const thinkingNarratives: string[] = [];
 
     let decomposition: ParsedDecomposition;
     try {
@@ -317,8 +334,10 @@ export class AvatarInferenceRuntime {
       conversationTurns: input.conversationTurns,
       currentTime,
       answerGoals: decomposition.answerGoals,
-      visitorKey: undefined,
+      initialAnchors: input.initialAnchors,
+      visitorKey: input.visitorKey,
       debugTurns,
+      thinkingNarratives,
     });
     const missingInformation = collectMissingInformation(recall.goalStatus);
 
@@ -364,17 +383,55 @@ export class AvatarInferenceRuntime {
         stoppedCandidate: roundSummary.stoppedCandidate ?? null,
       })),
       turns: debugTurns,
+      thinkingNarratives,
     };
   }
 
   async createRequest(input: {
     avatarTarget: { publicKey: string };
     conversationTurns: AvatarInferenceMessage[];
+    initialAnchors?: SoulAnchor[];
     stream: boolean;
+    visitorKey?: string;
   }): Promise<AvatarInferenceRequest> {
     const prepared = await this.prepareInference(input);
     this.preparedInferenceByRequest.set(prepared.request, prepared);
     return prepared.request;
+  }
+
+  getPreparedMetadata(
+    request: AvatarInferenceRequest,
+  ): AvatarInferencePreparedMetadata | undefined {
+    const prepared = this.preparedInferenceByRequest.get(request);
+    if (!prepared) {
+      return undefined;
+    }
+
+    return {
+      thinkingNarratives: [...prepared.thinkingNarratives],
+      recalledAnchorIds: [...prepared.finalAnchorIds],
+      anchorSelectionStrategy: prepared.anchorSelectionStrategy as "full-injection" | "recall-loop",
+    };
+  }
+
+  getPreparedReasoningMetadata(request: AvatarInferenceRequest):
+    | {
+        thinkingNarratives: string[];
+        recalledAnchorIds: string[];
+        anchorSelectionStrategy: "full-injection" | "batch-recall";
+      }
+    | undefined {
+    const metadata = this.getPreparedMetadata(request);
+    if (!metadata) {
+      return undefined;
+    }
+    return {
+      thinkingNarratives: metadata.thinkingNarratives,
+      recalledAnchorIds: metadata.recalledAnchorIds,
+      anchorSelectionStrategy: mapRecallRuntimeStrategyToReasoningStrategy(
+        metadata.anchorSelectionStrategy,
+      ),
+    };
   }
 
   buildMessages(request: AvatarInferenceRequest): ChatMessage[] {
