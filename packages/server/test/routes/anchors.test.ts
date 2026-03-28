@@ -136,6 +136,29 @@ describe("anchor routes", () => {
     expect(json.data.total).toBe(0);
   });
 
+  it("GET /api/:pubKey/anchors round-trips reading provenance", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+
+    conn.raw
+      .prepare(
+        `INSERT INTO soul_anchors (id, question, answer, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("reading-anchor", "Read question", "Read answer", "reading", 1000, 1000);
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors`);
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.items).toEqual([
+      expect.objectContaining({
+        id: "reading-anchor",
+        source: "reading",
+      }),
+    ]);
+  });
+
   it("PUT /api/:pubKey/anchors/:id → 200 updates anchor", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const createRes = await app.request(`/api/${PUB_KEY}/anchors`, {

@@ -9,7 +9,7 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       id TEXT PRIMARY KEY,
       question TEXT NOT NULL,
       answer TEXT,
-      source TEXT NOT NULL CHECK(source IN ('interview', 'manual')),
+      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading')),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -18,7 +18,7 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       id TEXT PRIMARY KEY,
       content TEXT NOT NULL,
       occurred_at INTEGER NOT NULL,
-      source TEXT NOT NULL CHECK(source IN ('interview', 'manual')),
+      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading')),
       metadata TEXT,
       created_at INTEGER NOT NULL
     );
