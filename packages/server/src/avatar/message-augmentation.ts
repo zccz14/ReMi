@@ -52,7 +52,7 @@ export function buildAvatarIdentitySegment(input: {
   bio?: string;
 }) {
   return [
-    "Avatar identity:",
+    "Your identity:",
     `- public key: ${input.publicKey}`,
     `- display name: ${input.displayName?.trim() || "(not set)"}`,
     `- bio: ${input.bio?.trim() || "(not set)"}`,
