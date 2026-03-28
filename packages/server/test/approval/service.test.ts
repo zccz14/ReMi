@@ -52,6 +52,8 @@ describe("approval service candidate ingestion", () => {
     return {
       service,
       conn,
+      ownerKey,
+      tmpDir,
       embedMock,
       cleanup() {
         connMgr.closeAll();
@@ -269,6 +271,77 @@ describe("approval service candidate ingestion", () => {
       expect(denied.asset.source).toBe("reading");
       expect(getSoulAssetKind({ answer: denied.asset.answer })).toBe("probe");
     } finally {
+      cleanup();
+    }
+  });
+
+  it("serializes deny so concurrent edits cannot clobber question and source", async () => {
+    let resolveDenyEmbedding: ((value: number[][]) => void) | null = null;
+    let embedCallCount = 0;
+    const { service, tmpDir, ownerKey, cleanup } = createService({
+      embedImpl: async (texts: string[]) => {
+        embedCallCount += 1;
+
+        if (embedCallCount !== 2) {
+          return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+        }
+
+        return await new Promise<number[][]>((resolve) => {
+          resolveDenyEmbedding = resolve;
+        });
+      },
+    });
+    const concurrentMgr = new ConnectionManager(tmpDir, { maxSize: 1, embeddingDimensions: 4 });
+    const concurrentConn = concurrentMgr.getConnection(ownerKey);
+    concurrentConn.raw.pragma("busy_timeout = 1");
+    const concurrentService = createApprovalService({
+      ownerKey,
+      conn: concurrentConn,
+      embeddingClient: null,
+    });
+
+    try {
+      const created = await service.microEditAsset({
+        assetId: null,
+        question: "Original question",
+        answer: "Original answer",
+        source: "reading",
+        requestId: "seed-deny-race-asset",
+      });
+
+      const denyPromise = service.denyAsset({
+        assetId: created.asset.id,
+        requestId: "deny-race-1",
+      });
+
+      await Promise.resolve();
+
+      await expect(
+        concurrentService.microEditAsset({
+          assetId: created.asset.id,
+          question: "Concurrent question",
+          answer: "Concurrent answer",
+          source: "interview",
+          requestId: "deny-race-concurrent-edit",
+        }),
+      ).rejects.toThrow(/locked|busy/i);
+
+      const releaseDenyEmbedding = resolveDenyEmbedding as ((value: number[][]) => void) | null;
+      if (!releaseDenyEmbedding) {
+        throw new Error("Expected deny embedding to be pending");
+      }
+      releaseDenyEmbedding([[0.1, 0.2, 0.3, 0.4]]);
+      const denied = await denyPromise;
+
+      expect(denied.asset).toEqual(
+        expect.objectContaining({
+          question: "Original question",
+          answer: null,
+          source: "reading",
+        }),
+      );
+    } finally {
+      concurrentMgr.closeAll();
       cleanup();
     }
   });

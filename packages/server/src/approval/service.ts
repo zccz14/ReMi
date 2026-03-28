@@ -83,6 +83,24 @@ function mapAnchor(row: AnchorRow): SoulAnchor {
   };
 }
 
+async function withImmediateTransaction<T>(conn: ApprovalConnection, action: () => Promise<T> | T) {
+  conn.raw.exec("BEGIN IMMEDIATE");
+
+  try {
+    const result = await action();
+    conn.raw.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      conn.raw.exec("ROLLBACK");
+    } catch {
+      // ignore rollback failures after a failed write
+    }
+
+    throw error;
+  }
+}
+
 export function createApprovalService(input: CreateApprovalServiceInput) {
   async function buildAnchorEmbedding(anchor: Pick<SoulAnchor, "question" | "answer">) {
     if (!input.embeddingClient) {
@@ -532,8 +550,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
       assetId: string;
       requestId: string;
     }): Promise<ApprovalMutationResult> {
-      const existing = getAnchorOrThrow(inputParams.assetId);
-      const targetId = `asset:${existing.id}`;
+      const targetId = `asset:${inputParams.assetId}`;
       const existingRequest = getRecordedRequest(targetId, inputParams.requestId);
       if (existingRequest) {
         return JSON.parse(existingRequest.responsePayload) as ApprovalMutationResult;
@@ -541,21 +558,22 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
 
       const now = Date.now();
       const actionId = crypto.randomUUID();
-      const updated: AnchorRow = {
-        ...existing,
-        answer: null,
-        updatedAt: now,
-      };
-      const embedding = await buildAnchorEmbedding(updated);
 
       try {
-        return input.conn.raw.transaction(() => {
+        return await withImmediateTransaction(input.conn, async () => {
           const recorded = getRecordedRequest(targetId, inputParams.requestId);
           if (recorded) {
             return JSON.parse(recorded.responsePayload) as ApprovalMutationResult;
           }
 
-          const current = getAnchorOrThrow(existing.id);
+          const current = getAnchorOrThrow(inputParams.assetId);
+          const updated: AnchorRow = {
+            ...current,
+            answer: null,
+            updatedAt: now,
+          };
+          const embedding = await buildAnchorEmbedding(updated);
+
           input.conn.drizzle
             .update(soulAnchors)
             .set({
@@ -583,7 +601,7 @@ export function createApprovalService(input: CreateApprovalServiceInput) {
           });
 
           return responsePayload;
-        })();
+        });
       } catch (error) {
         if (isSqliteUniqueConstraint(error)) {
           return getRecordedRequestOrThrow<ApprovalMutationResult>(targetId, inputParams.requestId);
