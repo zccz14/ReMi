@@ -8,6 +8,7 @@ import type { ChatClient } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import { parseAvatarModel, type AvatarInferenceMessage } from "../avatar/model.js";
+import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 
 const openAiChatSchema = z.object({
   model: z.string(),
@@ -197,48 +198,106 @@ export function aiChatCompletionsRoute(deps: {
       }
 
       return streamSSE(c, async (stream) => {
+        let transportFailure: unknown = null;
+
+        function markTransportFailure(error: unknown) {
+          if (transportFailure === null) {
+            transportFailure = error;
+          }
+          return transportFailure;
+        }
+
+        function isTransportFailure(error: unknown) {
+          return transportFailure !== null && error === transportFailure;
+        }
+
+        function ensureStreamHealthy() {
+          if (transportFailure !== null) {
+            throw transportFailure;
+          }
+        }
+
+        const heartbeat = createSseHeartbeat({
+          writeComment: async (frame) => {
+            await stream.write(frame);
+          },
+          onError: (error) => {
+            markTransportFailure(error);
+          },
+        });
+
+        async function writeOpenAiChunk(data: string) {
+          ensureStreamHealthy();
+          try {
+            await stream.writeSSE({ data });
+          } catch (error) {
+            throw markTransportFailure(error);
+          }
+          heartbeat.recordRealWrite();
+        }
+
         try {
-          await stream.writeSSE({
-            data: buildChunkData({
+          heartbeat.start();
+
+          await writeOpenAiChunk(
+            buildChunkData({
               id,
               created,
               model: parsedBody.data.model,
               event: { type: "message_start", message: { role: "assistant" } },
             }),
-          });
+          );
 
-          const request = await runtime.createRequest({
-            avatarTarget: { publicKey: parsedModel.publicKey },
-            conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
-            stream: parsedBody.data.stream,
-          });
+          await Promise.race([
+            (async () => {
+              const request = await runtime.createRequest({
+                avatarTarget: { publicKey: parsedModel.publicKey },
+                conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
+                stream: parsedBody.data.stream,
+              });
 
-          for await (const event of runtime.runStream(request)) {
-            if (event.type === "message_start") {
-              continue;
-            }
-            await stream.writeSSE({
-              data: buildChunkData({
-                id,
-                created,
-                model: parsedBody.data.model,
-                event,
-              }),
-            });
+              for await (const event of runtime.runStream(request)) {
+                if (event.type === "message_start") {
+                  continue;
+                }
+                await writeOpenAiChunk(
+                  buildChunkData({
+                    id,
+                    created,
+                    model: parsedBody.data.model,
+                    event,
+                  }),
+                );
+              }
+
+              await writeOpenAiChunk("[DONE]");
+            })(),
+            heartbeat.failure,
+          ]);
+        } catch (error) {
+          if (isTransportFailure(error)) {
+            return;
           }
 
-          await stream.writeSSE({ data: "[DONE]" });
-        } catch (error) {
-          await stream.writeSSE({
-            data: JSON.stringify({
-              error: {
-                message: error instanceof Error ? error.message : "Unknown upstream error",
-                type: "upstream_model_error",
-                code: "upstream_model_error",
-              },
-            }),
-          });
-          await stream.writeSSE({ data: "[DONE]" });
+          try {
+            await writeOpenAiChunk(
+              JSON.stringify({
+                error: {
+                  message: error instanceof Error ? error.message : "Unknown upstream error",
+                  type: "upstream_model_error",
+                  code: "upstream_model_error",
+                },
+              }),
+            );
+            await writeOpenAiChunk("[DONE]");
+          } catch (writeFailure) {
+            if (isTransportFailure(writeFailure)) {
+              return;
+            }
+            throw writeFailure;
+          }
+        } finally {
+          heartbeat.stop();
         }
       });
     } catch (error) {

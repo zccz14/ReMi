@@ -89,6 +89,15 @@ async function readStreamBody(stream: ReadableStream<Uint8Array> | null) {
   return text;
 }
 
+async function readWithTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  return Promise.race<T | "timeout">([
+    promise,
+    new Promise<"timeout">((resolve) => {
+      setTimeout(() => resolve("timeout"), timeoutMs);
+    }),
+  ]);
+}
+
 function createRecallAwareEmbeddingClient() {
   let gate: Promise<void> | null = null;
   let failRecall = false;
@@ -527,6 +536,7 @@ describe("avatar openapi integration", () => {
   });
 
   it("POST /ai/v1/chat/completions starts SSE before recall finishes", async () => {
+    vi.useFakeTimers();
     let releaseRecall!: () => void;
     const recallGate = new Promise<void>((resolve) => {
       releaseRecall = resolve;
@@ -549,66 +559,81 @@ describe("avatar openapi integration", () => {
     const token = await createOwnerToken();
     embedding.blockRecall(recallGate);
 
-    const resPromise = app.request("/ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.id}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: `ReMi-${ownerPubKey}`,
-        messages: [{ role: "user", content: "Hello" }],
-        stream: true,
-      }),
-    });
+    try {
+      const resPromise = app.request("/ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token.id}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: `ReMi-${ownerPubKey}`,
+          messages: [{ role: "user", content: "Hello" }],
+          stream: true,
+        }),
+      });
 
-    await expect(resPromise).resolves.toMatchObject({
-      status: 200,
-      headers: expect.objectContaining({}),
-    });
+      await expect(resPromise).resolves.toMatchObject({
+        status: 200,
+        headers: expect.objectContaining({}),
+      });
 
-    const res = await resPromise;
-    expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const res = await resPromise;
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
 
-    const stream = res.body;
-    expect(stream).toBeTruthy();
+      const stream = res.body;
+      expect(stream).toBeTruthy();
 
-    const reader = stream!.getReader();
-    const firstChunkResult = await Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
-      reader.read(),
-      new Promise((resolve) => {
-        setTimeout(() => resolve("timeout"), 100);
-      }),
-    ]);
+      const reader = stream!.getReader();
+      const decoder = new TextDecoder();
 
-    expect(firstChunkResult).not.toBe("timeout");
-    expect(typeof firstChunkResult).toBe("object");
-    expect(firstChunkResult).toMatchObject({ done: false });
+      const firstChunkResult = await readWithTimeout(reader.read(), 100);
+      expect(firstChunkResult).not.toBe("timeout");
+      expect(typeof firstChunkResult).toBe("object");
+      expect(firstChunkResult).toMatchObject({ done: false });
 
-    const firstChunkText = new TextDecoder().decode(
-      (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
-    );
-    expect(firstChunkText).toContain('"role":"assistant"');
-    expect(firstChunkText).not.toContain("hello");
+      let preReleaseText = decoder.decode(
+        (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
+        { stream: true },
+      );
 
-    releaseRecall();
+      const heartbeatChunkRead = reader.read();
+      await vi.advanceTimersByTimeAsync(5000);
+      const heartbeatChunkResult = await readWithTimeout(heartbeatChunkRead, 50);
 
-    let remainingText = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
+      expect(heartbeatChunkResult).not.toBe("timeout");
+      expect(typeof heartbeatChunkResult).toBe("object");
+      expect(heartbeatChunkResult).toMatchObject({ done: false });
+
+      preReleaseText += decoder.decode(
+        (heartbeatChunkResult as ReadableStreamReadResult<Uint8Array>).value,
+        { stream: true },
+      );
+
+      expect(preReleaseText).toContain('"role":"assistant"');
+      expect(preReleaseText).toContain(":\n\n");
+      expect(preReleaseText).not.toContain('"content":"hello"');
+
+      releaseRecall();
+
+      let remainingText = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        remainingText += decoder.decode(value, { stream: true });
       }
-      remainingText += new TextDecoder().decode(value, { stream: true });
-    }
+      remainingText += decoder.decode();
 
-    const chunks = parseSseData(firstChunkText + remainingText);
-    expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
-      choices: [{ delta: { role: "assistant" }, finish_reason: null }],
-    });
-    expect(JSON.parse(chunks[1] ?? "{}")).toMatchObject({
-      choices: [{ delta: { content: "hello" }, finish_reason: null }],
-    });
+      const chunks = parseSseData(preReleaseText + remainingText);
+      expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
+        choices: [{ delta: { role: "assistant" }, finish_reason: null }],
+      });
+      expect(chunks.some((chunk) => chunk.includes('"content":"hello"'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("POST /ai/v1/chat/completions reports recall failures in-stream after SSE starts", async () => {
