@@ -67,13 +67,19 @@ describe("ai chat completions route", () => {
   });
 
   it("aborts upstream streaming work when the SSE transport fails", async () => {
-    const releaseRunStream = createDeferred<void>();
-    const runStreamStarted = createDeferred<void>();
+    const releaseChatStream = createDeferred<void>();
+    const chatStreamStarted = createDeferred<void>();
     let observedSignal: AbortSignal | undefined;
 
     const chatClient: ChatClient = {
       chat: vi.fn(),
-      chatStream: vi.fn(),
+      chatStream: vi.fn(async function* (options) {
+        yield* [] as string[];
+        observedSignal = options.signal;
+        chatStreamStarted.resolve();
+        await releaseChatStream.promise;
+        throw options.signal?.reason ?? new Error("aborted");
+      }),
     };
 
     const heartbeatFailure = createDeferred<never>();
@@ -106,15 +112,6 @@ describe("ai chat completions route", () => {
         signal: input.signal,
       }),
     );
-    const runStreamSpy = vi
-      .spyOn(AvatarInferenceRuntime.prototype, "runStream")
-      .mockImplementation(async function* (request) {
-        yield* [] as Array<{ type: "message_start"; message: { role: "assistant" } }>;
-        observedSignal = request.signal;
-        runStreamStarted.resolve();
-        await releaseRunStream.promise;
-        throw request.signal?.reason ?? new Error("aborted");
-      });
 
     const app = await createTestApp(aiChatCompletionsRoute, {
       chatClient,
@@ -134,19 +131,19 @@ describe("ai chat completions route", () => {
       }),
     });
 
-    await runStreamStarted.promise;
+    await chatStreamStarted.promise;
     const transportFailure = new Error("transport closed");
     notifyHeartbeatError?.(transportFailure);
     heartbeatFailure.reject(transportFailure);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(runStreamSpy).toHaveBeenCalledWith(
+    expect(chatClient.chatStream).toHaveBeenCalledWith(
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(observedSignal).toBeDefined();
     expect(observedSignal?.aborted).toBe(true);
 
-    releaseRunStream.resolve();
+    releaseChatStream.resolve();
     const res = await responsePromise;
     expect(res.status).toBe(200);
   });

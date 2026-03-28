@@ -332,7 +332,7 @@ export class AvatarInferenceRuntime {
       });
       decomposition = parseDecomposition(decompositionResponse.content, userQuery, currentTime);
     } catch (error) {
-      if (isAbortError(error)) {
+      if (input.signal?.aborted || isAbortError(error)) {
         throw error;
       }
 
