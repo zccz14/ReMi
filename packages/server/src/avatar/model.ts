@@ -17,6 +17,7 @@ export interface AvatarInferenceRequest {
   conversationTurns: AvatarInferenceMessage[];
   contentParts: [];
   stream: boolean;
+  signal?: AbortSignal;
 }
 
 export interface AvatarInferenceResponse {

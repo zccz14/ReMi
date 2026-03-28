@@ -27,6 +27,7 @@ import type { ConnectionManager } from "../db/connection.js";
 import type { SoulAnchor } from "../types.js";
 import { readProfileSummary } from "../routes/profile.js";
 import { mapRecallRuntimeStrategyToReasoningStrategy } from "../reasoning/constants.js";
+import { throwIfAborted } from "../lib/abort.js";
 import {
   buildAvatarIdentitySegment,
   buildDownstreamMessages,
@@ -192,17 +193,19 @@ export class AvatarInferenceRuntime {
     visitorKey?: string;
     debugTurns?: ReasoningDebugTurn[];
     thinkingNarratives?: string[];
+    signal?: AbortSignal;
   }) {
     const sufficiencyTurns: Array<{ promptMessages: ChatMessage[]; responseText: string }> = [];
     const tracingChatClient: ChatClient = {
       chat: async (options) => {
-        const response = await this.deps.chatClient.chat(options);
+        const response = await this.deps.chatClient.chat({ ...options, signal: input.signal });
         sufficiencyTurns.push({ promptMessages: options.messages, responseText: response.content });
         return response;
       },
       chatStream: (options) => this.deps.chatClient.chatStream(options),
     };
     const anchorCount = await this.countAnchors();
+    throwIfAborted(input.signal);
 
     if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD || !this.deps.embeddingClient) {
       const anchors = await this.listAnchors();
@@ -233,6 +236,7 @@ export class AvatarInferenceRuntime {
           return parsed.judgment;
         },
         onNarrative: (narrative) => input.thinkingNarratives?.push(narrative),
+        signal: input.signal,
       });
       input.debugTurns?.push(
         ...sufficiencyTurns.map((turn, index) => ({
@@ -279,6 +283,7 @@ export class AvatarInferenceRuntime {
         return parsed.judgment;
       },
       onNarrative: (narrative) => input.thinkingNarratives?.push(narrative),
+      signal: input.signal,
     });
 
     input.debugTurns?.push(
@@ -299,7 +304,9 @@ export class AvatarInferenceRuntime {
     initialAnchors?: SoulAnchor[];
     stream: boolean;
     visitorKey?: string;
+    signal?: AbortSignal;
   }): Promise<PreparedInference> {
+    throwIfAborted(input.signal);
     const profile = readProfileSummary(this.deps.ownerConn);
     const userQuery = findLatestUserQuery(input.conversationTurns);
     const currentTime = isoNow();
@@ -314,7 +321,9 @@ export class AvatarInferenceRuntime {
       });
       const decompositionResponse = await this.deps.chatClient.chat({
         messages: decompositionPrompt,
+        signal: input.signal,
       });
+      throwIfAborted(input.signal);
       debugTurns.push({
         turnId: "01-decomposition",
         promptMessages: decompositionPrompt,
@@ -338,7 +347,9 @@ export class AvatarInferenceRuntime {
       visitorKey: input.visitorKey,
       debugTurns,
       thinkingNarratives,
+      signal: input.signal,
     });
+    throwIfAborted(input.signal);
     const missingInformation = collectMissingInformation(recall.goalStatus);
 
     const request: AvatarInferenceRequest = {
@@ -360,6 +371,7 @@ export class AvatarInferenceRuntime {
       conversationTurns: input.conversationTurns,
       contentParts: [],
       stream: input.stream,
+      signal: input.signal,
     };
 
     return {
@@ -393,6 +405,7 @@ export class AvatarInferenceRuntime {
     initialAnchors?: SoulAnchor[];
     stream: boolean;
     visitorKey?: string;
+    signal?: AbortSignal;
   }): Promise<AvatarInferenceRequest> {
     const prepared = await this.prepareInference(input);
     this.preparedInferenceByRequest.set(prepared.request, prepared);
@@ -445,8 +458,10 @@ export class AvatarInferenceRuntime {
 
   async run(request: AvatarInferenceRequest): Promise<AvatarInferenceResponse> {
     try {
+      throwIfAborted(request.signal);
       const messages = this.buildMessages(request);
-      const response = await this.deps.chatClient.chat({ messages });
+      const response = await this.deps.chatClient.chat({ messages, signal: request.signal });
+      throwIfAborted(request.signal);
       await this.writeRuntimeTraceBestEffort(request, messages, response.content);
 
       return {
@@ -463,19 +478,23 @@ export class AvatarInferenceRuntime {
     request: AvatarInferenceRequest,
   ): AsyncGenerator<AvatarInferenceEvent, void, unknown> {
     try {
+      throwIfAborted(request.signal);
       const messages = this.buildMessages(request);
-      const upstream = this.deps.chatClient.chatStream({ messages });
+      const upstream = this.deps.chatClient.chatStream({ messages, signal: request.signal });
       let fullContent = "";
 
       yield { type: "message_start", message: { role: "assistant" } };
 
       for await (const token of upstream) {
+        throwIfAborted(request.signal);
         fullContent += token;
         yield { type: "text_delta", text: token };
       }
 
+      throwIfAborted(request.signal);
       await this.writeRuntimeTraceBestEffort(request, messages, fullContent);
 
+      throwIfAborted(request.signal);
       yield { type: "message_end", finishReason: "stop" };
     } finally {
       this.preparedInferenceByRequest.delete(request);

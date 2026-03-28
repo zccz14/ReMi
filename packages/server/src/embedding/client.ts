@@ -3,7 +3,7 @@ import { logger } from "../logger.js";
 const log = logger.child({ module: "embedding" });
 
 export interface EmbeddingClient {
-  embed(texts: string[]): Promise<number[][]>;
+  embed(texts: string[], options?: { signal?: AbortSignal }): Promise<number[][]>;
 }
 
 interface EmbeddingClientConfig {
@@ -14,7 +14,7 @@ interface EmbeddingClientConfig {
 
 export function createEmbeddingClient(config: EmbeddingClientConfig): EmbeddingClient {
   return {
-    async embed(texts: string[]): Promise<number[][]> {
+    async embed(texts: string[], options?: { signal?: AbortSignal }): Promise<number[][]> {
       const start = Date.now();
       log.debug({ model: config.model, textCount: texts.length }, "Embedding request");
 
@@ -28,6 +28,7 @@ export function createEmbeddingClient(config: EmbeddingClientConfig): EmbeddingC
           input: texts,
           model: config.model,
         }),
+        signal: options?.signal,
       });
 
       if (!response.ok) {

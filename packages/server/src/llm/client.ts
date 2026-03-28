@@ -10,6 +10,7 @@ export interface ChatMessage {
 export interface ChatOptions {
   messages: ChatMessage[];
   temperature?: number;
+  signal?: AbortSignal;
 }
 
 export interface ChatResponse {
@@ -71,6 +72,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -154,6 +156,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!response.ok) {

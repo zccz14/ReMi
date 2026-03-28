@@ -1,6 +1,7 @@
 import type { ChatClient, ChatMessage } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
 import type { SoulAnchor } from "../types.js";
+import { throwIfAborted } from "../lib/abort.js";
 import {
   RECALL_FULL_INJECTION_THRESHOLD,
   RECALL_MISSING_KEYS,
@@ -67,6 +68,7 @@ export interface GoalBasedRecallOptions {
   parseJudgment(content: string): ParsedJudgment;
   onNarrative?: (text: string) => void;
   maxRounds?: number;
+  signal?: AbortSignal;
 }
 
 export interface GoalBasedRecallResult {
@@ -288,7 +290,9 @@ async function getJudgmentWithRetry(
   let parseFailures = 0;
 
   while (parseFailures < 2) {
-    const response = await options.chatClient.chat({ messages });
+    throwIfAborted(options.signal);
+    const response = await options.chatClient.chat({ messages, signal: options.signal });
+    throwIfAborted(options.signal);
 
     try {
       const parsedJudgment = options.parseJudgment(response.content);
@@ -309,7 +313,9 @@ async function getJudgmentWithRetry(
 export async function goalBasedRecall(
   options: GoalBasedRecallOptions,
 ): Promise<GoalBasedRecallResult> {
+  throwIfAborted(options.signal);
   const anchorCount = await options.countAnchors();
+  throwIfAborted(options.signal);
 
   if (anchorCount <= RECALL_FULL_INJECTION_THRESHOLD) {
     const anchors = await options.listAnchors();
@@ -369,7 +375,9 @@ export async function goalBasedRecall(
   while (rounds < maxRounds) {
     rounds += 1;
 
-    const [embedding] = await options.embeddingClient.embed([query]);
+    throwIfAborted(options.signal);
+    const [embedding] = await options.embeddingClient.embed([query], { signal: options.signal });
+    throwIfAborted(options.signal);
     const foundAnchors = await options.searchAnchors(embedding);
     const newAnchorIds = getNewAnchorIds(foundAnchors, allAnchors);
     for (const anchor of foundAnchors) {

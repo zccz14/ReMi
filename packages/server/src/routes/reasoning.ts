@@ -30,6 +30,7 @@ import {
   type StoredBody,
 } from "../messaging/runtime.js";
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
+import { isAbortError, throwIfAborted } from "../lib/abort.js";
 
 const log = logger.child({ module: "route:reasoning" });
 
@@ -732,22 +733,30 @@ reasoningRoutes.post(
     return streamSSE(c, async (stream) => {
       const emitter = createSSEEmitter(stream);
       let transportFailure: unknown = null;
+      const abortController = new AbortController();
 
       function markTransportFailure(error: unknown) {
         if (transportFailure === null) {
           transportFailure = error;
+          abortController.abort(error);
         }
         return transportFailure;
       }
 
       function isTransportFailure(error: unknown) {
-        return transportFailure !== null && error === transportFailure;
+        return (
+          transportFailure !== null &&
+          (error === transportFailure ||
+            error === abortController.signal.reason ||
+            isAbortError(error))
+        );
       }
 
       function ensureStreamHealthy() {
         if (transportFailure !== null) {
           throw transportFailure;
         }
+        throwIfAborted(abortController.signal);
       }
 
       const heartbeatTiming = c.get("sseHeartbeatTiming") as
@@ -843,7 +852,9 @@ reasoningRoutes.post(
           ),
           stream: true,
           visitorKey: requesterPubKey,
+          signal: abortController.signal,
         });
+        ensureStreamHealthy();
         const metadata = runtime.getPreparedReasoningMetadata(request);
         if (!metadata) {
           throw new Error("Prepared reasoning metadata missing");
@@ -865,6 +876,7 @@ reasoningRoutes.post(
           }
         }
 
+        ensureStreamHealthy();
         const savedAssistant = await persistDirectMessage({
           connMgr,
           ownerPubKey,

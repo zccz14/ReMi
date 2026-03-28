@@ -17,7 +17,11 @@ const visitorPubKey = getPublicKey(generateKeyPair());
 
 function createTestApp(
   signerPubKey: string,
-  options: { chatClient?: ChatClient | null; embeddingClient?: EmbeddingClient | null } = {},
+  options: {
+    chatClient?: ChatClient | null;
+    embeddingClient?: EmbeddingClient | null;
+    sseHeartbeatTiming?: { silentMs?: number; intervalMs?: number } | null;
+  } = {},
 ) {
   const app = new Hono();
   app.use("*", async (c, next) => {
@@ -26,6 +30,7 @@ function createTestApp(
     c.set("connMgr", connMgr);
     c.set("embeddingClient", options.embeddingClient ?? null);
     c.set("chatClient", options.chatClient ?? null);
+    c.set("sseHeartbeatTiming", options.sseHeartbeatTiming ?? null);
     await next();
   });
   app.route("/api", reasoningRoutes);
@@ -267,17 +272,19 @@ describe("reasoning routes", () => {
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(createRequestSpy).toHaveBeenCalledWith({
-      avatarTarget: { publicKey: testPubKey },
-      conversationTurns: [
-        { role: "user", content: "第一轮提问" },
-        { role: "assistant", content: "第一轮回答" },
-        { role: "user", content: "继续聊" },
-      ],
-      initialAnchors: [],
-      stream: true,
-      visitorKey: visitorPubKey,
-    });
+    expect(createRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        avatarTarget: { publicKey: testPubKey },
+        conversationTurns: [
+          { role: "user", content: "第一轮提问" },
+          { role: "assistant", content: "第一轮回答" },
+          { role: "user", content: "继续聊" },
+        ],
+        initialAnchors: [],
+        stream: true,
+        visitorKey: visitorPubKey,
+      }),
+    );
   });
 
   it("POST /reasoning/message forwards runtime thinking/token/done and stores runtime metadata", async () => {

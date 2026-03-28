@@ -9,6 +9,7 @@ import type { EmbeddingClient } from "../embedding/client.js";
 import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import { parseAvatarModel, type AvatarInferenceMessage } from "../avatar/model.js";
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
+import { isAbortError, throwIfAborted } from "../lib/abort.js";
 
 const openAiChatSchema = z.object({
   model: z.string(),
@@ -203,22 +204,30 @@ export function aiChatCompletionsRoute(deps: {
 
       return streamSSE(c, async (stream) => {
         let transportFailure: unknown = null;
+        const abortController = new AbortController();
 
         function markTransportFailure(error: unknown) {
           if (transportFailure === null) {
             transportFailure = error;
+            abortController.abort(error);
           }
           return transportFailure;
         }
 
         function isTransportFailure(error: unknown) {
-          return transportFailure !== null && error === transportFailure;
+          return (
+            transportFailure !== null &&
+            (error === transportFailure ||
+              error === abortController.signal.reason ||
+              isAbortError(error))
+          );
         }
 
         function ensureStreamHealthy() {
           if (transportFailure !== null) {
             throw transportFailure;
           }
+          throwIfAborted(abortController.signal);
         }
 
         const heartbeat = createSseHeartbeat({
@@ -260,7 +269,9 @@ export function aiChatCompletionsRoute(deps: {
                 avatarTarget: { publicKey: parsedModel.publicKey },
                 conversationTurns: parsedBody.data.messages as AvatarInferenceMessage[],
                 stream: parsedBody.data.stream,
+                signal: abortController.signal,
               });
+              ensureStreamHealthy();
 
               for await (const event of runtime.runStream(request)) {
                 if (event.type === "message_start") {
