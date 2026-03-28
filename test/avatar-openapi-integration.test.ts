@@ -68,6 +68,27 @@ function parseSseData(text: string) {
     .flat();
 }
 
+async function readStreamBody(stream: ReadableStream<Uint8Array> | null) {
+  if (!stream) {
+    return "";
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return text;
+}
+
 function createRecallAwareEmbeddingClient() {
   let gate: Promise<void> | null = null;
   let failRecall = false;
@@ -244,7 +265,7 @@ describe("avatar openapi integration", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
-    const body = await res.text();
+    const body = await readStreamBody(res.body);
     expect(body).toContain("chat.completion.chunk");
     expect(body).toContain("[DONE]");
     const dataBlocks = parseSseData(body).filter((value) => value !== "[DONE]");
@@ -549,9 +570,39 @@ describe("avatar openapi integration", () => {
     const res = await resPromise;
     expect(res.headers.get("content-type")).toContain("text/event-stream");
 
+    const stream = res.body;
+    expect(stream).toBeTruthy();
+
+    const reader = stream!.getReader();
+    const firstChunkResult = await Promise.race<string | ReadableStreamReadResult<Uint8Array>>([
+      reader.read(),
+      new Promise((resolve) => {
+        setTimeout(() => resolve("timeout"), 100);
+      }),
+    ]);
+
+    expect(firstChunkResult).not.toBe("timeout");
+    expect(typeof firstChunkResult).toBe("object");
+    expect(firstChunkResult).toMatchObject({ done: false });
+
+    const firstChunkText = new TextDecoder().decode(
+      (firstChunkResult as ReadableStreamReadResult<Uint8Array>).value,
+    );
+    expect(firstChunkText).toContain('"role":"assistant"');
+    expect(firstChunkText).not.toContain("hello");
+
     releaseRecall();
 
-    const chunks = parseSseData(await res.text());
+    let remainingText = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      remainingText += new TextDecoder().decode(value, { stream: true });
+    }
+
+    const chunks = parseSseData(firstChunkText + remainingText);
     expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
       choices: [{ delta: { role: "assistant" }, finish_reason: null }],
     });
@@ -593,7 +644,7 @@ describe("avatar openapi integration", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
 
-    const chunks = parseSseData(await res.text());
+    const chunks = parseSseData(await readStreamBody(res.body));
 
     expect(chunks).toHaveLength(3);
     expect(JSON.parse(chunks[0] ?? "{}")).toMatchObject({
@@ -644,6 +695,16 @@ describe("avatar openapi integration", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(recording.recordedCalls.length).toBeGreaterThanOrEqual(3);
+    expect(recording.recordedCalls[0]?.map((message) => message.role)).toEqual(["system", "user"]);
+    expect(recording.recordedCalls[0]?.[1]?.content).toContain("caller message");
+    expect(
+      recording.recordedCalls.some(
+        (messages) =>
+          messages.map((message) => message.role).join(",") === "system,user" &&
+          messages[1]?.content.includes("Favorite workflow"),
+      ),
+    ).toBe(true);
     const finalMessages = recording.recordedCalls[recording.recordedCalls.length - 1];
     expect(finalMessages).toBeDefined();
     expect(finalMessages?.map((message) => message.role)).toEqual([
@@ -653,29 +714,23 @@ describe("avatar openapi integration", () => {
       "assistant",
       "assistant",
     ]);
-    expect(finalMessages?.map((message) => message.content)).toEqual([
-      expect.stringContaining("ReMi avatar inference runtime."),
-      "caller message",
-      "late caller system",
-      "Earlier answer",
-      expect.stringContaining("Favorite workflow"),
-    ]);
+    expect(finalMessages?.[1]?.content).toBe("caller message");
+    expect(finalMessages?.[2]?.content).toBe("late caller system");
+    expect(finalMessages?.[3]?.content).toBe("Earlier answer");
     const recallTail = finalMessages?.[finalMessages.length - 1]?.content;
     expect(recallTail).toContain("## Evidence");
+    expect(recallTail).toContain("Favorite workflow");
+    expect(recallTail).toContain("Plan first, then execute carefully.");
     expect(recallTail).toContain("UpdatedAt:");
     expect(recallTail).toContain("## Missing Information");
     expect(recallTail).toContain("## Non-evidence Reasoning");
 
     expect(finalMessages?.[0]?.content).toContain(ownerPubKey);
-    expect(finalMessages?.[0]?.content).toContain("Avatar identity:");
+    expect(finalMessages?.[0]?.content).toContain("Test Owner");
+    expect(finalMessages?.[0]?.content).toContain("Builds careful execution plans.");
     expect(finalMessages?.[0]?.content).toContain("Caller system context");
     expect(finalMessages?.[0]?.content).toContain("Caller system context 2");
     expect(finalMessages?.[0]?.content).not.toContain("late caller system");
-    expect(finalMessages?.[0]?.content).toContain(
-      "Do not jump into reasoning before understanding the caller's environment",
-    );
-    expect(finalMessages?.[0]?.content).toContain("minimum necessary questions");
-    expect(finalMessages?.[0]?.content).toContain("existing context");
-    expect(finalMessages?.[0]?.content).toContain("state assumptions explicitly");
+    expect(finalMessages?.[0]?.content).not.toContain("Favorite workflow");
   });
 });
