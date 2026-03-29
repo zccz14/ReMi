@@ -135,6 +135,27 @@ describe("reasoning gap probes", () => {
     ]);
   });
 
+  it("keeps factual relationship questions as fact gaps when missingKeys are absent", async () => {
+    const probes = await synthesizeGapProbes({
+      userQuery: "她适合找我聊这件事吗？",
+      goalStatus: [
+        createGoalStatus({
+          missing: ["我和对方现在是什么关系"],
+          missingKeys: undefined,
+        }),
+      ],
+      recalledAnchors: [],
+    });
+
+    expect(probes).toEqual([
+      expect.objectContaining({
+        displayQuestion: "我和对方现在是什么关系？",
+        canonicalQuestion: "我和对方现在是什么关系？",
+        kind: "fact-gap",
+      }),
+    ]);
+  });
+
   it("falls back to default drafts when the injected generator throws", async () => {
     const probes = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",

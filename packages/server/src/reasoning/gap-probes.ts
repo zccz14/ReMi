@@ -53,6 +53,10 @@ function inferProbeKind(missing: string, missingKey?: string): ReasoningGapProbe
     return "judgment-gap";
   }
 
+  if (!missingKey && /(是什么关系|关系是什么)/.test(missing)) {
+    return "fact-gap";
+  }
+
   if (
     (missingKey && /(term|definition|meaning|name|title)/i.test(missingKey)) ||
     (!missingKey && /叫|术语|定义|意思|是什么/.test(missing))
