@@ -41,14 +41,15 @@ function ensureQuestionMark(question: string): string {
   return /[？?]$/.test(trimmed) ? trimmed : `${trimmed}？`;
 }
 
-function inferProbeKind(status: ReasoningGoalStatus, missing: string): ReasoningGapProbeKind {
-  if (
-    status.missingKeys?.some((key) => /(style|preference|boundary|judgment|criteria)/i.test(key))
-  ) {
+function inferProbeKind(missing: string, missingKey?: string): ReasoningGapProbeKind {
+  if (missingKey && /(style|preference|boundary|judgment|criteria)/i.test(missingKey)) {
     return "judgment-gap";
   }
 
-  if (/叫|术语|定义|意思|是什么/.test(missing)) {
+  if (
+    (missingKey && /(term|definition|meaning|name|title)/i.test(missingKey)) ||
+    (!missingKey && /叫|术语|定义|意思|是什么/.test(missing))
+  ) {
     return "term-gap";
   }
 
@@ -59,9 +60,9 @@ function createFallbackDrafts(goalStatus: ReasoningGoalStatus[]): ReasoningGapPr
   return goalStatus
     .filter((status) => !status.sufficient)
     .flatMap((status) =>
-      (status.missing ?? []).map((missing) => ({
+      (status.missing ?? []).map((missing, index) => ({
         question: ensureQuestionMark(missing),
-        kind: inferProbeKind(status, missing),
+        kind: inferProbeKind(missing, status.missingKeys?.[index]),
         sourceRef: status.goalId,
         sourceSnapshot: { goalId: status.goalId, missingKeys: status.missingKeys ?? [] },
       })),
@@ -94,14 +95,22 @@ export async function synthesizeGapProbes(
     recalledAnchors: input.recalledAnchors,
   });
 
-  const rawDrafts = input.generateProbeDrafts
-    ? await input.generateProbeDrafts({
+  let rawDrafts: ReasoningGapProbeDraft[];
+
+  if (input.generateProbeDrafts) {
+    try {
+      rawDrafts = await input.generateProbeDrafts({
         prompt,
         userQuery: input.userQuery,
         goalStatus: input.goalStatus,
         recalledAnchors: input.recalledAnchors,
-      })
-    : createFallbackDrafts(input.goalStatus);
+      });
+    } catch {
+      rawDrafts = createFallbackDrafts(input.goalStatus);
+    }
+  } else {
+    rawDrafts = createFallbackDrafts(input.goalStatus);
+  }
 
   const seenCanonicalQuestions = new Set<string>();
   const probes: PendingReasoningProbe[] = [];

@@ -93,6 +93,46 @@ describe("reasoning gap probes", () => {
     ]);
   });
 
+  it("classifies default fallback drafts per missing item instead of per goal", async () => {
+    const probes = await synthesizeGapProbes({
+      userQuery: "她适合找我聊这件事吗？",
+      goalStatus: [createGoalStatus()],
+      recalledAnchors: [],
+    });
+
+    expect(probes).toEqual([
+      expect.objectContaining({
+        displayQuestion: "我和对方现在是什么关系？",
+        canonicalQuestion: "我和对方现在是什么关系？",
+        kind: "fact-gap",
+      }),
+      expect.objectContaining({
+        displayQuestion: "我通常在这种关系里怎么设边界？",
+        canonicalQuestion: "我通常在这种关系里怎么设边界？",
+        kind: "judgment-gap",
+      }),
+    ]);
+  });
+
+  it("falls back to default drafts when the injected generator throws", async () => {
+    const probes = await synthesizeGapProbes({
+      userQuery: "她适合找我聊这件事吗？",
+      goalStatus: [createGoalStatus({ missing: ["我和对方现在是什么关系"] })],
+      recalledAnchors: [],
+      generateProbeDrafts: vi.fn(async () => {
+        throw new Error("generator failed");
+      }),
+    });
+
+    expect(probes).toEqual([
+      expect.objectContaining({
+        displayQuestion: "我和对方现在是什么关系？",
+        canonicalQuestion: "我和对方现在是什么关系？",
+        kind: "fact-gap",
+      }),
+    ]);
+  });
+
   it("drops a probe when the same canonical question is already answered in recalled anchors", async () => {
     const probes = await synthesizeGapProbes({
       userQuery: "我该怎么回复？",
