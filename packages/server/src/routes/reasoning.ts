@@ -8,10 +8,12 @@ import { isAbsolute } from "node:path";
 
 import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import type { AvatarInferenceMessage } from "../avatar/model.js";
+import { createApprovalService } from "../approval/service.js";
 import { soulAnchors } from "../db/schema.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { ChatClient } from "../llm/client.js";
 import type { EmbeddingClient } from "../embedding/client.js";
+import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
 import type { SoulAnchor } from "../types.js";
 import { logger, shortKey } from "../logger.js";
 import { canonicalizeBodyJson } from "../messaging/body.js";
@@ -117,15 +119,35 @@ async function withThreadLock<T>(threadKey: string, fn: () => Promise<T>): Promi
 }
 
 function createRuntime(input: {
+  ownerKey: string;
   ownerConn: ReturnType<ConnectionManager["getConnection"]>;
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
   debugArtifactRootDir: string | null;
 }) {
+  const approvalService = createApprovalService({
+    ownerKey: input.ownerKey,
+    conn: input.ownerConn,
+    embeddingClient: input.embeddingClient,
+  });
+
+  const flushReasoningProbes = async (probes: PendingReasoningProbe[]) => {
+    for (const probe of probes) {
+      approvalService.createCandidate({
+        question: probe.displayQuestion,
+        answer: null,
+        source: "reasoning",
+        sourceRef: probe.sourceRef,
+        sourceSnapshot: probe.sourceSnapshot,
+      });
+    }
+  };
+
   return new AvatarInferenceRuntime({
     ownerConn: input.ownerConn,
     chatClient: input.chatClient,
     embeddingClient: input.embeddingClient,
+    flushReasoningProbes,
     debugArtifactWriter: input.debugArtifactRootDir
       ? createLatestReasoningDebugArtifactWriter({ rootDir: input.debugArtifactRootDir })
       : undefined,
@@ -724,6 +746,7 @@ reasoningRoutes.post(
     const requestBody = buildStoredBody(messageInput);
     const parties = buildConversationKeys(ownerPubKey, requesterPubKey);
     const runtime = createRuntime({
+      ownerKey: ownerPubKey,
       ownerConn,
       chatClient,
       embeddingClient,

@@ -41,6 +41,13 @@ async function createTestApp(
   return app;
 }
 
+function listCandidateRows(pubKey: string) {
+  return connMgr
+    .getConnection(pubKey, { create: true })
+    .raw.prepare(`SELECT question, answer, source FROM soul_candidate_queue ORDER BY rowid ASC`)
+    .all() as Array<{ question: string; answer: string | null; source: string }>;
+}
+
 describe("ai chat completions route", () => {
   const ownerPubKey = getPublicKey(generateKeyPair());
   const apiToken = `token-${crypto.randomUUID()}`;
@@ -146,5 +153,83 @@ describe("ai chat completions route", () => {
     releaseChatStream.resolve();
     const res = await responsePromise;
     expect(res.status).toBe(200);
+  });
+
+  it("creates reasoning probe candidates for chat completions without changing the response schema", async () => {
+    vi.resetModules();
+
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (
+            probes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>,
+          ) => Promise<void> | void;
+        },
+      ) {}
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      async run() {
+        await this.deps.flushReasoningProbes?.([
+          {
+            displayQuestion: "我还缺什么判断标准？",
+            canonicalQuestion: "我还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "goal:criteria",
+            sourceSnapshot: { goalId: "criteria" },
+          },
+        ]);
+        return {
+          message: { role: "assistant", content: "你好" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
+    const app = await createTestApp(aiChatCompletionsRoute, {
+      chatClient: {
+        chat: vi.fn(),
+        chatStream: vi.fn(),
+      },
+    });
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "你好" }],
+        stream: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+
+    expect(listCandidateRows(ownerPubKey)).toEqual([
+      expect.objectContaining({
+        question: "我还缺什么判断标准？",
+        answer: null,
+        source: "reasoning",
+      }),
+    ]);
+    expect(json.object).toBe("chat.completion");
   });
 });

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { createApprovalService } from "../approval/service.js";
 import { apiTokens } from "../db/schema.js";
 import type { ConnectionManager } from "../db/connection.js";
 import type { ChatClient } from "../llm/client.js";
@@ -10,6 +11,7 @@ import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import { parseAvatarModel, type AvatarInferenceMessage } from "../avatar/model.js";
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 import { isAbortError, throwIfAborted } from "../lib/abort.js";
+import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
 
 const openAiChatSchema = z.object({
   model: z.string(),
@@ -168,10 +170,27 @@ export function aiChatCompletionsRoute(deps: {
 
     const id = createCompletionId();
     const created = Math.floor(Date.now() / 1000);
+    const approvalService = createApprovalService({
+      ownerKey: parsedModel.publicKey,
+      conn: ownerConn,
+      embeddingClient: deps.embeddingClient,
+    });
+    const flushReasoningProbes = async (probes: PendingReasoningProbe[]) => {
+      for (const probe of probes) {
+        approvalService.createCandidate({
+          question: probe.displayQuestion,
+          answer: null,
+          source: "reasoning",
+          sourceRef: probe.sourceRef,
+          sourceSnapshot: probe.sourceSnapshot,
+        });
+      }
+    };
     const runtime = new AvatarInferenceRuntime({
       ownerConn,
       chatClient: deps.chatClient,
       embeddingClient: deps.embeddingClient,
+      flushReasoningProbes,
     });
 
     try {
