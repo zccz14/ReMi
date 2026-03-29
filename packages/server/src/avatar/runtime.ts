@@ -63,6 +63,13 @@ function parseJsonIfPossible(content: string): unknown | undefined {
   }
 }
 
+function clonePendingReasoningProbe(probe: PendingReasoningProbe): PendingReasoningProbe {
+  return {
+    ...probe,
+    sourceSnapshot: probe.sourceSnapshot ? structuredClone(probe.sourceSnapshot) : null,
+  };
+}
+
 type RuntimeDebugState = {
   currentTime: string;
   userQuery: string;
@@ -168,10 +175,7 @@ export class AvatarInferenceRuntime {
       return;
     }
 
-    const probes = prepared.pendingReasoningProbes.map((probe) => ({
-      ...probe,
-      sourceSnapshot: probe.sourceSnapshot ? { ...probe.sourceSnapshot } : null,
-    }));
+    const probes = prepared.pendingReasoningProbes.map(clonePendingReasoningProbe);
 
     void Promise.resolve(this.deps.flushReasoningProbes(probes)).catch(() => {
       // Best-effort only: probe flushing must not change answer semantics.
@@ -492,10 +496,7 @@ export class AvatarInferenceRuntime {
     }
 
     return {
-      pendingReasoningProbes: prepared.pendingReasoningProbes.map((probe) => ({
-        ...probe,
-        sourceSnapshot: probe.sourceSnapshot ? { ...probe.sourceSnapshot } : null,
-      })),
+      pendingReasoningProbes: prepared.pendingReasoningProbes.map(clonePendingReasoningProbe),
     };
   }
 

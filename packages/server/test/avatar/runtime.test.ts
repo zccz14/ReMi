@@ -1211,6 +1211,56 @@ describe("AvatarInferenceRuntime", () => {
     }
   });
 
+  it("returns deep-cloned reasoning probe metadata snapshots", async () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient: createChatClient(),
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const createPendingReasoningProbes = () => [
+      {
+        displayQuestion: "我在做这类决定时还缺什么判断标准？",
+        canonicalQuestion: "我在做这类决定时还缺什么判断标准？",
+        kind: "judgment-gap" as const,
+        sourceRef: "relationship_boundary",
+        sourceSnapshot: {
+          goalId: "relationship_boundary",
+          missingKeys: ["criteria"],
+          nested: { labels: ["boundary"] },
+        },
+      },
+    ];
+    const pendingReasoningProbes = createPendingReasoningProbes();
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue(pendingReasoningProbes);
+
+    try {
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "帮我做个计划" }],
+        stream: false,
+      });
+
+      const firstMetadata = runtime.getPreparedReasoningProbeMetadata(request);
+      expect(firstMetadata).toEqual({ pendingReasoningProbes: createPendingReasoningProbes() });
+
+      const firstSnapshot = firstMetadata?.pendingReasoningProbes[0]?.sourceSnapshot as {
+        missingKeys: string[];
+        nested: { labels: string[] };
+      };
+      firstSnapshot.missingKeys.push("priority");
+      firstSnapshot.nested.labels.push("judgment");
+
+      expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
+        pendingReasoningProbes: createPendingReasoningProbes(),
+      });
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
   it("does not wait for probe flushing before returning a non-stream response", async () => {
     const chatClient = createChatClient();
     const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
@@ -1386,6 +1436,74 @@ describe("AvatarInferenceRuntime", () => {
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       });
       expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
+  it("keeps flush hook probe mutations isolated from prepared metadata", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("flush 隔离")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockResolvedValueOnce(createChatResponse("回答保持成功"));
+
+    const createPendingReasoningProbes = () => [
+      {
+        displayQuestion: "我还缺少什么信息？",
+        canonicalQuestion: "我还缺少什么信息？",
+        kind: "fact-gap" as const,
+        sourceRef: "domain_answer",
+        sourceSnapshot: {
+          goalId: "domain_answer",
+          missingKeys: ["timeline"],
+          nested: { labels: ["fact"] },
+        },
+      },
+    ];
+    const pendingReasoningProbes = createPendingReasoningProbes();
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue(pendingReasoningProbes);
+
+    let request!: AvatarInferenceRequest;
+    let metadataSeenInsideFlush:
+      | ReturnType<AvatarInferenceRuntime["getPreparedReasoningProbeMetadata"]>
+      | undefined;
+    const flushReasoningProbes = vi.fn((probes: reasoningGapProbes.PendingReasoningProbe[]) => {
+      const snapshot = probes[0]?.sourceSnapshot as {
+        missingKeys: string[];
+        nested: { labels: string[] };
+      };
+      snapshot.missingKeys.push("budget");
+      snapshot.nested.labels.push("mutated-by-flush");
+      metadataSeenInsideFlush = runtime.getPreparedReasoningProbeMetadata(request);
+    });
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+      flushReasoningProbes,
+    } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+    try {
+      request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "flush 隔离" }],
+        stream: false,
+      });
+
+      await runtime.run(request);
+
+      expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+      expect(metadataSeenInsideFlush).toEqual({
+        pendingReasoningProbes: createPendingReasoningProbes(),
+      });
     } finally {
       synthesizeGapProbesSpy.mockRestore();
     }
