@@ -1,6 +1,6 @@
 export interface CanonicalizedQuestion {
   displayQuestion: string;
-  canonicalQuestion: string;
+  canonicalQuestion: string | null;
 }
 
 export const OWNER_QUESTION_PROMPT_RULES = [
@@ -19,9 +19,6 @@ function normalizeOwnerQuestionDraft(question: string): string {
   normalized = normalized.replace(/用户在/g, "我在");
   normalized = normalized.replace(/用户/g, "我");
 
-  normalized = normalized.replace(/刚才提到的那个/g, "提到的");
-  normalized = normalized.replace(/刚才提到的这个/g, "提到的");
-
   normalized = normalized.replace(
     /^我在(?:上周[一二三四五六日天]?|本周|这周|昨天|今天|刚才|当时|前天)?(?:上午|中午|下午|晚上)?/,
     "我最近在",
@@ -35,7 +32,15 @@ function normalizeOwnerQuestionDraft(question: string): string {
   return normalized;
 }
 
-function collapseQuestionForExactMatch(question: string): string {
+function isContextDependentQuestion(question: string): boolean {
+  return /(这个|那个|刚才提到的|刚刚提到的|前面提到的|上述|上面提到的)/.test(question);
+}
+
+function collapseQuestionForExactMatch(question: string): string | null {
+  if (isContextDependentQuestion(question)) {
+    return null;
+  }
+
   return question.replace(/\s+/g, " ").trim();
 }
 

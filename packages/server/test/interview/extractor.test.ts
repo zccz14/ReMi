@@ -149,7 +149,7 @@ describe("extractAnchors", () => {
     expect(result[0]?.question).toBe("我最近在经历什么求职进展？");
   });
 
-  it("normalizes context-dependent owner references through the shared contract", async () => {
+  it("preserves context-dependent owner references through the interview extraction flow", async () => {
     const client = mockChatClient(
       `<anchor><question>用户刚才提到的那个项目里最重要的是什么？</question><answer>最重要的是它能帮我整理访谈记忆。</answer></anchor>`,
     );
@@ -161,7 +161,7 @@ describe("extractAnchors", () => {
       existingAnchors: [],
     });
 
-    expect(result[0]?.question).toBe("我提到的项目里最重要的是什么？");
+    expect(result[0]?.question).toBe("我刚才提到的那个项目里最重要的是什么？");
   });
 
   it("does not treat new lower-level facts as already covered", async () => {
