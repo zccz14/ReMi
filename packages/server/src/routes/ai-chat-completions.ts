@@ -12,6 +12,10 @@ import { parseAvatarModel, type AvatarInferenceMessage } from "../avatar/model.j
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 import { isAbortError, throwIfAborted } from "../lib/abort.js";
 import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
+import { isReasoningGapProbeEnabledForOwner } from "../config/feature-flags.js";
+import { logger } from "../logger.js";
+
+const log = logger.child({ module: "route:ai-chat-completions" });
 
 const openAiChatSchema = z.object({
   model: z.string(),
@@ -170,22 +174,64 @@ export function aiChatCompletionsRoute(deps: {
 
     const id = createCompletionId();
     const created = Math.floor(Date.now() / 1000);
-    const approvalService = createApprovalService({
-      ownerKey: parsedModel.publicKey,
-      conn: ownerConn,
-      embeddingClient: deps.embeddingClient,
-    });
-    const flushReasoningProbes = async (probes: PendingReasoningProbe[]) => {
-      for (const probe of probes) {
-        approvalService.createCandidate({
-          question: probe.displayQuestion,
-          answer: null,
-          source: "reasoning",
-          sourceRef: probe.sourceRef,
-          sourceSnapshot: probe.sourceSnapshot,
-        });
-      }
-    };
+    const requestId = crypto.randomUUID();
+    const streamMode = parsedBody.data.stream ? "stream" : "non-stream";
+    const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(parsedModel.publicKey)
+      ? (() => {
+          const approvalService = createApprovalService({
+            ownerKey: parsedModel.publicKey,
+            conn: ownerConn,
+            embeddingClient: deps.embeddingClient,
+          });
+
+          return async (probes: PendingReasoningProbe[]) => {
+            const startedAt = Date.now();
+            let createSuccessCount = 0;
+            let createFailureCount = 0;
+
+            for (const probe of probes) {
+              try {
+                const createdCandidate = approvalService.createCandidate({
+                  question: probe.displayQuestion,
+                  answer: null,
+                  source: "reasoning",
+                  sourceRef: probe.sourceRef,
+                  sourceSnapshot: probe.sourceSnapshot,
+                });
+                createSuccessCount += 1;
+                log.info({
+                  event: "reasoning_probe_candidate_created",
+                  ownerKey: parsedModel.publicKey,
+                  requestId,
+                  streamMode,
+                  candidateId: createdCandidate.id,
+                });
+              } catch (error) {
+                createFailureCount += 1;
+                log.warn({
+                  event: "reasoning_probe_candidate_create_failed",
+                  ownerKey: parsedModel.publicKey,
+                  requestId,
+                  streamMode,
+                  err: error,
+                });
+              }
+            }
+
+            log.info({
+              event: "reasoning_probe_generated",
+              ownerKey: parsedModel.publicKey,
+              requestId,
+              streamMode,
+              probeCount: probes.length,
+              droppedCount: 0,
+              createSuccessCount,
+              createFailureCount,
+              latencyDeltaMs: Date.now() - startedAt,
+            });
+          };
+        })()
+      : undefined;
     const runtime = new AvatarInferenceRuntime({
       ownerConn,
       chatClient: deps.chatClient,

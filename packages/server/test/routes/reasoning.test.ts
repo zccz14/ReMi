@@ -9,6 +9,8 @@ import { generateKeyPair, getPublicKey } from "@remi/crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { decodeStoredBody } from "../../src/messaging/runtime.js";
+import type { StructuredLogRecord } from "../../src/logger.js";
+import { isReasoningGapProbeEnabledForOwner } from "../../src/config/feature-flags.js";
 
 let tmpDir: string;
 let connMgr: ConnectionManager;
@@ -136,6 +138,10 @@ function listCandidateRows(pubKey: string) {
     .all() as Array<{ question: string; answer: string | null; source: string }>;
 }
 
+function findEvents(records: StructuredLogRecord[], event: string) {
+  return records.filter((record) => record.event === event || record.alertType === event);
+}
+
 describe("reasoning routes", () => {
   beforeEach(() => {
     tmpDir = path.join("test-tmp", "reasoning-routes-" + crypto.randomUUID());
@@ -149,8 +155,16 @@ describe("reasoning routes", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.REMI_REASONING_GAP_PROBE_OWNERS;
     connMgr.closeAll();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("enables reasoning probes only for allowlisted owners", () => {
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = `${testPubKey},owner-b`;
+
+    expect(isReasoningGapProbeEnabledForOwner(testPubKey)).toBe(true);
+    expect(isReasoningGapProbeEnabledForOwner("owner-c")).toBe(false);
   });
 
   it("GET /reasoning/messages -> 200 empty", async () => {
@@ -355,6 +369,7 @@ describe("reasoning routes", () => {
 
   it("creates reasoning probe candidates for the reasoning route", async () => {
     vi.resetModules();
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = testPubKey;
 
     class FakeAvatarInferenceRuntime {
       constructor(
@@ -431,6 +446,178 @@ describe("reasoning routes", () => {
         source: "reasoning",
       }),
     ]);
+  });
+
+  it("does not create reasoning probes when the owner is not allowlisted", async () => {
+    vi.resetModules();
+
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (
+            probes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>,
+          ) => Promise<void> | void;
+        },
+      ) {}
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      getPreparedReasoningMetadata() {
+        return {
+          thinkingNarratives: [],
+          recalledAnchorIds: [],
+          anchorSelectionStrategy: "batch-recall",
+        };
+      }
+
+      async *runStream() {
+        await this.deps.flushReasoningProbes?.([
+          {
+            displayQuestion: "我还缺什么判断标准？",
+            canonicalQuestion: "我还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "goal:criteria",
+            sourceSnapshot: { goalId: "criteria" },
+          },
+        ]);
+        yield { type: "message_start", message: { role: "assistant" } };
+        yield { type: "text_delta", text: "hello" };
+        yield { type: "message_end", finishReason: "stop" };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { reasoningRoutes: mockedReasoningRoutes } =
+      await import("../../src/routes/reasoning.js");
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("signerPubKey", visitorPubKey);
+      c.set("role", "visitor");
+      c.set("connMgr", connMgr);
+      c.set("embeddingClient", null);
+      c.set("chatClient", createChatClient());
+      await next();
+    });
+    app.route("/api", mockedReasoningRoutes);
+
+    const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(listCandidateRows(testPubKey)).toEqual([]);
+  });
+
+  it("records reasoning probe lifecycle events", async () => {
+    vi.resetModules();
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = testPubKey;
+
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (
+            probes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>,
+          ) => Promise<void> | void;
+        },
+      ) {}
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      getPreparedReasoningMetadata() {
+        return {
+          thinkingNarratives: [],
+          recalledAnchorIds: [],
+          anchorSelectionStrategy: "batch-recall",
+        };
+      }
+
+      async *runStream() {
+        await this.deps.flushReasoningProbes?.([
+          {
+            displayQuestion: "我还缺什么判断标准？",
+            canonicalQuestion: "我还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "goal:criteria",
+            sourceSnapshot: { goalId: "criteria" },
+          },
+        ]);
+        yield { type: "message_start", message: { role: "assistant" } };
+        yield { type: "text_delta", text: "hello" };
+        yield { type: "message_end", finishReason: "stop" };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { reasoningRoutes: mockedReasoningRoutes } =
+      await import("../../src/routes/reasoning.js");
+    const { subscribeToLogs: subscribeToFreshLogs } = await import("../../src/logger.js");
+    const records: StructuredLogRecord[] = [];
+    const unsubscribe = subscribeToFreshLogs((record) => {
+      records.push(record);
+    });
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("signerPubKey", visitorPubKey);
+      c.set("role", "visitor");
+      c.set("connMgr", connMgr);
+      c.set("embeddingClient", null);
+      c.set("chatClient", createChatClient());
+      await next();
+    });
+    app.route("/api", mockedReasoningRoutes);
+
+    try {
+      const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "你好" }),
+      });
+
+      expect(res.status).toBe(200);
+      await res.text();
+
+      expect(findEvents(records, "reasoning_probe_generated")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_generated")[0]).toEqual(
+        expect.objectContaining({
+          ownerKey: testPubKey,
+          requestId: expect.any(String),
+          streamMode: "stream",
+          probeCount: 1,
+          droppedCount: 0,
+          createSuccessCount: 1,
+          createFailureCount: 0,
+          latencyDeltaMs: expect.any(Number),
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("POST /reasoning/message fails fast when prepared reasoning metadata is missing", async () => {

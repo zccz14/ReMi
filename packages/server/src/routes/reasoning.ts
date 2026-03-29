@@ -33,6 +33,7 @@ import {
 } from "../messaging/runtime.js";
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 import { isAbortError, throwIfAborted } from "../lib/abort.js";
+import { isReasoningGapProbeEnabledForOwner } from "../config/feature-flags.js";
 
 const log = logger.child({ module: "route:reasoning" });
 
@@ -124,24 +125,65 @@ function createRuntime(input: {
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
   debugArtifactRootDir: string | null;
+  requestId: string;
+  streamMode: "stream";
 }) {
-  const approvalService = createApprovalService({
-    ownerKey: input.ownerKey,
-    conn: input.ownerConn,
-    embeddingClient: input.embeddingClient,
-  });
+  const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(input.ownerKey)
+    ? (() => {
+        const approvalService = createApprovalService({
+          ownerKey: input.ownerKey,
+          conn: input.ownerConn,
+          embeddingClient: input.embeddingClient,
+        });
 
-  const flushReasoningProbes = async (probes: PendingReasoningProbe[]) => {
-    for (const probe of probes) {
-      approvalService.createCandidate({
-        question: probe.displayQuestion,
-        answer: null,
-        source: "reasoning",
-        sourceRef: probe.sourceRef,
-        sourceSnapshot: probe.sourceSnapshot,
-      });
-    }
-  };
+        return async (probes: PendingReasoningProbe[]) => {
+          const startedAt = Date.now();
+          let createSuccessCount = 0;
+          let createFailureCount = 0;
+
+          for (const probe of probes) {
+            try {
+              const created = approvalService.createCandidate({
+                question: probe.displayQuestion,
+                answer: null,
+                source: "reasoning",
+                sourceRef: probe.sourceRef,
+                sourceSnapshot: probe.sourceSnapshot,
+              });
+              createSuccessCount += 1;
+              log.info({
+                event: "reasoning_probe_candidate_created",
+                ownerKey: input.ownerKey,
+                requestId: input.requestId,
+                streamMode: input.streamMode,
+                candidateId: created.id,
+              });
+            } catch (error) {
+              createFailureCount += 1;
+              log.warn({
+                event: "reasoning_probe_candidate_create_failed",
+                ownerKey: input.ownerKey,
+                requestId: input.requestId,
+                streamMode: input.streamMode,
+                err: error,
+              });
+            }
+          }
+
+          log.info({
+            event: "reasoning_probe_generated",
+            ownerKey: input.ownerKey,
+            requestId: input.requestId,
+            streamMode: input.streamMode,
+            probeCount: probes.length,
+            droppedCount: 0,
+            createSuccessCount,
+            createFailureCount,
+            latencyDeltaMs: Date.now() - startedAt,
+          });
+        };
+      })()
+    : undefined;
 
   return new AvatarInferenceRuntime({
     ownerConn: input.ownerConn,
@@ -745,12 +787,15 @@ reasoningRoutes.post(
     const requesterConn = connMgr.getConnection(requesterPubKey, { create: true });
     const requestBody = buildStoredBody(messageInput);
     const parties = buildConversationKeys(ownerPubKey, requesterPubKey);
+    const requestId = crypto.randomUUID();
     const runtime = createRuntime({
       ownerKey: ownerPubKey,
       ownerConn,
       chatClient,
       embeddingClient,
       debugArtifactRootDir: resolveReasoningDebugArtifactRootDir(),
+      requestId,
+      streamMode: "stream",
     });
 
     return streamSSE(c, async (stream) => {

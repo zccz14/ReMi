@@ -12,6 +12,14 @@ let connMgr: ConnectionManager;
 const ownerPubKey = getPublicKey(generateKeyPair());
 const visitorPubKey = getPublicKey(generateKeyPair());
 
+type RuntimeWithPreparedMap = {
+  preparedInferenceByRequest: WeakMap<object, object>;
+};
+
+type RuntimeWithPrivateFlush = {
+  flushReasoningProbesBestEffort: (request: unknown) => void;
+};
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -66,8 +74,153 @@ describe("reasoning route transport cancellation", () => {
   afterEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+    delete process.env.REMI_REASONING_GAP_PROBE_OWNERS;
     connMgr.closeAll();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not wait for probe flushing before the transport response is established", async () => {
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
+
+    const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
+    const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
+
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
+      async function (input) {
+        const request = {
+          avatarTarget: input.avatarTarget,
+          instructionSegments: {
+            platform: "platform",
+            avatar: "avatar",
+            recall: "recall",
+          },
+          conversationTurns: input.conversationTurns,
+          contentParts: [] as [],
+          stream: input.stream,
+          signal: input.signal,
+        };
+
+        (this as unknown as RuntimeWithPreparedMap).preparedInferenceByRequest.set(request, {
+          request,
+          currentTime: new Date(0).toISOString(),
+          userQuery: "你好",
+          requiredGoalIds: [],
+          finalAnchorIds: [],
+          anchorSelectionStrategy: "recall-loop",
+          rounds: 0,
+          goalStatus: [],
+          recallRounds: [],
+          turns: [],
+          thinkingNarratives: [],
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+        });
+
+        return request;
+      },
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: [],
+      recalledAnchorIds: [],
+      anchorSelectionStrategy: "batch-recall",
+    });
+    const flushSpy = vi.spyOn(
+      AvatarInferenceRuntime.prototype as unknown as RuntimeWithPrivateFlush,
+      "flushReasoningProbesBestEffort",
+    );
+
+    const app = await createTestApp(reasoningRoutes, {
+      chat: vi.fn(),
+      chatStream: vi.fn(async function* () {
+        yield "hello";
+      }),
+    });
+
+    const res = await app.request(`/api/${ownerPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: token");
+    expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it("does not create reasoning probes when the stream is cancelled before the first token", async () => {
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
+
+    const heartbeatFailure = createDeferred<never>();
+    let notifyHeartbeatError: ((error: unknown) => void) | undefined;
+
+    vi.doMock("../../src/lib/sse-heartbeat.js", () => ({
+      createSseHeartbeat: (options: { onError?: (error: unknown) => void }) => {
+        notifyHeartbeatError = options.onError;
+        return {
+          start() {},
+          stop() {},
+          recordRealWrite() {},
+          failure: heartbeatFailure.promise,
+        };
+      },
+    }));
+
+    const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
+    const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
+
+    const flushSpy = vi.spyOn(
+      AvatarInferenceRuntime.prototype as unknown as RuntimeWithPrivateFlush,
+      "flushReasoningProbesBestEffort",
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
+      async (input) => ({
+        avatarTarget: input.avatarTarget,
+        instructionSegments: {
+          platform: "platform",
+          avatar: "avatar",
+          recall: "recall",
+        },
+        conversationTurns: input.conversationTurns,
+        contentParts: [] as [],
+        stream: input.stream,
+        signal: input.signal,
+      }),
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: [],
+      recalledAnchorIds: [],
+      anchorSelectionStrategy: "batch-recall",
+    });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "runStream").mockImplementation(async function* () {
+      yield* [] as never[];
+      const transportFailure = new Error("heartbeat write failed before first token");
+      notifyHeartbeatError?.(transportFailure);
+      heartbeatFailure.reject(transportFailure);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return;
+    });
+
+    const app = await createTestApp(reasoningRoutes, {
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+    });
+
+    const res = await app.request(`/api/${ownerPubKey}/reasoning/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "你好" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(flushSpy).not.toHaveBeenCalled();
   });
 
   it("does not persist assistant output after heartbeat failure", async () => {

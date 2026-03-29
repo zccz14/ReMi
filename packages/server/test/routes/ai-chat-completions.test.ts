@@ -6,6 +6,7 @@ import { generateKeyPair, getPublicKey } from "@remi/crypto";
 import { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatClient } from "../../src/llm/client.js";
 import type { EmbeddingClient } from "../../src/embedding/client.js";
+import type { StructuredLogRecord } from "../../src/logger.js";
 
 let tmpDir: string;
 let connMgr: ConnectionManager;
@@ -48,6 +49,10 @@ function listCandidateRows(pubKey: string) {
     .all() as Array<{ question: string; answer: string | null; source: string }>;
 }
 
+function findEvents(records: StructuredLogRecord[], event: string) {
+  return records.filter((record) => record.event === event || record.alertType === event);
+}
+
 describe("ai chat completions route", () => {
   const ownerPubKey = getPublicKey(generateKeyPair());
   const apiToken = `token-${crypto.randomUUID()}`;
@@ -69,6 +74,7 @@ describe("ai chat completions route", () => {
   afterEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+    delete process.env.REMI_REASONING_GAP_PROBE_OWNERS;
     connMgr.closeAll();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -157,6 +163,7 @@ describe("ai chat completions route", () => {
 
   it("creates reasoning probe candidates for chat completions without changing the response schema", async () => {
     vi.resetModules();
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
 
     class FakeAvatarInferenceRuntime {
       constructor(
@@ -231,5 +238,170 @@ describe("ai chat completions route", () => {
       }),
     ]);
     expect(json.object).toBe("chat.completion");
+  });
+
+  it("does not create reasoning probes for chat completions when the owner is not allowlisted", async () => {
+    vi.resetModules();
+
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (
+            probes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>,
+          ) => Promise<void> | void;
+        },
+      ) {}
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      async run() {
+        await this.deps.flushReasoningProbes?.([
+          {
+            displayQuestion: "我还缺什么判断标准？",
+            canonicalQuestion: "我还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "goal:criteria",
+            sourceSnapshot: { goalId: "criteria" },
+          },
+        ]);
+        return {
+          message: { role: "assistant", content: "你好" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
+    const app = await createTestApp(aiChatCompletionsRoute, {
+      chatClient: {
+        chat: vi.fn(),
+        chatStream: vi.fn(),
+      },
+    });
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "你好" }],
+        stream: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.json();
+    expect(listCandidateRows(ownerPubKey)).toEqual([]);
+  });
+
+  it("records reasoning probe lifecycle events for chat completions without changing the response schema", async () => {
+    vi.resetModules();
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
+
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (
+            probes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>,
+          ) => Promise<void> | void;
+        },
+      ) {}
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      async run() {
+        await this.deps.flushReasoningProbes?.([
+          {
+            displayQuestion: "我还缺什么判断标准？",
+            canonicalQuestion: "我还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "goal:criteria",
+            sourceSnapshot: { goalId: "criteria" },
+          },
+        ]);
+        return {
+          message: { role: "assistant", content: "你好" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
+    const { subscribeToLogs: subscribeToFreshLogs } = await import("../../src/logger.js");
+    const records: StructuredLogRecord[] = [];
+    const unsubscribe = subscribeToFreshLogs((record) => {
+      records.push(record);
+    });
+    const app = await createTestApp(aiChatCompletionsRoute, {
+      chatClient: {
+        chat: vi.fn(),
+        chatStream: vi.fn(),
+      },
+    });
+
+    try {
+      const res = await app.request("/ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiToken}`,
+        },
+        body: JSON.stringify({
+          model: `ReMi-${ownerPubKey}`,
+          messages: [{ role: "user", content: "你好" }],
+          stream: false,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(findEvents(records, "reasoning_probe_generated")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_generated")[0]).toEqual(
+        expect.objectContaining({
+          ownerKey: ownerPubKey,
+          requestId: expect.any(String),
+          streamMode: "non-stream",
+          probeCount: 1,
+          droppedCount: 0,
+          createSuccessCount: 1,
+          createFailureCount: 0,
+          latencyDeltaMs: expect.any(Number),
+        }),
+      );
+      expect(json.object).toBe("chat.completion");
+    } finally {
+      unsubscribe();
+    }
   });
 });

@@ -10,3 +10,20 @@ export function getConversationFlowMode(): ConversationFlowMode {
   }
   return "off";
 }
+
+function parseOwnerAllowlist(raw: string | undefined): Set<string> {
+  if (!raw) {
+    return new Set();
+  }
+
+  return new Set(
+    raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+}
+
+export function isReasoningGapProbeEnabledForOwner(ownerKey: string): boolean {
+  return parseOwnerAllowlist(process.env.REMI_REASONING_GAP_PROBE_OWNERS).has(ownerKey);
+}
