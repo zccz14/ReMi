@@ -1,5 +1,8 @@
 import { base58Decode } from "@remi/crypto";
-import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
+import type {
+  PendingReasoningProbe,
+  ReasoningProbeSynthesisStats,
+} from "../reasoning/gap-probes.js";
 
 export type AvatarInferenceMessageRole = "system" | "user" | "assistant";
 
@@ -38,6 +41,7 @@ export type AvatarInferenceEvent =
 
 export interface AvatarInferencePreparedReasoningProbeMetadata {
   pendingReasoningProbes: PendingReasoningProbe[];
+  probeStats: ReasoningProbeSynthesisStats;
 }
 
 export function parseAvatarModel(model: string): { publicKey: string; model: string } | null {

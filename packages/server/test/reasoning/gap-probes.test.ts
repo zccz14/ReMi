@@ -9,6 +9,13 @@ import {
   type ReasoningGapProbeDraft,
 } from "../../src/reasoning/gap-probes.js";
 
+function expectProbeStats(
+  result: Awaited<ReturnType<typeof synthesizeGapProbes>>,
+  stats: { rawDraftCount: number; droppedCount: number },
+) {
+  expect(result.stats).toEqual(stats);
+}
+
 function createAnchor(overrides: Partial<SoulAnchor> = {}): SoulAnchor {
   return {
     id: "a1",
@@ -61,7 +68,7 @@ describe("reasoning gap probes", () => {
   });
 
   it("creates 1-3 high-value probe drafts from missing goals", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
       goalStatus: [createGoalStatus()],
       recalledAnchors: [],
@@ -73,8 +80,8 @@ describe("reasoning gap probes", () => {
       ]),
     });
 
-    expect(probes).toHaveLength(3);
-    expect(probes).toEqual([
+    expect(result.probes).toHaveLength(3);
+    expect(result.probes).toEqual([
       expect.objectContaining({
         displayQuestion: "我和对方现在是什么关系？",
         canonicalQuestion: "我和对方现在是什么关系？",
@@ -91,16 +98,17 @@ describe("reasoning gap probes", () => {
         kind: "judgment-gap",
       }),
     ]);
+    expectProbeStats(result, { rawDraftCount: 4, droppedCount: 1 });
   });
 
   it("classifies default fallback drafts per missing item instead of per goal", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
       goalStatus: [createGoalStatus()],
       recalledAnchors: [],
     });
 
-    expect(probes).toEqual([
+    expect(result.probes).toEqual([
       expect.objectContaining({
         displayQuestion: "我和对方现在是什么关系？",
         canonicalQuestion: "我和对方现在是什么关系？",
@@ -112,10 +120,11 @@ describe("reasoning gap probes", () => {
         kind: "judgment-gap",
       }),
     ]);
+    expectProbeStats(result, { rawDraftCount: 2, droppedCount: 0 });
   });
 
   it("infers judgment gaps from missing text when missingKeys are absent", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
       goalStatus: [
         createGoalStatus({
@@ -126,17 +135,18 @@ describe("reasoning gap probes", () => {
       recalledAnchors: [],
     });
 
-    expect(probes).toEqual([
+    expect(result.probes).toEqual([
       expect.objectContaining({
         displayQuestion: "我通常在这种关系里怎么设边界？",
         canonicalQuestion: "我通常在这种关系里怎么设边界？",
         kind: "judgment-gap",
       }),
     ]);
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 0 });
   });
 
   it("keeps factual relationship questions as fact gaps when missingKeys are absent", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
       goalStatus: [
         createGoalStatus({
@@ -147,17 +157,18 @@ describe("reasoning gap probes", () => {
       recalledAnchors: [],
     });
 
-    expect(probes).toEqual([
+    expect(result.probes).toEqual([
       expect.objectContaining({
         displayQuestion: "我和对方现在是什么关系？",
         canonicalQuestion: "我和对方现在是什么关系？",
         kind: "fact-gap",
       }),
     ]);
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 0 });
   });
 
   it("falls back to default drafts when the injected generator throws", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
       goalStatus: [createGoalStatus({ missing: ["我和对方现在是什么关系"] })],
       recalledAnchors: [],
@@ -166,17 +177,18 @@ describe("reasoning gap probes", () => {
       }),
     });
 
-    expect(probes).toEqual([
+    expect(result.probes).toEqual([
       expect.objectContaining({
         displayQuestion: "我和对方现在是什么关系？",
         canonicalQuestion: "我和对方现在是什么关系？",
         kind: "fact-gap",
       }),
     ]);
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 0 });
   });
 
   it("drops a probe when the same canonical question is already answered in recalled anchors", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "我该怎么回复？",
       goalStatus: [createGoalStatus({ missing: ["我通常在这种关系里怎么设边界"] })],
       recalledAnchors: [createAnchor()],
@@ -185,11 +197,12 @@ describe("reasoning gap probes", () => {
       ]),
     });
 
-    expect(probes).toEqual([]);
+    expect(result.probes).toEqual([]);
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 1 });
   });
 
   it("keeps the probe when the recalled match is still unanswered", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "我该怎么回复？",
       goalStatus: [createGoalStatus({ missing: ["我通常在这种关系里怎么设边界"] })],
       recalledAnchors: [createAnchor({ id: "a2", answer: null, source: "reading" })],
@@ -198,12 +211,13 @@ describe("reasoning gap probes", () => {
       ]),
     });
 
-    expect(probes).toHaveLength(1);
-    expect(probes[0]?.displayQuestion).toBe("我最近在这种关系里怎么设边界？");
+    expect(result.probes).toHaveLength(1);
+    expect(result.probes[0]?.displayQuestion).toBe("我最近在这种关系里怎么设边界？");
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 0 });
   });
 
   it("creates only one probe when two drafts collapse to the same canonicalQuestion", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "我该怎么回复？",
       goalStatus: [createGoalStatus({ missing: ["我通常在这种关系里怎么设边界"] })],
       recalledAnchors: [],
@@ -213,12 +227,13 @@ describe("reasoning gap probes", () => {
       ]),
     });
 
-    expect(probes).toHaveLength(1);
-    expect(probes[0]?.canonicalQuestion).toBe("我最近在这种关系里怎么设边界？");
+    expect(result.probes).toHaveLength(1);
+    expect(result.probes[0]?.canonicalQuestion).toBe("我最近在这种关系里怎么设边界？");
+    expectProbeStats(result, { rawDraftCount: 2, droppedCount: 1 });
   });
 
   it("drops drafts that cannot be safely canonicalized", async () => {
-    const probes = await synthesizeGapProbes({
+    const result = await synthesizeGapProbes({
       userQuery: "我该怎么回复？",
       goalStatus: [createGoalStatus({ missing: ["我刚才提到的那个项目里最重要的是什么"] })],
       recalledAnchors: [],
@@ -227,6 +242,7 @@ describe("reasoning gap probes", () => {
       ]),
     });
 
-    expect(probes).toEqual([]);
+    expect(result.probes).toEqual([]);
+    expectProbeStats(result, { rawDraftCount: 1, droppedCount: 1 });
   });
 });

@@ -12,10 +12,6 @@ let connMgr: ConnectionManager;
 const ownerPubKey = getPublicKey(generateKeyPair());
 const visitorPubKey = getPublicKey(generateKeyPair());
 
-type RuntimeWithPreparedMap = {
-  preparedInferenceByRequest: WeakMap<object, object>;
-};
-
 type RuntimeWithPrivateFlush = {
   flushReasoningProbesBestEffort: (request: unknown) => void;
 };
@@ -82,36 +78,40 @@ describe("reasoning route transport cancellation", () => {
   it("does not wait for probe flushing before the transport response is established", async () => {
     process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
 
-    const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
-    const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
+    const flushRelease = createDeferred<void>();
 
-    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
-      async function (input) {
-        const request = {
-          avatarTarget: input.avatarTarget,
-          instructionSegments: {
-            platform: "platform",
-            avatar: "avatar",
-            recall: "recall",
-          },
-          conversationTurns: input.conversationTurns,
-          contentParts: [] as [],
-          stream: input.stream,
-          signal: input.signal,
-        };
+    class FakeAvatarInferenceRuntime {
+      constructor(
+        private deps: {
+          flushReasoningProbes?: (batch: {
+            pendingReasoningProbes: Array<{
+              displayQuestion: string;
+              canonicalQuestion: string;
+              kind: string;
+              sourceRef: string | null;
+              sourceSnapshot: Record<string, unknown> | null;
+            }>;
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => Promise<void> | void;
+        },
+      ) {}
 
-        (this as unknown as RuntimeWithPreparedMap).preparedInferenceByRequest.set(request, {
-          request,
-          currentTime: new Date(0).toISOString(),
-          userQuery: "你好",
-          requiredGoalIds: [],
-          finalAnchorIds: [],
-          anchorSelectionStrategy: "recall-loop",
-          rounds: 0,
-          goalStatus: [],
-          recallRounds: [],
-          turns: [],
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      getPreparedReasoningMetadata() {
+        return {
           thinkingNarratives: [],
+          recalledAnchorIds: [],
+          anchorSelectionStrategy: "batch-recall" as const,
+        };
+      }
+
+      async *runStream() {
+        yield { type: "message_start", message: { role: "assistant" } } as const;
+        yield { type: "text_delta", text: "hello" } as const;
+        await this.deps.flushReasoningProbes?.({
           pendingReasoningProbes: [
             {
               displayQuestion: "我还缺什么判断标准？",
@@ -121,20 +121,18 @@ describe("reasoning route transport cancellation", () => {
               sourceSnapshot: { goalId: "criteria" },
             },
           ],
+          probeStats: { rawDraftCount: 1, droppedCount: 0 },
         });
+        await flushRelease.promise;
+        yield { type: "message_end", finishReason: "stop" } as const;
+      }
+    }
 
-        return request;
-      },
-    );
-    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
-      thinkingNarratives: [],
-      recalledAnchorIds: [],
-      anchorSelectionStrategy: "batch-recall",
-    });
-    const flushSpy = vi.spyOn(
-      AvatarInferenceRuntime.prototype as unknown as RuntimeWithPrivateFlush,
-      "flushReasoningProbesBestEffort",
-    );
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+
+    const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
 
     const app = await createTestApp(reasoningRoutes, {
       chat: vi.fn(),
@@ -150,9 +148,28 @@ describe("reasoning route transport cancellation", () => {
     });
 
     expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toContain("event: token");
-    expect(flushSpy).toHaveBeenCalled();
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+    const firstChunk = await Promise.race([
+      reader!.read(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("first stream chunk was blocked by probe flush")), 100);
+      }),
+    ]);
+    const chunkText = Buffer.from(firstChunk.value ?? new Uint8Array()).toString("utf8");
+
+    expect(chunkText).toContain("event: token");
+
+    flushRelease.resolve();
+    let restText = "";
+    while (true) {
+      const nextChunk = await reader!.read();
+      if (nextChunk.done) {
+        break;
+      }
+      restText += Buffer.from(nextChunk.value).toString("utf8");
+    }
+    expect(`${chunkText}${restText}`).toContain("event: done");
   });
 
   it("does not create reasoning probes when the stream is cancelled before the first token", async () => {
@@ -172,6 +189,8 @@ describe("reasoning route transport cancellation", () => {
         };
       },
     }));
+
+    vi.doUnmock("../../src/avatar/runtime.js");
 
     const { reasoningRoutes } = await import("../../src/routes/reasoning.js");
     const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");

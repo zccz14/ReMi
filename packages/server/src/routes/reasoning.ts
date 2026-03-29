@@ -127,6 +127,7 @@ function createRuntime(input: {
   debugArtifactRootDir: string | null;
   requestId: string;
   streamMode: "stream";
+  requestStartedAt: number;
 }) {
   const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(input.ownerKey)
     ? (() => {
@@ -136,14 +137,17 @@ function createRuntime(input: {
           embeddingClient: input.embeddingClient,
         });
 
-        return async (probes: PendingReasoningProbe[]) => {
-          const startedAt = Date.now();
+        return async (batch: {
+          pendingReasoningProbes: PendingReasoningProbe[];
+          probeStats: { rawDraftCount: number; droppedCount: number };
+        }) => {
+          const flushStartedAt = Date.now();
           let createSuccessCount = 0;
           let createFailureCount = 0;
 
-          for (const probe of probes) {
+          for (const probe of batch.pendingReasoningProbes) {
             try {
-              const created = approvalService.createCandidate({
+              approvalService.createCandidate({
                 question: probe.displayQuestion,
                 answer: null,
                 source: "reasoning",
@@ -151,22 +155,9 @@ function createRuntime(input: {
                 sourceSnapshot: probe.sourceSnapshot,
               });
               createSuccessCount += 1;
-              log.info({
-                event: "reasoning_probe_candidate_created",
-                ownerKey: input.ownerKey,
-                requestId: input.requestId,
-                streamMode: input.streamMode,
-                candidateId: created.id,
-              });
             } catch (error) {
               createFailureCount += 1;
-              log.warn({
-                event: "reasoning_probe_candidate_create_failed",
-                ownerKey: input.ownerKey,
-                requestId: input.requestId,
-                streamMode: input.streamMode,
-                err: error,
-              });
+              log.warn({ err: error }, "reasoning probe candidate create failed");
             }
           }
 
@@ -175,11 +166,12 @@ function createRuntime(input: {
             ownerKey: input.ownerKey,
             requestId: input.requestId,
             streamMode: input.streamMode,
-            probeCount: probes.length,
-            droppedCount: 0,
+            probeCount: batch.pendingReasoningProbes.length,
+            droppedCount: batch.probeStats.droppedCount,
             createSuccessCount,
             createFailureCount,
-            latencyDeltaMs: Date.now() - startedAt,
+            responseDurationMs: flushStartedAt - input.requestStartedAt,
+            probeFlushDurationMs: Date.now() - flushStartedAt,
           });
         };
       })()
@@ -788,6 +780,7 @@ reasoningRoutes.post(
     const requestBody = buildStoredBody(messageInput);
     const parties = buildConversationKeys(ownerPubKey, requesterPubKey);
     const requestId = crypto.randomUUID();
+    const requestStartedAt = Date.now();
     const runtime = createRuntime({
       ownerKey: ownerPubKey,
       ownerConn,
@@ -796,6 +789,7 @@ reasoningRoutes.post(
       debugArtifactRootDir: resolveReasoningDebugArtifactRootDir(),
       requestId,
       streamMode: "stream",
+      requestStartedAt,
     });
 
     return streamSSE(c, async (stream) => {

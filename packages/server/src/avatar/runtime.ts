@@ -7,7 +7,11 @@ import {
   buildReasoningJudgmentPrompt,
   type ReasoningAnswerGoal,
 } from "../reasoning/prompts.js";
-import { synthesizeGapProbes, type PendingReasoningProbe } from "../reasoning/gap-probes.js";
+import {
+  synthesizeGapProbes,
+  type PendingReasoningProbe,
+  type ReasoningProbeSynthesisStats,
+} from "../reasoning/gap-probes.js";
 import {
   buildReasoningDebugArtifactSummary,
   type ReasoningDebugArtifactWriter,
@@ -89,6 +93,7 @@ type PreparedInference = RuntimeDebugState & {
   request: AvatarInferenceRequest;
   thinkingNarratives: string[];
   pendingReasoningProbes: PendingReasoningProbe[];
+  probeStats: ReasoningProbeSynthesisStats;
 };
 
 export type AvatarInferencePreparedMetadata = {
@@ -102,7 +107,10 @@ interface AvatarInferenceRuntimeDeps {
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
   debugArtifactWriter?: ReasoningDebugArtifactWriter;
-  flushReasoningProbes?: (probes: PendingReasoningProbe[]) => Promise<void> | void;
+  flushReasoningProbes?: (input: {
+    pendingReasoningProbes: PendingReasoningProbe[];
+    probeStats: ReasoningProbeSynthesisStats;
+  }) => Promise<void> | void;
 }
 
 export class AvatarInferenceRuntime {
@@ -170,14 +178,19 @@ export class AvatarInferenceRuntime {
     if (
       !prepared ||
       !this.deps.flushReasoningProbes ||
-      prepared.pendingReasoningProbes.length === 0
+      (prepared.pendingReasoningProbes.length === 0 && prepared.probeStats.droppedCount === 0)
     ) {
       return;
     }
 
-    const probes = prepared.pendingReasoningProbes.map(clonePendingReasoningProbe);
+    const pendingReasoningProbes = prepared.pendingReasoningProbes.map(clonePendingReasoningProbe);
 
-    void Promise.resolve(this.deps.flushReasoningProbes(probes)).catch(() => {
+    void Promise.resolve(
+      this.deps.flushReasoningProbes({
+        pendingReasoningProbes,
+        probeStats: prepared.probeStats,
+      }),
+    ).catch(() => {
       // Best-effort only: probe flushing must not change answer semantics.
     });
   }
@@ -383,7 +396,7 @@ export class AvatarInferenceRuntime {
     });
     throwIfAborted(input.signal);
     const missingInformation = collectMissingInformation(recall.goalStatus);
-    const pendingReasoningProbes = await synthesizeGapProbes({
+    const synthesizedGapProbes = await synthesizeGapProbes({
       currentTime,
       userQuery: decomposition.userQuery,
       goalStatus: recall.goalStatus,
@@ -435,7 +448,8 @@ export class AvatarInferenceRuntime {
       })),
       turns: debugTurns,
       thinkingNarratives,
-      pendingReasoningProbes,
+      pendingReasoningProbes: synthesizedGapProbes.probes,
+      probeStats: synthesizedGapProbes.stats,
     };
   }
 
@@ -497,6 +511,7 @@ export class AvatarInferenceRuntime {
 
     return {
       pendingReasoningProbes: prepared.pendingReasoningProbes.map(clonePendingReasoningProbe),
+      probeStats: prepared.probeStats,
     };
   }
 

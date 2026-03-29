@@ -9,7 +9,7 @@ import { generateKeyPair, getPublicKey } from "@remi/crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { decodeStoredBody } from "../../src/messaging/runtime.js";
-import type { StructuredLogRecord } from "../../src/logger.js";
+import { subscribeToLogs, type StructuredLogRecord } from "../../src/logger.js";
 import { isReasoningGapProbeEnabledForOwner } from "../../src/config/feature-flags.js";
 
 let tmpDir: string;
@@ -374,15 +374,16 @@ describe("reasoning routes", () => {
     class FakeAvatarInferenceRuntime {
       constructor(
         private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
+          flushReasoningProbes?: (batch: {
+            pendingReasoningProbes: Array<{
               displayQuestion: string;
               canonicalQuestion: string;
               kind: string;
               sourceRef: string | null;
               sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
+            }>;
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => Promise<void> | void;
         },
       ) {}
 
@@ -399,15 +400,18 @@ describe("reasoning routes", () => {
       }
 
       async *runStream() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
+        await this.deps.flushReasoningProbes?.({
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 3, droppedCount: 2 },
+        });
         yield { type: "message_start", message: { role: "assistant" } };
         yield { type: "text_delta", text: "hello" };
         yield { type: "message_end", finishReason: "stop" };
@@ -523,75 +527,72 @@ describe("reasoning routes", () => {
   });
 
   it("records reasoning probe lifecycle events", async () => {
-    vi.resetModules();
     process.env.REMI_REASONING_GAP_PROBE_OWNERS = testPubKey;
-
-    class FakeAvatarInferenceRuntime {
-      constructor(
-        private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
-              displayQuestion: string;
-              canonicalQuestion: string;
-              kind: string;
-              sourceRef: string | null;
-              sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
-        },
-      ) {}
-
-      async createRequest(input: Record<string, unknown>) {
-        return input;
-      }
-
-      getPreparedReasoningMetadata() {
-        return {
-          thinkingNarratives: [],
-          recalledAnchorIds: [],
-          anchorSelectionStrategy: "batch-recall",
-        };
-      }
-
-      async *runStream() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
-        yield { type: "message_start", message: { role: "assistant" } };
-        yield { type: "text_delta", text: "hello" };
-        yield { type: "message_end", finishReason: "stop" };
-      }
-    }
-
-    vi.doMock("../../src/avatar/runtime.js", () => ({
-      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
-    }));
-
-    const { reasoningRoutes: mockedReasoningRoutes } =
-      await import("../../src/routes/reasoning.js");
-    const { subscribeToLogs: subscribeToFreshLogs } = await import("../../src/logger.js");
     const records: StructuredLogRecord[] = [];
-    const unsubscribe = subscribeToFreshLogs((record) => {
+    const unsubscribe = subscribeToLogs((record) => {
       records.push(record);
     });
-    const app = new Hono();
-    app.use("*", async (c, next) => {
-      c.set("signerPubKey", visitorPubKey);
-      c.set("role", "visitor");
-      c.set("connMgr", connMgr);
-      c.set("embeddingClient", null);
-      c.set("chatClient", createChatClient());
-      await next();
+    const createRequestSpy = vi
+      .spyOn(AvatarInferenceRuntime.prototype, "createRequest")
+      .mockImplementation(async function (input) {
+        const request = {
+          avatarTarget: input.avatarTarget,
+          instructionSegments: {
+            platform: "platform",
+            avatar: "avatar",
+            recall: "recall",
+          },
+          conversationTurns: input.conversationTurns,
+          contentParts: [] as [],
+          stream: input.stream,
+          signal: input.signal,
+        };
+
+        (
+          this as unknown as {
+            preparedInferenceByRequest: WeakMap<object, object>;
+          }
+        ).preparedInferenceByRequest.set(request, {
+          request,
+          currentTime: new Date(0).toISOString(),
+          userQuery: "你好",
+          requiredGoalIds: [],
+          finalAnchorIds: [],
+          anchorSelectionStrategy: "recall-loop",
+          rounds: 0,
+          goalStatus: [],
+          recallRounds: [],
+          turns: [],
+          thinkingNarratives: [],
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 3, droppedCount: 2 },
+        });
+
+        return request;
+      });
+    vi.spyOn(AvatarInferenceRuntime.prototype, "getPreparedReasoningMetadata").mockReturnValue({
+      thinkingNarratives: [],
+      recalledAnchorIds: [],
+      anchorSelectionStrategy: "batch-recall",
     });
-    app.route("/api", mockedReasoningRoutes);
 
     try {
+      const app = createTestApp(visitorPubKey, {
+        chatClient: {
+          chat: vi.fn(),
+          chatStream: vi.fn(async function* () {
+            yield "hello";
+          }),
+        },
+      });
       const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -601,18 +602,21 @@ describe("reasoning routes", () => {
       expect(res.status).toBe(200);
       await res.text();
 
+      expect(createRequestSpy).toHaveBeenCalled();
       expect(findEvents(records, "reasoning_probe_generated")).toHaveLength(1);
-      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(0);
+      expect(findEvents(records, "reasoning_probe_candidate_create_failed")).toHaveLength(0);
       expect(findEvents(records, "reasoning_probe_generated")[0]).toEqual(
         expect.objectContaining({
           ownerKey: testPubKey,
           requestId: expect.any(String),
           streamMode: "stream",
           probeCount: 1,
-          droppedCount: 0,
+          droppedCount: 2,
           createSuccessCount: 1,
           createFailureCount: 0,
-          latencyDeltaMs: expect.any(Number),
+          responseDurationMs: expect.any(Number),
+          probeFlushDurationMs: expect.any(Number),
         }),
       );
     } finally {

@@ -176,6 +176,7 @@ export function aiChatCompletionsRoute(deps: {
     const created = Math.floor(Date.now() / 1000);
     const requestId = crypto.randomUUID();
     const streamMode = parsedBody.data.stream ? "stream" : "non-stream";
+    const requestStartedAt = Date.now();
     const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(parsedModel.publicKey)
       ? (() => {
           const approvalService = createApprovalService({
@@ -184,14 +185,17 @@ export function aiChatCompletionsRoute(deps: {
             embeddingClient: deps.embeddingClient,
           });
 
-          return async (probes: PendingReasoningProbe[]) => {
-            const startedAt = Date.now();
+          return async (batch: {
+            pendingReasoningProbes: PendingReasoningProbe[];
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => {
+            const flushStartedAt = Date.now();
             let createSuccessCount = 0;
             let createFailureCount = 0;
 
-            for (const probe of probes) {
+            for (const probe of batch.pendingReasoningProbes) {
               try {
-                const createdCandidate = approvalService.createCandidate({
+                approvalService.createCandidate({
                   question: probe.displayQuestion,
                   answer: null,
                   source: "reasoning",
@@ -199,22 +203,9 @@ export function aiChatCompletionsRoute(deps: {
                   sourceSnapshot: probe.sourceSnapshot,
                 });
                 createSuccessCount += 1;
-                log.info({
-                  event: "reasoning_probe_candidate_created",
-                  ownerKey: parsedModel.publicKey,
-                  requestId,
-                  streamMode,
-                  candidateId: createdCandidate.id,
-                });
               } catch (error) {
                 createFailureCount += 1;
-                log.warn({
-                  event: "reasoning_probe_candidate_create_failed",
-                  ownerKey: parsedModel.publicKey,
-                  requestId,
-                  streamMode,
-                  err: error,
-                });
+                log.warn({ err: error }, "reasoning probe candidate create failed");
               }
             }
 
@@ -223,11 +214,12 @@ export function aiChatCompletionsRoute(deps: {
               ownerKey: parsedModel.publicKey,
               requestId,
               streamMode,
-              probeCount: probes.length,
-              droppedCount: 0,
+              probeCount: batch.pendingReasoningProbes.length,
+              droppedCount: batch.probeStats.droppedCount,
               createSuccessCount,
               createFailureCount,
-              latencyDeltaMs: Date.now() - startedAt,
+              responseDurationMs: flushStartedAt - requestStartedAt,
+              probeFlushDurationMs: Date.now() - flushStartedAt,
             });
           };
         })()

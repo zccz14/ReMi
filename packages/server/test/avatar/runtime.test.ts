@@ -34,6 +34,7 @@ vi.mock("../../src/routes/profile.js", () => ({
 
 const mockGoalBasedRecall = vi.mocked(goalBasedRecall);
 const mockReadProfileSummary = vi.mocked(readProfileSummary);
+const defaultProbeStats = { rawDraftCount: 1, droppedCount: 0 };
 type OwnerConn = ReturnType<ConnectionManager["getConnection"]>;
 type GoalBasedRecallCompatResult = Awaited<ReturnType<typeof goalBasedRecall>> & {
   goalStatus: {
@@ -1194,7 +1195,7 @@ describe("AvatarInferenceRuntime", () => {
     ];
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue(pendingReasoningProbes);
+      .mockResolvedValue({ probes: pendingReasoningProbes, stats: defaultProbeStats });
 
     try {
       const request = await runtime.createRequest({
@@ -1205,6 +1206,7 @@ describe("AvatarInferenceRuntime", () => {
 
       expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
         pendingReasoningProbes,
+        probeStats: defaultProbeStats,
       });
     } finally {
       synthesizeGapProbesSpy.mockRestore();
@@ -1234,7 +1236,7 @@ describe("AvatarInferenceRuntime", () => {
     const pendingReasoningProbes = createPendingReasoningProbes();
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue(pendingReasoningProbes);
+      .mockResolvedValue({ probes: pendingReasoningProbes, stats: defaultProbeStats });
 
     try {
       const request = await runtime.createRequest({
@@ -1244,7 +1246,10 @@ describe("AvatarInferenceRuntime", () => {
       });
 
       const firstMetadata = runtime.getPreparedReasoningProbeMetadata(request);
-      expect(firstMetadata).toEqual({ pendingReasoningProbes: createPendingReasoningProbes() });
+      expect(firstMetadata).toEqual({
+        pendingReasoningProbes: createPendingReasoningProbes(),
+        probeStats: defaultProbeStats,
+      });
 
       const firstSnapshot = firstMetadata?.pendingReasoningProbes[0]?.sourceSnapshot as {
         missingKeys: string[];
@@ -1255,6 +1260,7 @@ describe("AvatarInferenceRuntime", () => {
 
       expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
         pendingReasoningProbes: createPendingReasoningProbes(),
+        probeStats: defaultProbeStats,
       });
     } finally {
       synthesizeGapProbesSpy.mockRestore();
@@ -1281,15 +1287,18 @@ describe("AvatarInferenceRuntime", () => {
     );
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue([
-        {
-          displayQuestion: "我在做这类决定时还缺什么判断标准？",
-          canonicalQuestion: "我在做这类决定时还缺什么判断标准？",
-          kind: "judgment-gap",
-          sourceRef: "relationship_boundary",
-          sourceSnapshot: { goalId: "relationship_boundary" },
-        },
-      ]);
+      .mockResolvedValue({
+        probes: [
+          {
+            displayQuestion: "我在做这类决定时还缺什么判断标准？",
+            canonicalQuestion: "我在做这类决定时还缺什么判断标准？",
+            kind: "judgment-gap",
+            sourceRef: "relationship_boundary",
+            sourceSnapshot: { goalId: "relationship_boundary" },
+          },
+        ],
+        stats: defaultProbeStats,
+      });
 
     try {
       const runtime = new AvatarInferenceRuntime({
@@ -1342,15 +1351,18 @@ describe("AvatarInferenceRuntime", () => {
     );
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue([
-        {
-          displayQuestion: "我在这种关系里怎么设边界？",
-          canonicalQuestion: "我在这种关系里怎么设边界？",
-          kind: "judgment-gap",
-          sourceRef: "relationship_boundary",
-          sourceSnapshot: { goalId: "relationship_boundary" },
-        },
-      ]);
+      .mockResolvedValue({
+        probes: [
+          {
+            displayQuestion: "我在这种关系里怎么设边界？",
+            canonicalQuestion: "我在这种关系里怎么设边界？",
+            kind: "judgment-gap",
+            sourceRef: "relationship_boundary",
+            sourceSnapshot: { goalId: "relationship_boundary" },
+          },
+        ],
+        stats: defaultProbeStats,
+      });
 
     try {
       const runtime = new AvatarInferenceRuntime({
@@ -1405,15 +1417,18 @@ describe("AvatarInferenceRuntime", () => {
     const flushReasoningProbes = vi.fn().mockRejectedValue(new Error("probe write failed"));
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue([
-        {
-          displayQuestion: "我还缺少什么信息？",
-          canonicalQuestion: "我还缺少什么信息？",
-          kind: "fact-gap",
-          sourceRef: "domain_answer",
-          sourceSnapshot: { goalId: "domain_answer" },
-        },
-      ]);
+      .mockResolvedValue({
+        probes: [
+          {
+            displayQuestion: "我还缺少什么信息？",
+            canonicalQuestion: "我还缺少什么信息？",
+            kind: "fact-gap",
+            sourceRef: "domain_answer",
+            sourceSnapshot: { goalId: "domain_answer" },
+          },
+        ],
+        stats: defaultProbeStats,
+      });
 
     try {
       const runtime = new AvatarInferenceRuntime({
@@ -1468,21 +1483,23 @@ describe("AvatarInferenceRuntime", () => {
     const pendingReasoningProbes = createPendingReasoningProbes();
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue(pendingReasoningProbes);
+      .mockResolvedValue({ probes: pendingReasoningProbes, stats: defaultProbeStats });
 
     let request!: AvatarInferenceRequest;
     let metadataSeenInsideFlush:
       | ReturnType<AvatarInferenceRuntime["getPreparedReasoningProbeMetadata"]>
       | undefined;
-    const flushReasoningProbes = vi.fn((probes: reasoningGapProbes.PendingReasoningProbe[]) => {
-      const snapshot = probes[0]?.sourceSnapshot as {
-        missingKeys: string[];
-        nested: { labels: string[] };
-      };
-      snapshot.missingKeys.push("budget");
-      snapshot.nested.labels.push("mutated-by-flush");
-      metadataSeenInsideFlush = runtime.getPreparedReasoningProbeMetadata(request);
-    });
+    const flushReasoningProbes = vi.fn(
+      (batch: { pendingReasoningProbes: reasoningGapProbes.PendingReasoningProbe[] }) => {
+        const snapshot = batch.pendingReasoningProbes[0]?.sourceSnapshot as {
+          missingKeys: string[];
+          nested: { labels: string[] };
+        };
+        snapshot.missingKeys.push("budget");
+        snapshot.nested.labels.push("mutated-by-flush");
+        metadataSeenInsideFlush = runtime.getPreparedReasoningProbeMetadata(request);
+      },
+    );
 
     const runtime = new AvatarInferenceRuntime({
       ownerConn: createOwnerConn(999),
@@ -1503,6 +1520,7 @@ describe("AvatarInferenceRuntime", () => {
       expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
       expect(metadataSeenInsideFlush).toEqual({
         pendingReasoningProbes: createPendingReasoningProbes(),
+        probeStats: defaultProbeStats,
       });
     } finally {
       synthesizeGapProbesSpy.mockRestore();
@@ -1526,15 +1544,18 @@ describe("AvatarInferenceRuntime", () => {
     const flushReasoningProbes = vi.fn().mockRejectedValue(new Error("probe write failed"));
     const synthesizeGapProbesSpy = vi
       .spyOn(reasoningGapProbes, "synthesizeGapProbes")
-      .mockResolvedValue([
-        {
-          displayQuestion: "我该先澄清什么？",
-          canonicalQuestion: "我该先澄清什么？",
-          kind: "term-gap",
-          sourceRef: "domain_answer",
-          sourceSnapshot: { goalId: "domain_answer" },
-        },
-      ]);
+      .mockResolvedValue({
+        probes: [
+          {
+            displayQuestion: "我该先澄清什么？",
+            canonicalQuestion: "我该先澄清什么？",
+            kind: "term-gap",
+            sourceRef: "domain_answer",
+            sourceSnapshot: { goalId: "domain_answer" },
+          },
+        ],
+        stats: defaultProbeStats,
+      });
 
     try {
       const runtime = new AvatarInferenceRuntime({

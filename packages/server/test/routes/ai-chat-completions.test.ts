@@ -11,6 +11,14 @@ import type { StructuredLogRecord } from "../../src/logger.js";
 let tmpDir: string;
 let connMgr: ConnectionManager;
 
+type RuntimeWithPreparedMap = {
+  preparedInferenceByRequest: WeakMap<object, object>;
+};
+
+type RuntimeWithPrivateFlush = {
+  flushReasoningProbesBestEffort: (request: unknown) => void;
+};
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -109,6 +117,8 @@ describe("ai chat completions route", () => {
       },
     }));
 
+    vi.doUnmock("../../src/avatar/runtime.js");
+
     const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
     const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
     vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
@@ -168,15 +178,16 @@ describe("ai chat completions route", () => {
     class FakeAvatarInferenceRuntime {
       constructor(
         private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
+          flushReasoningProbes?: (batch: {
+            pendingReasoningProbes: Array<{
               displayQuestion: string;
               canonicalQuestion: string;
               kind: string;
               sourceRef: string | null;
               sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
+            }>;
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => Promise<void> | void;
         },
       ) {}
 
@@ -185,15 +196,18 @@ describe("ai chat completions route", () => {
       }
 
       async run() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
+        await this.deps.flushReasoningProbes?.({
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 3, droppedCount: 2 },
+        });
         return {
           message: { role: "assistant", content: "你好" },
           finishReason: "stop",
@@ -246,15 +260,16 @@ describe("ai chat completions route", () => {
     class FakeAvatarInferenceRuntime {
       constructor(
         private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
+          flushReasoningProbes?: (batch: {
+            pendingReasoningProbes: Array<{
               displayQuestion: string;
               canonicalQuestion: string;
               kind: string;
               sourceRef: string | null;
               sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
+            }>;
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => Promise<void> | void;
         },
       ) {}
 
@@ -263,15 +278,18 @@ describe("ai chat completions route", () => {
       }
 
       async run() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
+        await this.deps.flushReasoningProbes?.({
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 1, droppedCount: 0 },
+        });
         return {
           message: { role: "assistant", content: "你好" },
           finishReason: "stop",
@@ -317,15 +335,16 @@ describe("ai chat completions route", () => {
     class FakeAvatarInferenceRuntime {
       constructor(
         private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
+          flushReasoningProbes?: (batch: {
+            pendingReasoningProbes: Array<{
               displayQuestion: string;
               canonicalQuestion: string;
               kind: string;
               sourceRef: string | null;
               sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
+            }>;
+            probeStats: { rawDraftCount: number; droppedCount: number };
+          }) => Promise<void> | void;
         },
       ) {}
 
@@ -334,15 +353,18 @@ describe("ai chat completions route", () => {
       }
 
       async run() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
+        await this.deps.flushReasoningProbes?.({
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 3, droppedCount: 2 },
+        });
         return {
           message: { role: "assistant", content: "你好" },
           finishReason: "stop",
@@ -386,22 +408,127 @@ describe("ai chat completions route", () => {
       const json = await res.json();
 
       expect(findEvents(records, "reasoning_probe_generated")).toHaveLength(1);
-      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(1);
+      expect(findEvents(records, "reasoning_probe_candidate_created")).toHaveLength(0);
+      expect(findEvents(records, "reasoning_probe_candidate_create_failed")).toHaveLength(0);
       expect(findEvents(records, "reasoning_probe_generated")[0]).toEqual(
         expect.objectContaining({
           ownerKey: ownerPubKey,
           requestId: expect.any(String),
           streamMode: "non-stream",
           probeCount: 1,
-          droppedCount: 0,
+          droppedCount: 2,
           createSuccessCount: 1,
           createFailureCount: 0,
-          latencyDeltaMs: expect.any(Number),
+          responseDurationMs: expect.any(Number),
+          probeFlushDurationMs: expect.any(Number),
         }),
       );
       expect(json.object).toBe("chat.completion");
     } finally {
       unsubscribe();
     }
+  });
+
+  it("does not create reasoning probes for chat completions when transport fails before the first token", async () => {
+    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
+
+    const heartbeatFailure = createDeferred<never>();
+    let notifyHeartbeatError: ((error: unknown) => void) | undefined;
+    vi.doMock("../../src/lib/sse-heartbeat.js", () => ({
+      createSseHeartbeat: (options: { onError?: (error: unknown) => void }) => {
+        notifyHeartbeatError = options.onError;
+        return {
+          start() {},
+          stop() {},
+          recordRealWrite() {},
+          failure: heartbeatFailure.promise,
+        };
+      },
+    }));
+
+    vi.doUnmock("../../src/avatar/runtime.js");
+
+    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
+    const { AvatarInferenceRuntime } = await import("../../src/avatar/runtime.js");
+
+    const flushSpy = vi.spyOn(
+      AvatarInferenceRuntime.prototype as unknown as RuntimeWithPrivateFlush,
+      "flushReasoningProbesBestEffort",
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "createRequest").mockImplementation(
+      async function (input) {
+        const request = {
+          avatarTarget: input.avatarTarget,
+          instructionSegments: {
+            platform: "platform",
+            avatar: "avatar",
+            recall: "recall",
+          },
+          conversationTurns: input.conversationTurns,
+          contentParts: [] as [],
+          stream: input.stream,
+          signal: input.signal,
+        };
+
+        (this as unknown as RuntimeWithPreparedMap).preparedInferenceByRequest.set(request, {
+          request,
+          currentTime: new Date(0).toISOString(),
+          userQuery: "你好",
+          requiredGoalIds: [],
+          finalAnchorIds: [],
+          anchorSelectionStrategy: "recall-loop",
+          rounds: 0,
+          goalStatus: [],
+          recallRounds: [],
+          turns: [],
+          thinkingNarratives: [],
+          pendingReasoningProbes: [
+            {
+              displayQuestion: "我还缺什么判断标准？",
+              canonicalQuestion: "我还缺什么判断标准？",
+              kind: "judgment-gap",
+              sourceRef: "goal:criteria",
+              sourceSnapshot: { goalId: "criteria" },
+            },
+          ],
+          probeStats: { rawDraftCount: 1, droppedCount: 0 },
+        });
+
+        return request;
+      },
+    );
+    vi.spyOn(AvatarInferenceRuntime.prototype, "runStream").mockImplementation(async function* () {
+      yield* [] as never[];
+      const transportFailure = new Error("heartbeat write failed before first token");
+      notifyHeartbeatError?.(transportFailure);
+      heartbeatFailure.reject(transportFailure);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return;
+    });
+
+    const app = await createTestApp(aiChatCompletionsRoute, {
+      chatClient: {
+        chat: vi.fn(),
+        chatStream: vi.fn(),
+      },
+      sseHeartbeatTiming: { silentMs: 10, intervalMs: 10 },
+    });
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "你好" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(flushSpy).not.toHaveBeenCalled();
+    expect(listCandidateRows(ownerPubKey)).toEqual([]);
   });
 });

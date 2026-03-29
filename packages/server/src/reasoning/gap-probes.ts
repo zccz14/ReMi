@@ -19,6 +19,16 @@ export interface PendingReasoningProbe {
   sourceSnapshot: Record<string, unknown> | null;
 }
 
+export interface ReasoningProbeSynthesisStats {
+  rawDraftCount: number;
+  droppedCount: number;
+}
+
+export interface SynthesizedGapProbes {
+  probes: PendingReasoningProbe[];
+  stats: ReasoningProbeSynthesisStats;
+}
+
 export interface SynthesizeGapProbesInput {
   currentTime?: string;
   userQuery: string;
@@ -98,7 +108,7 @@ function hasAnsweredCanonicalMatch(
 
 export async function synthesizeGapProbes(
   input: SynthesizeGapProbesInput,
-): Promise<PendingReasoningProbe[]> {
+): Promise<SynthesizedGapProbes> {
   const prompt = buildReasoningGapProbePrompt({
     currentTime: input.currentTime ?? new Date(0).toISOString(),
     userQuery: input.userQuery,
@@ -158,5 +168,11 @@ export async function synthesizeGapProbes(
     }
   }
 
-  return probes;
+  return {
+    probes,
+    stats: {
+      rawDraftCount: rawDrafts.length,
+      droppedCount: Math.max(0, rawDrafts.length - probes.length),
+    },
+  };
 }
