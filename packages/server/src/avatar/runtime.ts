@@ -7,6 +7,7 @@ import {
   buildReasoningJudgmentPrompt,
   type ReasoningAnswerGoal,
 } from "../reasoning/prompts.js";
+import { synthesizeGapProbes, type PendingReasoningProbe } from "../reasoning/gap-probes.js";
 import {
   buildReasoningDebugArtifactSummary,
   type ReasoningDebugArtifactWriter,
@@ -37,6 +38,7 @@ import {
 import type {
   AvatarInferenceEvent,
   AvatarInferenceMessage,
+  AvatarInferencePreparedReasoningProbeMetadata,
   AvatarInferenceRequest,
   AvatarInferenceResponse,
 } from "./model.js";
@@ -79,6 +81,7 @@ type RuntimeDebugState = {
 type PreparedInference = RuntimeDebugState & {
   request: AvatarInferenceRequest;
   thinkingNarratives: string[];
+  pendingReasoningProbes: PendingReasoningProbe[];
 };
 
 export type AvatarInferencePreparedMetadata = {
@@ -355,6 +358,13 @@ export class AvatarInferenceRuntime {
     });
     throwIfAborted(input.signal);
     const missingInformation = collectMissingInformation(recall.goalStatus);
+    const pendingReasoningProbes = await synthesizeGapProbes({
+      currentTime,
+      userQuery: decomposition.userQuery,
+      goalStatus: recall.goalStatus,
+      recalledAnchors: recall.anchors,
+    });
+    throwIfAborted(input.signal);
 
     const request: AvatarInferenceRequest = {
       avatarTarget: input.avatarTarget,
@@ -400,6 +410,7 @@ export class AvatarInferenceRuntime {
       })),
       turns: debugTurns,
       thinkingNarratives,
+      pendingReasoningProbes,
     };
   }
 
@@ -448,6 +459,22 @@ export class AvatarInferenceRuntime {
       anchorSelectionStrategy: mapRecallRuntimeStrategyToReasoningStrategy(
         metadata.anchorSelectionStrategy,
       ),
+    };
+  }
+
+  getPreparedReasoningProbeMetadata(
+    request: AvatarInferenceRequest,
+  ): AvatarInferencePreparedReasoningProbeMetadata | undefined {
+    const prepared = this.preparedInferenceByRequest.get(request);
+    if (!prepared) {
+      return undefined;
+    }
+
+    return {
+      pendingReasoningProbes: prepared.pendingReasoningProbes.map((probe) => ({
+        ...probe,
+        sourceSnapshot: probe.sourceSnapshot ? { ...probe.sourceSnapshot } : null,
+      })),
     };
   }
 

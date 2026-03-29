@@ -20,6 +20,7 @@ import type { ChatClient } from "../../src/llm/client.js";
 import type { ConnectionManager } from "../../src/db/connection.js";
 import type { ChatResponse } from "../../src/llm/client.js";
 import { createLatestReasoningDebugArtifactWriter } from "../../src/reasoning/debug-artifact.js";
+import * as reasoningGapProbes from "../../src/reasoning/gap-probes.js";
 import type { SoulAnchor } from "../../src/types.js";
 import { createAbortError } from "../../src/lib/abort.js";
 
@@ -1173,6 +1174,41 @@ describe("AvatarInferenceRuntime", () => {
       recalledAnchorIds: ["cached-anchor", "anchor-1"],
       anchorSelectionStrategy: "batch-recall",
     });
+  });
+
+  it("stores pending reasoning probes as runtime metadata instead of approval DTOs", async () => {
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient: createChatClient(),
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const pendingReasoningProbes = [
+      {
+        displayQuestion: "我在做这类决定时还缺什么判断标准？",
+        canonicalQuestion: "我在做这类决定时还缺什么判断标准？",
+        kind: "judgment-gap" as const,
+        sourceRef: "relationship_boundary",
+        sourceSnapshot: { goalId: "relationship_boundary" },
+      },
+    ];
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue(pendingReasoningProbes);
+
+    try {
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "帮我做个计划" }],
+        stream: false,
+      });
+
+      expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
+        pendingReasoningProbes,
+      });
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
   });
 
   it("returns undefined prepared metadata after prepared state is consumed", async () => {

@@ -1,4 +1,5 @@
 import { base58Decode } from "@remi/crypto";
+import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
 
 export type AvatarInferenceMessageRole = "system" | "user" | "assistant";
 
@@ -34,6 +35,10 @@ export type AvatarInferenceEvent =
   | { type: "message_start"; message: { role: "assistant" } }
   | { type: "text_delta"; text: string }
   | { type: "message_end"; finishReason: string };
+
+export interface AvatarInferencePreparedReasoningProbeMetadata {
+  pendingReasoningProbes: PendingReasoningProbe[];
+}
 
 export function parseAvatarModel(model: string): { publicKey: string; model: string } | null {
   if (!model.startsWith("ReMi-")) {
