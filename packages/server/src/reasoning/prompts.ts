@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../llm/client.js";
+import { OWNER_QUESTION_PROMPT_RULES } from "./question-canonicalization.js";
 import type { SoulAnchor } from "../types.js";
 
 export interface ReasoningAnswerGoal {
@@ -39,6 +40,13 @@ interface ReasoningGenerationPromptInput {
   reasoningChain?: string[];
   stoppedBecause?: string;
   temporalValiditySatisfied?: boolean;
+}
+
+interface ReasoningGapProbePromptInput {
+  currentTime: string;
+  userQuery: string;
+  goalStatus: ReasoningGoalStatus[];
+  recalledAnchors: SoulAnchor[];
 }
 
 function formatIsoTime(timestamp: number): string {
@@ -219,6 +227,47 @@ ${reasoningSection}
 4. 不要把 Non-evidence Reasoning 中的内容表述成已经确认的记忆、事实或立场。
 ${temporalRule}
 6. 宁可明确说不知道，也不要编造。`;
+}
+
+export function buildReasoningGapProbePrompt(input: ReasoningGapProbePromptInput): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `你是一个 reasoning gap probe 起草助手。你的任务是根据回答缺口，生成最多 3 条高价值、非阻塞的追问草稿。
+
+## Current Time
+${input.currentTime}
+
+## Hard Rules
+1. 输出必须是 JSON，不要输出 Markdown code fence 或额外解释。
+2. 最多输出 3 条，每条都必须包含 question 与 kind。
+3. kind 只能是 fact-gap、judgment-gap、term-gap。
+4. question 必须是可直接写入候选队列的完整问题，避免寒暄、解释和多问合并。
+5. ${OWNER_QUESTION_PROMPT_RULES}
+6. 不要输出已经被 recalled anchors 明确回答的问题。
+7. 如果问题依赖“这个”“那个”“刚才提到的”等上下文指代，宁可不输出。`,
+    },
+    {
+      role: "user",
+      content: `请根据当前回答缺口起草 probe drafts。
+
+## User Query
+${input.userQuery}
+
+## Goal Status
+${input.goalStatus.map(renderGoalStatus).join("\n") || "(none)"}
+
+## Recalled Anchors
+${input.recalledAnchors.map(renderAnchorEvidence).join("\n") || "(暂无)"}
+
+请输出 JSON，格式示例：
+{
+  "probes": [
+    { "question": "我和对方现在是什么关系？", "kind": "fact-gap" }
+  ]
+}`,
+    },
+  ];
 }
 
 /** Batch Recall: 多目标联合充分性判断 */
