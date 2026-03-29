@@ -1211,6 +1211,244 @@ describe("AvatarInferenceRuntime", () => {
     }
   });
 
+  it("does not wait for probe flushing before returning a non-stream response", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("非流式问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockResolvedValueOnce(createChatResponse("非流式回答"));
+
+    let resolveFlush: (() => void) | undefined;
+    const flushReasoningProbes = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue([
+        {
+          displayQuestion: "我在做这类决定时还缺什么判断标准？",
+          canonicalQuestion: "我在做这类决定时还缺什么判断标准？",
+          kind: "judgment-gap",
+          sourceRef: "relationship_boundary",
+          sourceSnapshot: { goalId: "relationship_boundary" },
+        },
+      ]);
+
+    try {
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        flushReasoningProbes,
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "非流式问题" }],
+        stream: false,
+      });
+
+      const response = await runtime.run(request);
+
+      expect(response).toEqual({
+        message: { role: "assistant", content: "非流式回答" },
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+      resolveFlush?.();
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
+  it("does not wait for probe flushing before the first stream event sequence starts", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("流式问题")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+    vi.mocked(chatClient.chatStream).mockImplementation(async function* () {
+      yield "第一段";
+      yield "第二段";
+    });
+
+    let resolveFlush: (() => void) | undefined;
+    const flushReasoningProbes = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue([
+        {
+          displayQuestion: "我在这种关系里怎么设边界？",
+          canonicalQuestion: "我在这种关系里怎么设边界？",
+          kind: "judgment-gap",
+          sourceRef: "relationship_boundary",
+          sourceSnapshot: { goalId: "relationship_boundary" },
+        },
+      ]);
+
+    try {
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        flushReasoningProbes,
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "流式问题" }],
+        stream: true,
+      });
+
+      const stream = runtime.runStream(request);
+      const first = await stream.next();
+
+      expect(first).toEqual({
+        done: false,
+        value: { type: "message_start", message: { role: "assistant" } },
+      });
+
+      const rest: unknown[] = [];
+      for await (const event of stream) {
+        rest.push(event);
+      }
+
+      expect(rest).toEqual([
+        { type: "text_delta", text: "第一段" },
+        { type: "text_delta", text: "第二段" },
+        { type: "message_end", finishReason: "stop" },
+      ]);
+      expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+      resolveFlush?.();
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
+  it("does not change the response when detached probe flushing fails", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("flush 失败")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()))
+      .mockResolvedValueOnce(createChatResponse("回答保持成功"));
+
+    const flushReasoningProbes = vi.fn().mockRejectedValue(new Error("probe write failed"));
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue([
+        {
+          displayQuestion: "我还缺少什么信息？",
+          canonicalQuestion: "我还缺少什么信息？",
+          kind: "fact-gap",
+          sourceRef: "domain_answer",
+          sourceSnapshot: { goalId: "domain_answer" },
+        },
+      ]);
+
+    try {
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        flushReasoningProbes,
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "flush 失败" }],
+        stream: false,
+      });
+      const response = await runtime.run(request);
+
+      expect(response).toEqual({
+        message: { role: "assistant", content: "回答保持成功" },
+        finishReason: "stop",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
+  it("does not change the stream event sequence when detached probe flushing fails", async () => {
+    const chatClient = createChatClient();
+    const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<
+      typeof import("../../src/recall/goal-based-recall.js")
+    >("../../src/recall/goal-based-recall.js");
+    mockGoalBasedRecall.mockImplementation((options) => actualGoalBasedRecall(options));
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(createChatResponse(createDecompositionResponse("流式 flush 失败")))
+      .mockResolvedValueOnce(createChatResponse(createAssessmentResponse()));
+    vi.mocked(chatClient.chatStream).mockImplementation(async function* () {
+      yield "流式";
+      yield "回答";
+    });
+
+    const flushReasoningProbes = vi.fn().mockRejectedValue(new Error("probe write failed"));
+    const synthesizeGapProbesSpy = vi
+      .spyOn(reasoningGapProbes, "synthesizeGapProbes")
+      .mockResolvedValue([
+        {
+          displayQuestion: "我该先澄清什么？",
+          canonicalQuestion: "我该先澄清什么？",
+          kind: "term-gap",
+          sourceRef: "domain_answer",
+          sourceSnapshot: { goalId: "domain_answer" },
+        },
+      ]);
+
+    try {
+      const runtime = new AvatarInferenceRuntime({
+        ownerConn: createOwnerConn(999),
+        chatClient,
+        embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+        flushReasoningProbes,
+      } as ConstructorParameters<typeof AvatarInferenceRuntime>[0]);
+
+      const request = await runtime.createRequest({
+        avatarTarget: { publicKey: "owner-pubkey" },
+        conversationTurns: [{ role: "user", content: "流式 flush 失败" }],
+        stream: true,
+      });
+
+      const events: unknown[] = [];
+      for await (const event of runtime.runStream(request)) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        { type: "message_start", message: { role: "assistant" } },
+        { type: "text_delta", text: "流式" },
+        { type: "text_delta", text: "回答" },
+        { type: "message_end", finishReason: "stop" },
+      ]);
+      expect(flushReasoningProbes).toHaveBeenCalledTimes(1);
+    } finally {
+      synthesizeGapProbesSpy.mockRestore();
+    }
+  });
+
   it("returns undefined prepared metadata after prepared state is consumed", async () => {
     const chatClient = createChatClient();
     const { goalBasedRecall: actualGoalBasedRecall } = await vi.importActual<

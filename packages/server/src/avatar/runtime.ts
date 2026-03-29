@@ -95,6 +95,7 @@ interface AvatarInferenceRuntimeDeps {
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
   debugArtifactWriter?: ReasoningDebugArtifactWriter;
+  flushReasoningProbes?: (probes: PendingReasoningProbe[]) => Promise<void> | void;
 }
 
 export class AvatarInferenceRuntime {
@@ -155,6 +156,26 @@ export class AvatarInferenceRuntime {
     } catch {
       // Best-effort only: debug artifacts must not break successful inference paths.
     }
+  }
+
+  private flushReasoningProbesBestEffort(request: AvatarInferenceRequest): void {
+    const prepared = this.preparedInferenceByRequest.get(request);
+    if (
+      !prepared ||
+      !this.deps.flushReasoningProbes ||
+      prepared.pendingReasoningProbes.length === 0
+    ) {
+      return;
+    }
+
+    const probes = prepared.pendingReasoningProbes.map((probe) => ({
+      ...probe,
+      sourceSnapshot: probe.sourceSnapshot ? { ...probe.sourceSnapshot } : null,
+    }));
+
+    void Promise.resolve(this.deps.flushReasoningProbes(probes)).catch(() => {
+      // Best-effort only: probe flushing must not change answer semantics.
+    });
   }
 
   private async countAnchors(): Promise<number> {
@@ -495,11 +516,15 @@ export class AvatarInferenceRuntime {
       throwIfAborted(request.signal);
       await this.writeRuntimeTraceBestEffort(request, messages, response.content);
 
-      return {
+      const result = {
         message: { role: "assistant", content: response.content },
         finishReason: response.finishReason,
         usage: response.usage,
-      };
+      } satisfies AvatarInferenceResponse;
+
+      this.flushReasoningProbesBestEffort(request);
+
+      return result;
     } finally {
       this.preparedInferenceByRequest.delete(request);
     }
@@ -527,6 +552,7 @@ export class AvatarInferenceRuntime {
 
       throwIfAborted(request.signal);
       yield { type: "message_end", finishReason: "stop" };
+      this.flushReasoningProbesBestEffort(request);
     } finally {
       this.preparedInferenceByRequest.delete(request);
     }
