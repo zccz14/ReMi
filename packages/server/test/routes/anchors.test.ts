@@ -76,6 +76,26 @@ describe("anchor routes", () => {
     expect(listJson.data.total).toBe(0);
   });
 
+  it("POST /api/:pubKey/anchors accepts reasoning source", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: "推理问题", answer: "推理答案", source: "reasoning" }),
+    });
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.data).toEqual(
+      expect.objectContaining({
+        question: "推理问题",
+        answer: "推理答案",
+        source: "reasoning",
+      }),
+    );
+  });
+
   it("GET /api/:pubKey/anchors → 200 lists anchors", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const conn = connMgr.getConnection(PUB_KEY);
@@ -220,6 +240,40 @@ describe("anchor routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.asset.answer).toBe("A1");
+  });
+
+  it("PUT /api/:pubKey/anchors/:id accepts reasoning source", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+    const conn = connMgr.getConnection(PUB_KEY);
+    const service = createApprovalService({ ownerKey: PUB_KEY, conn, embeddingClient: null });
+    const created = await service.microEditAsset({
+      assetId: null,
+      question: "Q1",
+      answer: "A1",
+      source: "manual",
+      requestId: "seed-put-reasoning-anchor",
+    });
+
+    const res = await app.request(`/api/${PUB_KEY}/anchors/${created.asset.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "route-put-reasoning-anchor",
+        question: "Q1",
+        answer: "A1 revised",
+        source: "reasoning",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.asset).toEqual(
+      expect.objectContaining({
+        id: created.asset.id,
+        answer: "A1 revised",
+        source: "reasoning",
+      }),
+    );
   });
 
   it("records micro-edit writes with requestId and null-safe fields", async () => {

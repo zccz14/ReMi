@@ -85,6 +85,30 @@ describe("approval routes", () => {
     expect(json.data.sourceSnapshot).toContain("Trust matters most.");
   });
 
+  it("POST /api/:pubKey/approval/candidates accepts reasoning source", async () => {
+    const app = createTestApp(connMgr, PUB_KEY);
+
+    const res = await app.request(`/api/${PUB_KEY}/approval/candidates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: "What can I infer here?",
+        answer: "This is a reasoning artifact.",
+        source: "reasoning",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.data).toEqual(
+      expect.objectContaining({
+        question: "What can I infer here?",
+        answer: "This is a reasoning artifact.",
+        source: "reasoning",
+      }),
+    );
+  });
+
   it("records approval success-path events with correlated actionId/requestId", async () => {
     const app = createTestApp(connMgr, PUB_KEY);
     const { records, unsubscribe } = captureLogs();

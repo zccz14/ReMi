@@ -46,13 +46,13 @@ declare module "hono" {
 const createAnchorSchema = z.object({
   question: z.string().min(1),
   answer: z.string().nullable().optional(),
-  source: z.enum(["interview", "manual", "reading"]),
+  source: z.enum(["interview", "manual", "reading", "reasoning"]),
 });
 
 const updateAnchorSchema = z.object({
   question: z.string().min(1).optional(),
   answer: z.string().nullable().optional(),
-  source: z.enum(["interview", "manual", "reading"]).optional(),
+  source: z.enum(["interview", "manual", "reading", "reasoning"]).optional(),
   requestId: z.string().trim().min(1).optional(),
 });
 

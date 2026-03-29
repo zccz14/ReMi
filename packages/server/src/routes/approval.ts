@@ -20,7 +20,7 @@ declare module "hono" {
 const createCandidateSchema = z.object({
   question: z.string().min(1),
   answer: z.string().nullable().optional(),
-  source: z.enum(["interview", "manual", "reading"]),
+  source: z.enum(["interview", "manual", "reading", "reasoning"]),
   sourceRef: z.string().nullable().optional(),
   sourceSnapshot: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
 });
