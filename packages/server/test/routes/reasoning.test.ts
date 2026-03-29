@@ -615,8 +615,7 @@ describe("reasoning routes", () => {
           droppedCount: 2,
           createSuccessCount: 1,
           createFailureCount: 0,
-          responseDurationMs: expect.any(Number),
-          probeFlushDurationMs: expect.any(Number),
+          latencyDeltaMs: expect.any(Number),
         }),
       );
     } finally {

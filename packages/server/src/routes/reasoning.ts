@@ -129,6 +129,14 @@ function createRuntime(input: {
   streamMode: "stream";
   requestStartedAt: number;
 }) {
+  const buildProbeSummary = (flushStartedAt: number) => ({
+    event: "reasoning_probe_generated",
+    ownerKey: input.ownerKey,
+    requestId: input.requestId,
+    streamMode: input.streamMode,
+    latencyDeltaMs: Math.max(0, Date.now() - flushStartedAt),
+  });
+
   const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(input.ownerKey)
     ? (() => {
         const approvalService = createApprovalService({
@@ -162,16 +170,11 @@ function createRuntime(input: {
           }
 
           log.info({
-            event: "reasoning_probe_generated",
-            ownerKey: input.ownerKey,
-            requestId: input.requestId,
-            streamMode: input.streamMode,
+            ...buildProbeSummary(flushStartedAt),
             probeCount: batch.pendingReasoningProbes.length,
             droppedCount: batch.probeStats.droppedCount,
             createSuccessCount,
             createFailureCount,
-            responseDurationMs: flushStartedAt - input.requestStartedAt,
-            probeFlushDurationMs: Date.now() - flushStartedAt,
           });
         };
       })()

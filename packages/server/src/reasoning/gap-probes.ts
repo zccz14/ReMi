@@ -40,6 +40,11 @@ export interface SynthesizeGapProbesInput {
     goalStatus: ReasoningGoalStatus[];
     recalledAnchors: SoulAnchor[];
   }) => Promise<ReasoningGapProbeDraft[]>;
+  shouldRethrowGenerateProbeDraftError?: (error: unknown) => boolean;
+}
+
+function isReasoningGapProbeKind(value: unknown): value is ReasoningGapProbeKind {
+  return value === "fact-gap" || value === "judgment-gap" || value === "term-gap";
 }
 
 function ensureQuestionMark(question: string): string {
@@ -106,9 +111,54 @@ function hasAnsweredCanonicalMatch(
   });
 }
 
+export function parseReasoningGapProbeDrafts(content: string): ReasoningGapProbeDraft[] {
+  const parsed = JSON.parse(content) as { probes?: unknown };
+
+  if (!Array.isArray(parsed.probes)) {
+    throw new Error("Probe draft response must contain a probes array");
+  }
+
+  return parsed.probes.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    if (typeof record.question !== "string" || !record.question.trim()) {
+      return [];
+    }
+    if (!isReasoningGapProbeKind(record.kind)) {
+      return [];
+    }
+
+    return [
+      {
+        question: record.question.trim(),
+        kind: record.kind,
+        sourceRef: typeof record.sourceRef === "string" ? record.sourceRef : null,
+        sourceSnapshot:
+          record.sourceSnapshot && typeof record.sourceSnapshot === "object"
+            ? (record.sourceSnapshot as Record<string, unknown>)
+            : null,
+      } satisfies ReasoningGapProbeDraft,
+    ];
+  });
+}
+
 export async function synthesizeGapProbes(
   input: SynthesizeGapProbesInput,
 ): Promise<SynthesizedGapProbes> {
+  const fallbackDrafts = createFallbackDrafts(input.goalStatus);
+  if (fallbackDrafts.length === 0) {
+    return {
+      probes: [],
+      stats: {
+        rawDraftCount: 0,
+        droppedCount: 0,
+      },
+    };
+  }
+
   const prompt = buildReasoningGapProbePrompt({
     currentTime: input.currentTime ?? new Date(0).toISOString(),
     userQuery: input.userQuery,
@@ -126,11 +176,14 @@ export async function synthesizeGapProbes(
         goalStatus: input.goalStatus,
         recalledAnchors: input.recalledAnchors,
       });
-    } catch {
-      rawDrafts = createFallbackDrafts(input.goalStatus);
+    } catch (error) {
+      if (input.shouldRethrowGenerateProbeDraftError?.(error)) {
+        throw error;
+      }
+      rawDrafts = fallbackDrafts;
     }
   } else {
-    rawDrafts = createFallbackDrafts(input.goalStatus);
+    rawDrafts = fallbackDrafts;
   }
 
   const seenCanonicalQuestions = new Set<string>();

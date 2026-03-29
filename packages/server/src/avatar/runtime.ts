@@ -8,6 +8,7 @@ import {
   type ReasoningAnswerGoal,
 } from "../reasoning/prompts.js";
 import {
+  parseReasoningGapProbeDrafts,
   synthesizeGapProbes,
   type PendingReasoningProbe,
   type ReasoningProbeSynthesisStats,
@@ -401,6 +402,15 @@ export class AvatarInferenceRuntime {
       userQuery: decomposition.userQuery,
       goalStatus: recall.goalStatus,
       recalledAnchors: recall.anchors,
+      generateProbeDrafts: async ({ prompt }) => {
+        const response = await this.deps.chatClient.chat({
+          messages: prompt,
+          signal: input.signal,
+        });
+        throwIfAborted(input.signal);
+        return parseReasoningGapProbeDrafts(response.content);
+      },
+      shouldRethrowGenerateProbeDraftError: (error) => input.signal?.aborted || isAbortError(error),
     });
     throwIfAborted(input.signal);
 

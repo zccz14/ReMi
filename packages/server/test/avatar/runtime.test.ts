@@ -1213,6 +1213,114 @@ describe("AvatarInferenceRuntime", () => {
     }
   });
 
+  it("uses the runtime chat client to generate probe drafts on the production path", async () => {
+    const chatClient = createChatClient();
+    mockGoalBasedRecall.mockResolvedValue({
+      ...createRecallCompatResult(),
+      sufficient: false,
+      goalStatus: [
+        {
+          goalId: "relationship_boundary",
+          sufficient: false,
+          known: [],
+          missing: ["我和对方现在是什么关系"],
+          knownAnchorIds: [],
+          missingKeys: ["visitor-relationship"],
+        },
+      ],
+    });
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(
+        createChatResponse(createDecompositionResponse("她适合找我聊这件事吗？")),
+      )
+      .mockResolvedValueOnce(
+        createChatResponse(
+          JSON.stringify({
+            probes: [{ question: "用户和对方现在是什么关系？", kind: "fact-gap" }],
+          }),
+        ),
+      );
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "她适合找我聊这件事吗？" }],
+      stream: false,
+    });
+
+    expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
+      pendingReasoningProbes: [
+        {
+          displayQuestion: "我和对方现在是什么关系？",
+          canonicalQuestion: "我和对方现在是什么关系？",
+          kind: "fact-gap",
+          sourceRef: null,
+          sourceSnapshot: null,
+        },
+      ],
+      probeStats: { rawDraftCount: 1, droppedCount: 0 },
+    });
+    expect(vi.mocked(chatClient.chat).mock.calls[1]?.[0].messages[0]?.content).toContain(
+      "reasoning gap probe 起草助手",
+    );
+  });
+
+  it("falls back to heuristic probe drafts when probe draft generation returns invalid JSON", async () => {
+    const chatClient = createChatClient();
+    mockGoalBasedRecall.mockResolvedValue({
+      ...createRecallCompatResult(),
+      sufficient: false,
+      goalStatus: [
+        {
+          goalId: "relationship_boundary",
+          sufficient: false,
+          known: [],
+          missing: ["我和对方现在是什么关系"],
+          knownAnchorIds: [],
+          missingKeys: ["visitor-relationship"],
+        },
+      ],
+    });
+    vi.mocked(chatClient.chat)
+      .mockResolvedValueOnce(
+        createChatResponse(createDecompositionResponse("她适合找我聊这件事吗？")),
+      )
+      .mockResolvedValueOnce(createChatResponse("not-json"));
+
+    const runtime = new AvatarInferenceRuntime({
+      ownerConn: createOwnerConn(999),
+      chatClient,
+      embeddingClient: { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) },
+    });
+
+    const request = await runtime.createRequest({
+      avatarTarget: { publicKey: "owner-pubkey" },
+      conversationTurns: [{ role: "user", content: "她适合找我聊这件事吗？" }],
+      stream: false,
+    });
+
+    expect(runtime.getPreparedReasoningProbeMetadata(request)).toEqual({
+      pendingReasoningProbes: [
+        {
+          displayQuestion: "我和对方现在是什么关系？",
+          canonicalQuestion: "我和对方现在是什么关系？",
+          kind: "fact-gap",
+          sourceRef: "relationship_boundary",
+          sourceSnapshot: {
+            goalId: "relationship_boundary",
+            missingKeys: ["visitor-relationship"],
+          },
+        },
+      ],
+      probeStats: { rawDraftCount: 1, droppedCount: 0 },
+    });
+  });
+
   it("returns deep-cloned reasoning probe metadata snapshots", async () => {
     const runtime = new AvatarInferenceRuntime({
       ownerConn: createOwnerConn(999),

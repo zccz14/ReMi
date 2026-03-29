@@ -176,13 +176,19 @@ export function aiChatCompletionsRoute(deps: {
     const created = Math.floor(Date.now() / 1000);
     const requestId = crypto.randomUUID();
     const streamMode = parsedBody.data.stream ? "stream" : "non-stream";
-    const requestStartedAt = Date.now();
     const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(parsedModel.publicKey)
       ? (() => {
           const approvalService = createApprovalService({
             ownerKey: parsedModel.publicKey,
             conn: ownerConn,
             embeddingClient: deps.embeddingClient,
+          });
+          const buildProbeSummary = (flushStartedAt: number) => ({
+            event: "reasoning_probe_generated",
+            ownerKey: parsedModel.publicKey,
+            requestId,
+            streamMode,
+            latencyDeltaMs: Math.max(0, Date.now() - flushStartedAt),
           });
 
           return async (batch: {
@@ -210,16 +216,11 @@ export function aiChatCompletionsRoute(deps: {
             }
 
             log.info({
-              event: "reasoning_probe_generated",
-              ownerKey: parsedModel.publicKey,
-              requestId,
-              streamMode,
+              ...buildProbeSummary(flushStartedAt),
               probeCount: batch.pendingReasoningProbes.length,
               droppedCount: batch.probeStats.droppedCount,
               createSuccessCount,
               createFailureCount,
-              responseDurationMs: flushStartedAt - requestStartedAt,
-              probeFlushDurationMs: Date.now() - flushStartedAt,
             });
           };
         })()

@@ -419,8 +419,7 @@ describe("ai chat completions route", () => {
           droppedCount: 2,
           createSuccessCount: 1,
           createFailureCount: 0,
-          responseDurationMs: expect.any(Number),
-          probeFlushDurationMs: expect.any(Number),
+          latencyDeltaMs: expect.any(Number),
         }),
       );
       expect(json.object).toBe("chat.completion");
