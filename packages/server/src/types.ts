@@ -37,7 +37,7 @@ export interface Message {
 
 export type SoulAssetKind = "anchor" | "probe";
 
-export type SoulAnchorSource = "interview" | "manual" | "reading";
+export type SoulAnchorSource = "interview" | "manual" | "reading" | "reasoning";
 
 export interface ApprovalCandidateCreateInput {
   question: string;

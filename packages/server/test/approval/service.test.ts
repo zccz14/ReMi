@@ -114,6 +114,23 @@ describe("approval service candidate ingestion", () => {
     }
   });
 
+  it("accepts reasoning as a candidate source", () => {
+    const { service, cleanup } = createService();
+
+    try {
+      const created = service.createCandidate({
+        question: "我在做这类决定时还缺什么判断标准？",
+        answer: null,
+        source: "reasoning",
+      });
+
+      expect(created.source).toBe("reasoning");
+      expect(created.kind).toBe("probe");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("lists anchor and probe candidates by normalized answer kind", async () => {
     const { service, cleanup } = createService();
 
