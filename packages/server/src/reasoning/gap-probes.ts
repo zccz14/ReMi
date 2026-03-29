@@ -47,6 +47,13 @@ function inferProbeKind(missing: string, missingKey?: string): ReasoningGapProbe
   }
 
   if (
+    !missingKey &&
+    /(怎么|如何|会不会|是否应该|更看重|设边界|判断标准|偏好|原则|适合|该不该)/.test(missing)
+  ) {
+    return "judgment-gap";
+  }
+
+  if (
     (missingKey && /(term|definition|meaning|name|title)/i.test(missingKey)) ||
     (!missingKey && /叫|术语|定义|意思|是什么/.test(missing))
   ) {

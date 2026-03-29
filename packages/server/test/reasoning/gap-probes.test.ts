@@ -114,6 +114,27 @@ describe("reasoning gap probes", () => {
     ]);
   });
 
+  it("infers judgment gaps from missing text when missingKeys are absent", async () => {
+    const probes = await synthesizeGapProbes({
+      userQuery: "她适合找我聊这件事吗？",
+      goalStatus: [
+        createGoalStatus({
+          missing: ["我通常在这种关系里怎么设边界"],
+          missingKeys: undefined,
+        }),
+      ],
+      recalledAnchors: [],
+    });
+
+    expect(probes).toEqual([
+      expect.objectContaining({
+        displayQuestion: "我通常在这种关系里怎么设边界？",
+        canonicalQuestion: "我通常在这种关系里怎么设边界？",
+        kind: "judgment-gap",
+      }),
+    ]);
+  });
+
   it("falls back to default drafts when the injected generator throws", async () => {
     const probes = await synthesizeGapProbes({
       userQuery: "她适合找我聊这件事吗？",
