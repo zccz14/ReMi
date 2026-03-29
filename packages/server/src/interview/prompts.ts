@@ -1,4 +1,5 @@
 import type { SoulAnchor } from "../types.js";
+import { OWNER_QUESTION_PROMPT_RULES } from "../reasoning/question-canonicalization.js";
 
 /** Step 1: 从用户回答中提取灵魂锚点 */
 export function buildExtractionPrompt(
@@ -23,10 +24,9 @@ export function buildExtractionPrompt(
   5. 如果 question 出现项目名/术语名/缩写/专有概念，主 question 必须补足语义对象与术语语义，或额外生成术语定义锚点；例如 ReMi 不能只保留裸术语名；无论哪种情况都不得只保留裸术语名
   6. 如果一条消息中有多个独立信息点，应尽量分别提取；事实锚点与认知锚点可以并存。definition + judgment、branching conditions（如“如果…；但如果…”、“如果信息不完整；但如果是高压力且独立开发”）必须按消息级别拆分；遇到分叉条件时必须拆成两条或更多条，不要跨消息合并成一个 question。拆分边界：不拆分同义补充、修辞重复、纯背景铺垫、删去子句后主判断不变的内容；可拆但非必须的是围绕同一对象的并列细节，以及主锚点已补术语语义后仍有可独立召回的简洁释义；总原则是避免把不同边界压扁，但不是把一句话切得越碎越好
   7. 只跳过与已有锚点明显等价的重复内容；信息粒度不同、背景补充、状态更新都不算重复
-  8. 凡是锚定本体的人格、认知、偏好、经历与事实，question 必须使用“我”作为主语，不得使用“用户”
+  ${OWNER_QUESTION_PROMPT_RULES}
   9. question 优先承载语境范围、成立条件、讨论对象，以保证槽位自解释；例如“高压力”“信息不完整”“独立开发”这类范围/条件在需要区分槽位时应进入 question；只有纯临时、不可复用的时间细节不要机械写进 question
   10. 当条件/范围是区分槽位、保证自解释所必需时，可以进入 question
-  11. question 不得包含“这个”“那个”“刚才提到的”等依赖上下文才能解析的指代
   12. 涉及术语定义锚点时，必须按以下规则判断：required：出现显式定义句式，如“X 就是…”、“我说的 X 指的是…”、“这里的 X 不是……而是……”，并且必须额外生成 1 条术语定义锚点；为避免过拆，同一术语在单条消息中最多新增 1 条术语定义锚点；若同条消息还有 judgment，必须拆成 definition anchor + judgment anchor；optional：存在解释性同位语或释义短语，且同一条消息内还有针对该术语对象的独立判断/偏好/用途表达；forbidden：无定义句式且无解释性同位语/释义短语，例如陌生缩写 XTP 在没有定义证据时不得生成定义锚点
   13. answer 保持短而聚焦，不要用一个长 answer 覆盖多个条件分支、多个对象或多个术语解释；该拆就拆
   14. 如果 prompt 中需要示例，只能使用完全脱敏、虚构、不可回溯到真实用户的数据
