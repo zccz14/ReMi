@@ -14,6 +14,8 @@ import { isAbortError, throwIfAborted } from "../lib/abort.js";
 import type { PendingReasoningProbe } from "../reasoning/gap-probes.js";
 import { isReasoningGapProbeEnabledForOwner } from "../config/feature-flags.js";
 import { logger } from "../logger.js";
+import { createLatestReasoningDebugArtifactWriter } from "../reasoning/debug-artifact.js";
+import { resolveReasoningDebugArtifactRootDir } from "../reasoning/debug-artifact-config.js";
 
 const log = logger.child({ module: "route:ai-chat-completions" });
 
@@ -176,6 +178,9 @@ export function aiChatCompletionsRoute(deps: {
     const created = Math.floor(Date.now() / 1000);
     const requestId = crypto.randomUUID();
     const streamMode = parsedBody.data.stream ? "stream" : "non-stream";
+    const debugArtifactWriter = createLatestReasoningDebugArtifactWriter({
+      rootDir: resolveReasoningDebugArtifactRootDir(),
+    });
     const flushReasoningProbes = isReasoningGapProbeEnabledForOwner(parsedModel.publicKey)
       ? (() => {
           const approvalService = createApprovalService({
@@ -229,6 +234,7 @@ export function aiChatCompletionsRoute(deps: {
       ownerConn,
       chatClient: deps.chatClient,
       embeddingClient: deps.embeddingClient,
+      debugArtifactWriter,
       flushReasoningProbes,
     });
 

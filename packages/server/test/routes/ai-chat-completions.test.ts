@@ -328,6 +328,66 @@ describe("ai chat completions route", () => {
     expect(listCandidateRows(ownerPubKey)).toEqual([]);
   });
 
+  it("always injects a debug artifact writer for chat completions", async () => {
+    vi.resetModules();
+
+    const ctorDeps: Array<Record<string, unknown>> = [];
+    const createWriterSpy = vi.fn(() => ({
+      writeLatest: vi.fn(async () => {}),
+      writeLatestRuntimeTrace: vi.fn(async () => {}),
+    }));
+
+    class FakeAvatarInferenceRuntime {
+      constructor(deps: Record<string, unknown>) {
+        ctorDeps.push(deps);
+      }
+
+      async createRequest(input: Record<string, unknown>) {
+        return input;
+      }
+
+      async run() {
+        return {
+          message: { role: "assistant", content: "你好" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      }
+    }
+
+    vi.doMock("../../src/avatar/runtime.js", () => ({
+      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
+    }));
+    vi.doMock("../../src/reasoning/debug-artifact.js", () => ({
+      createLatestReasoningDebugArtifactWriter: createWriterSpy,
+    }));
+
+    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
+    const app = await createTestApp(aiChatCompletionsRoute, {
+      chatClient: {
+        chat: vi.fn(),
+        chatStream: vi.fn(),
+      },
+    });
+
+    const res = await app.request("/ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify({
+        model: `ReMi-${ownerPubKey}`,
+        messages: [{ role: "user", content: "你好" }],
+        stream: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(createWriterSpy).toHaveBeenCalledTimes(1);
+    expect(ctorDeps[0]?.debugArtifactWriter).toBeDefined();
+  });
+
   it("records reasoning probe lifecycle events for chat completions without changing the response schema", async () => {
     vi.resetModules();
     process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;

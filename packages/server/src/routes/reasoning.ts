@@ -4,7 +4,6 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { inArray } from "drizzle-orm";
 import { verify as verifySignature } from "@remi/crypto";
-import { isAbsolute } from "node:path";
 
 import { AvatarInferenceRuntime } from "../avatar/runtime.js";
 import type { AvatarInferenceMessage } from "../avatar/model.js";
@@ -34,6 +33,7 @@ import {
 import { createSseHeartbeat } from "../lib/sse-heartbeat.js";
 import { isAbortError, throwIfAborted } from "../lib/abort.js";
 import { isReasoningGapProbeEnabledForOwner } from "../config/feature-flags.js";
+import { resolveReasoningDebugArtifactRootDir } from "../reasoning/debug-artifact-config.js";
 
 const log = logger.child({ module: "route:reasoning" });
 
@@ -124,7 +124,7 @@ function createRuntime(input: {
   ownerConn: ReturnType<ConnectionManager["getConnection"]>;
   chatClient: ChatClient;
   embeddingClient: EmbeddingClient | null;
-  debugArtifactRootDir: string | null;
+  debugArtifactRootDir: string;
   requestId: string;
   streamMode: "stream";
   requestStartedAt: number;
@@ -185,9 +185,9 @@ function createRuntime(input: {
     chatClient: input.chatClient,
     embeddingClient: input.embeddingClient,
     flushReasoningProbes,
-    debugArtifactWriter: input.debugArtifactRootDir
-      ? createLatestReasoningDebugArtifactWriter({ rootDir: input.debugArtifactRootDir })
-      : undefined,
+    debugArtifactWriter: createLatestReasoningDebugArtifactWriter({
+      rootDir: input.debugArtifactRootDir,
+    }),
   });
 }
 
@@ -249,11 +249,6 @@ function getAnchorsByIds(
 
   const anchorMap = new Map(anchors.map((anchor) => [anchor.id, anchor]));
   return ids.map((id) => anchorMap.get(id)).filter((anchor): anchor is SoulAnchor => !!anchor);
-}
-
-function resolveReasoningDebugArtifactRootDir(): string | null {
-  const configured = process.env.REMI_REASONING_DEBUG_ARTIFACT_ROOT_DIR?.trim();
-  return configured && isAbsolute(configured) ? configured : null;
 }
 
 function createSSEEmitter(stream: {

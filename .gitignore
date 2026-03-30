@@ -149,4 +149,4 @@ playwright/.cache/
 
 # Debug artifacts
 packages/web/dev-dist
-debug/debug
+debug/
