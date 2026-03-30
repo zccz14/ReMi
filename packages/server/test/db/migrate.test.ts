@@ -26,7 +26,7 @@ describe("initializeDatabase", () => {
     tmpFiles.length = 0;
   });
 
-  it("should create soul_anchors and memories tables", () => {
+  it("should create soul_anchors but not memories tables", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
     initializeDatabase(db, 1536);
@@ -35,7 +35,7 @@ describe("initializeDatabase", () => {
       .all() as { name: string }[];
     const names = tables.map((t) => t.name);
     expect(names).toContain("soul_anchors");
-    expect(names).toContain("memories");
+    expect(names).not.toContain("memories");
     db.close();
   });
 
@@ -48,7 +48,7 @@ describe("initializeDatabase", () => {
       .all() as { name: string }[];
     const names = tables.map((t) => t.name);
     expect(names).toContain("soul_anchors_vec");
-    expect(names).toContain("memories_vec");
+    expect(names).not.toContain("memories_vec");
     db.close();
   });
 

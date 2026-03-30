@@ -60,14 +60,4 @@ describe("vector index operations", () => {
     expect(results).toHaveLength(0);
     db.close();
   });
-
-  it("should work with memories_vec table", () => {
-    const db = createTestDb();
-    upsertEmbedding(db, "memories_vec", "m1", [0, 0, 1, 0]);
-
-    const results = searchSimilar(db, "memories_vec", [0, 0, 1, 0], 1);
-    expect(results).toHaveLength(1);
-    expect(results[0].id).toBe("m1");
-    db.close();
-  });
 });

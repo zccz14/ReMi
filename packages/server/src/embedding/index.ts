@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-type VecTable = "soul_anchors_vec" | "memories_vec";
+type VecTable = "soul_anchors_vec";
 
 export function upsertEmbedding(
   db: Database.Database,

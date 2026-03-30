@@ -4,7 +4,7 @@ export const soulAnchors = sqliteTable("soul_anchors", {
   id: text("id").primaryKey(),
   question: text("question").notNull(),
   answer: text("answer"),
-  source: text("source", { enum: ["interview", "manual", "reading", "reasoning"] }).notNull(),
+  source: text("source").notNull(),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
   updatedAt: integer("updated_at", { mode: "number" }).notNull(),
 });
@@ -40,15 +40,6 @@ export const messages = sqliteTable("messages", {
     enum: ["user", "assistant", "system"],
   }).notNull(),
   content: text("content").notNull(),
-  createdAt: integer("created_at", { mode: "number" }).notNull(),
-});
-
-export const memories = sqliteTable("memories", {
-  id: text("id").primaryKey(),
-  content: text("content").notNull(),
-  occurredAt: integer("occurred_at", { mode: "number" }).notNull(),
-  source: text("source", { enum: ["interview", "manual", "reading", "reasoning"] }).notNull(),
-  metadata: text("metadata"),
   createdAt: integer("created_at", { mode: "number" }).notNull(),
 });
 
@@ -88,7 +79,7 @@ export const soulCandidateQueue = sqliteTable("soul_candidate_queue", {
   ownerKey: text("owner_key").notNull(),
   question: text("question").notNull(),
   answer: text("answer"),
-  source: text("source", { enum: ["interview", "manual", "reading", "reasoning"] }).notNull(),
+  source: text("source").notNull(),
   sourceRef: text("source_ref"),
   sourceSnapshot: text("source_snapshot"),
   createdAt: integer("created_at", { mode: "number" }).notNull(),

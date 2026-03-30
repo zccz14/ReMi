@@ -3,6 +3,44 @@ import * as sqliteVec from "sqlite-vec";
 
 const APPROVAL_LAST_ACTIONS_UNDO_TTL_MS = 5 * 60 * 1000;
 
+function tableHasSourceConstraint(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { sql: string | null } | undefined;
+  return /CHECK\s*\(\s*source\s+IN\s*\(/i.test(row?.sql ?? "");
+}
+
+function rebuildTableWithoutSourceConstraint(
+  db: Database.Database,
+  options: {
+    tableName: string;
+    legacyTableName: string;
+    createSql: string;
+    columns: string[];
+  },
+): void {
+  if (!tableHasSourceConstraint(db, options.tableName)) {
+    return;
+  }
+
+  const columnList = options.columns.join(",\n      ");
+
+  db.exec(`
+    ALTER TABLE ${options.tableName} RENAME TO ${options.legacyTableName};
+
+    ${options.createSql};
+
+    INSERT INTO ${options.tableName} (
+      ${columnList}
+    )
+    SELECT
+      ${columnList}
+    FROM ${options.legacyTableName};
+
+    DROP TABLE ${options.legacyTableName};
+  `);
+}
+
 export function initializeDatabase(db: Database.Database, embeddingDimensions: number): void {
   sqliteVec.load(db);
 
@@ -11,18 +49,9 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       id TEXT PRIMARY KEY,
       question TEXT NOT NULL,
       answer TEXT,
-      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading', 'reasoning')),
+      source TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS memories (
-      id TEXT PRIMARY KEY,
-      content TEXT NOT NULL,
-      occurred_at INTEGER NOT NULL,
-      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading', 'reasoning')),
-      metadata TEXT,
-      created_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -98,7 +127,7 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
       owner_key TEXT NOT NULL,
       question TEXT NOT NULL,
       answer TEXT,
-      source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading', 'reasoning')),
+      source TEXT NOT NULL,
       source_ref TEXT,
       source_snapshot TEXT,
       created_at INTEGER NOT NULL
@@ -152,13 +181,46 @@ export function initializeDatabase(db: Database.Database, embeddingDimensions: n
     ).run(APPROVAL_LAST_ACTIONS_UNDO_TTL_MS);
   }
 
+  rebuildTableWithoutSourceConstraint(db, {
+    tableName: "soul_anchors",
+    legacyTableName: "soul_anchors_legacy",
+    createSql: `CREATE TABLE soul_anchors (
+      id TEXT PRIMARY KEY,
+      question TEXT NOT NULL,
+      answer TEXT,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    columns: ["id", "question", "answer", "source", "created_at", "updated_at"],
+  });
+  rebuildTableWithoutSourceConstraint(db, {
+    tableName: "soul_candidate_queue",
+    legacyTableName: "soul_candidate_queue_legacy",
+    createSql: `CREATE TABLE soul_candidate_queue (
+      id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT,
+      source TEXT NOT NULL,
+      source_ref TEXT,
+      source_snapshot TEXT,
+      created_at INTEGER NOT NULL
+    )`,
+    columns: [
+      "id",
+      "owner_key",
+      "question",
+      "answer",
+      "source",
+      "source_ref",
+      "source_snapshot",
+      "created_at",
+    ],
+  });
+
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS soul_anchors_vec USING vec0(
-      id TEXT PRIMARY KEY,
-      embedding FLOAT[${embeddingDimensions}]
-    );
-
-    CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
       id TEXT PRIMARY KEY,
       embedding FLOAT[${embeddingDimensions}]
     );
