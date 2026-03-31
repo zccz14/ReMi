@@ -5,6 +5,7 @@ import {
   type ReasoningGoalStatus,
 } from "../../src/reasoning/prompts.js";
 import {
+  parseReasoningGapProbeDrafts,
   synthesizeGapProbes,
   type ReasoningGapProbeDraft,
 } from "../../src/reasoning/gap-probes.js";
@@ -65,6 +66,21 @@ describe("reasoning gap probes", () => {
     expect(user).toContain("relationship_boundary");
     expect(user).toContain("我和对方现在是什么关系");
     expect(user).toContain("我在这种关系里怎么设边界？");
+  });
+
+  it("parses fenced JSON probe drafts", () => {
+    expect(
+      parseReasoningGapProbeDrafts(
+        '```json\n{\n  "probes": [{ "question": "用户和对方现在是什么关系？", "kind": "fact-gap" }]\n}\n```',
+      ),
+    ).toEqual([
+      {
+        question: "用户和对方现在是什么关系？",
+        kind: "fact-gap",
+        sourceRef: null,
+        sourceSnapshot: null,
+      },
+    ]);
   });
 
   it("creates 1-3 high-value probe drafts from missing goals", async () => {

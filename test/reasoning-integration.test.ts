@@ -32,6 +32,88 @@ describe("reasoning integration", () => {
     };
   }
 
+  function createProbeGeneratingChatClient() {
+    return {
+      chat: async (options: { messages: Array<{ role: string; content: string }> }) => {
+        const content = options.messages.map((message) => message.content).join("\n\n");
+
+        if (content.includes("回答需求拆解助手")) {
+          return {
+            content: JSON.stringify({
+              userQuery: "她适合找我聊这件事吗？",
+              currentTime: "2026-03-30T00:00:00.000Z",
+              answerGoals: [
+                { id: "identity_style", goal: "我是谁，我的身份和表达风格", required: true },
+                {
+                  id: "relationship_boundary",
+                  goal: "对方是谁，我与对方的关系和沟通边界",
+                  required: true,
+                },
+                { id: "domain_answer", goal: "回答提问者的问题所需的认知", required: true },
+              ],
+              successCriteria: ["基于证据回答", "缺失时承认边界"],
+            }),
+            finishReason: "stop" as const,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          };
+        }
+
+        if (content.includes("reasoning gap probe 起草助手")) {
+          return {
+            content:
+              '```json\n{\n  "probes": [\n    { "question": "用户和对方现在是什么关系？", "kind": "fact-gap" }\n  ]\n}\n```',
+            finishReason: "stop" as const,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          };
+        }
+
+        if (content.includes("认知充分性评估专家")) {
+          return {
+            content: JSON.stringify({
+              sufficient: false,
+              goalStatus: [
+                {
+                  goalId: "identity_style",
+                  sufficient: true,
+                  known: ["知道身份风格"],
+                  missing: [],
+                  knownAnchorIds: [],
+                  missingKeys: [],
+                },
+                {
+                  goalId: "relationship_boundary",
+                  sufficient: false,
+                  known: [],
+                  missing: ["我和对方现在是什么关系"],
+                  knownAnchorIds: [],
+                  missingKeys: ["visitor-relationship"],
+                },
+                {
+                  goalId: "domain_answer",
+                  sufficient: false,
+                  known: [],
+                  missing: ["她适合找我聊这件事的事实依据"],
+                  knownAnchorIds: [],
+                  missingKeys: ["decision-context"],
+                },
+              ],
+              nextQuery: "",
+              reasoningChain: ["关系边界信息不足"],
+              narrative: "我需要先确认关系边界。",
+            }),
+            finishReason: "stop" as const,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          };
+        }
+
+        throw new Error(`Unexpected chat prompt: ${content.slice(0, 120)}`);
+      },
+      chatStream: async function* () {
+        yield "先给一个临时判断";
+      },
+    };
+  }
+
   function createRecallAwareEmbeddingClient() {
     let gate: Promise<void> | null = null;
 
@@ -177,6 +259,20 @@ describe("reasoning integration", () => {
     });
   }
 
+  function listCandidateRows(pubKey: string) {
+    return connMgr
+      .getConnection(pubKey, { create: true })
+      .raw.prepare(
+        `SELECT question, answer, source, source_ref FROM soul_candidate_queue ORDER BY rowid ASC`,
+      )
+      .all() as Array<{
+      question: string;
+      answer: string | null;
+      source: string;
+      source_ref: string | null;
+    }>;
+  }
+
   async function signedRequest(
     method: string,
     urlPath: string,
@@ -258,6 +354,37 @@ describe("reasoning integration", () => {
     const done = events.find((event) => event.event === "done");
     expect(done).toBeDefined();
     expect(JSON.parse(done!.data ?? "{}")).toMatchObject({ messageId: 2, recalledAnchors: [] });
+  });
+
+  it("POST /reasoning/message persists generated reasoning probes into the candidate queue", async () => {
+    const result = createApp({
+      dataDir: tmpDir,
+      embeddingDimensions: 4,
+      chatClient: createProbeGeneratingChatClient(),
+      embeddingClient: null,
+    });
+    app = result.app;
+    connMgr = result.connMgr;
+    cleanup = () => result.connMgr.closeAll();
+
+    const res = await signedRequest(
+      "POST",
+      `/api/${ownerPubKey}/reasoning/message`,
+      visitorPrivKey,
+      visitorPubKey,
+      JSON.stringify({ content: "她适合找我聊这件事吗？" }),
+    );
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: done");
+    expect(listCandidateRows(ownerPubKey)).toEqual([
+      expect.objectContaining({
+        question: "我和对方现在是什么关系？",
+        answer: null,
+        source: "reasoning",
+      }),
+    ]);
   });
 
   it("POST /reasoning/message emits comment heartbeat while runtime prep is blocked", async () => {

@@ -173,7 +173,6 @@ describe("ai chat completions route", () => {
 
   it("creates reasoning probe candidates for chat completions without changing the response schema", async () => {
     vi.resetModules();
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
 
     class FakeAvatarInferenceRuntime {
       constructor(
@@ -254,80 +253,6 @@ describe("ai chat completions route", () => {
     expect(json.object).toBe("chat.completion");
   });
 
-  it("does not create reasoning probes for chat completions when the owner is not allowlisted", async () => {
-    vi.resetModules();
-
-    class FakeAvatarInferenceRuntime {
-      constructor(
-        private deps: {
-          flushReasoningProbes?: (batch: {
-            pendingReasoningProbes: Array<{
-              displayQuestion: string;
-              canonicalQuestion: string;
-              kind: string;
-              sourceRef: string | null;
-              sourceSnapshot: Record<string, unknown> | null;
-            }>;
-            probeStats: { rawDraftCount: number; droppedCount: number };
-          }) => Promise<void> | void;
-        },
-      ) {}
-
-      async createRequest(input: Record<string, unknown>) {
-        return input;
-      }
-
-      async run() {
-        await this.deps.flushReasoningProbes?.({
-          pendingReasoningProbes: [
-            {
-              displayQuestion: "我还缺什么判断标准？",
-              canonicalQuestion: "我还缺什么判断标准？",
-              kind: "judgment-gap",
-              sourceRef: "goal:criteria",
-              sourceSnapshot: { goalId: "criteria" },
-            },
-          ],
-          probeStats: { rawDraftCount: 1, droppedCount: 0 },
-        });
-        return {
-          message: { role: "assistant", content: "你好" },
-          finishReason: "stop",
-          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-        };
-      }
-    }
-
-    vi.doMock("../../src/avatar/runtime.js", () => ({
-      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
-    }));
-
-    const { aiChatCompletionsRoute } = await import("../../src/routes/ai-chat-completions.js");
-    const app = await createTestApp(aiChatCompletionsRoute, {
-      chatClient: {
-        chat: vi.fn(),
-        chatStream: vi.fn(),
-      },
-    });
-
-    const res = await app.request("/ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiToken}`,
-      },
-      body: JSON.stringify({
-        model: `ReMi-${ownerPubKey}`,
-        messages: [{ role: "user", content: "你好" }],
-        stream: false,
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    await res.json();
-    expect(listCandidateRows(ownerPubKey)).toEqual([]);
-  });
-
   it("always injects a debug artifact writer for chat completions", async () => {
     vi.resetModules();
 
@@ -390,7 +315,6 @@ describe("ai chat completions route", () => {
 
   it("records reasoning probe lifecycle events for chat completions without changing the response schema", async () => {
     vi.resetModules();
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
 
     class FakeAvatarInferenceRuntime {
       constructor(
@@ -489,8 +413,6 @@ describe("ai chat completions route", () => {
   });
 
   it("does not create reasoning probes for chat completions when transport fails before the first token", async () => {
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
-
     const heartbeatFailure = createDeferred<never>();
     let notifyHeartbeatError: ((error: unknown) => void) | undefined;
     vi.doMock("../../src/lib/sse-heartbeat.js", () => ({

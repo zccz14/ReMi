@@ -160,11 +160,9 @@ describe("reasoning routes", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("enables reasoning probes only for allowlisted owners", () => {
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = `${testPubKey},owner-b`;
-
+  it("always enables reasoning probes once the reasoning flow is reachable", () => {
     expect(isReasoningGapProbeEnabledForOwner(testPubKey)).toBe(true);
-    expect(isReasoningGapProbeEnabledForOwner("owner-c")).toBe(false);
+    expect(isReasoningGapProbeEnabledForOwner("owner-c")).toBe(true);
   });
 
   it("GET /reasoning/messages -> 200 empty", async () => {
@@ -369,7 +367,6 @@ describe("reasoning routes", () => {
 
   it("creates reasoning probe candidates for the reasoning route", async () => {
     vi.resetModules();
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = testPubKey;
 
     class FakeAvatarInferenceRuntime {
       constructor(
@@ -452,82 +449,7 @@ describe("reasoning routes", () => {
     ]);
   });
 
-  it("does not create reasoning probes when the owner is not allowlisted", async () => {
-    vi.resetModules();
-
-    class FakeAvatarInferenceRuntime {
-      constructor(
-        private deps: {
-          flushReasoningProbes?: (
-            probes: Array<{
-              displayQuestion: string;
-              canonicalQuestion: string;
-              kind: string;
-              sourceRef: string | null;
-              sourceSnapshot: Record<string, unknown> | null;
-            }>,
-          ) => Promise<void> | void;
-        },
-      ) {}
-
-      async createRequest(input: Record<string, unknown>) {
-        return input;
-      }
-
-      getPreparedReasoningMetadata() {
-        return {
-          thinkingNarratives: [],
-          recalledAnchorIds: [],
-          anchorSelectionStrategy: "batch-recall",
-        };
-      }
-
-      async *runStream() {
-        await this.deps.flushReasoningProbes?.([
-          {
-            displayQuestion: "我还缺什么判断标准？",
-            canonicalQuestion: "我还缺什么判断标准？",
-            kind: "judgment-gap",
-            sourceRef: "goal:criteria",
-            sourceSnapshot: { goalId: "criteria" },
-          },
-        ]);
-        yield { type: "message_start", message: { role: "assistant" } };
-        yield { type: "text_delta", text: "hello" };
-        yield { type: "message_end", finishReason: "stop" };
-      }
-    }
-
-    vi.doMock("../../src/avatar/runtime.js", () => ({
-      AvatarInferenceRuntime: FakeAvatarInferenceRuntime,
-    }));
-
-    const { reasoningRoutes: mockedReasoningRoutes } =
-      await import("../../src/routes/reasoning.js");
-    const app = new Hono();
-    app.use("*", async (c, next) => {
-      c.set("signerPubKey", visitorPubKey);
-      c.set("role", "visitor");
-      c.set("connMgr", connMgr);
-      c.set("embeddingClient", null);
-      c.set("chatClient", createChatClient());
-      await next();
-    });
-    app.route("/api", mockedReasoningRoutes);
-
-    const res = await app.request(`/api/${testPubKey}/reasoning/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: "你好" }),
-    });
-
-    expect(res.status).toBe(200);
-    await res.text();
-    expect(listCandidateRows(testPubKey)).toEqual([]);
-  });
-
   it("records reasoning probe lifecycle events", async () => {
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = testPubKey;
     const records: StructuredLogRecord[] = [];
     const unsubscribe = subscribeToLogs((record) => {
       records.push(record);

@@ -76,8 +76,6 @@ describe("reasoning route transport cancellation", () => {
   });
 
   it("does not wait for probe flushing before the transport response is established", async () => {
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
-
     const flushRelease = createDeferred<void>();
 
     class FakeAvatarInferenceRuntime {
@@ -173,8 +171,6 @@ describe("reasoning route transport cancellation", () => {
   });
 
   it("does not create reasoning probes when the stream is cancelled before the first token", async () => {
-    process.env.REMI_REASONING_GAP_PROBE_OWNERS = ownerPubKey;
-
     const heartbeatFailure = createDeferred<never>();
     let notifyHeartbeatError: ((error: unknown) => void) | undefined;
 

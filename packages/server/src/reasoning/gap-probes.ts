@@ -43,6 +43,12 @@ export interface SynthesizeGapProbesInput {
   shouldRethrowGenerateProbeDraftError?: (error: unknown) => boolean;
 }
 
+function unwrapJsonCodeFence(content: string): string {
+  const trimmed = content.trim();
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  return fencedMatch?.[1]?.trim() ?? trimmed;
+}
+
 function isReasoningGapProbeKind(value: unknown): value is ReasoningGapProbeKind {
   return value === "fact-gap" || value === "judgment-gap" || value === "term-gap";
 }
@@ -112,7 +118,7 @@ function hasAnsweredCanonicalMatch(
 }
 
 export function parseReasoningGapProbeDrafts(content: string): ReasoningGapProbeDraft[] {
-  const parsed = JSON.parse(content) as { probes?: unknown };
+  const parsed = JSON.parse(unwrapJsonCodeFence(content)) as { probes?: unknown };
 
   if (!Array.isArray(parsed.probes)) {
     throw new Error("Probe draft response must contain a probes array");

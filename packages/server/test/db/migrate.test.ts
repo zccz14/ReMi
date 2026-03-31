@@ -205,6 +205,63 @@ describe("initializeDatabase", () => {
     db.close();
   });
 
+  it("upgrades an existing soul_candidate_queue table to allow reasoning candidates", () => {
+    const dbPath = createTmpDb();
+    const db = new Database(dbPath);
+
+    db.exec(`
+      CREATE TABLE soul_candidate_queue (
+        id TEXT PRIMARY KEY,
+        owner_key TEXT NOT NULL,
+        question TEXT NOT NULL,
+        answer TEXT,
+        source TEXT NOT NULL CHECK(source IN ('interview', 'manual', 'reading')),
+        source_ref TEXT,
+        source_snapshot TEXT,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO soul_candidate_queue (
+        id,
+        owner_key,
+        question,
+        answer,
+        source,
+        source_ref,
+        source_snapshot,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("candidate-1", "owner-1", "旧问题", null, "manual", null, null, 123);
+
+    initializeDatabase(db, 1536);
+
+    db.prepare(
+      `INSERT INTO soul_candidate_queue (
+        id,
+        owner_key,
+        question,
+        answer,
+        source,
+        source_ref,
+        source_snapshot,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("candidate-2", "owner-1", "新问题", null, "reasoning", null, null, 456);
+
+    const rows = db
+      .prepare(
+        "SELECT id, question, source, created_at FROM soul_candidate_queue ORDER BY created_at ASC",
+      )
+      .all();
+    expect(rows).toEqual([
+      { id: "candidate-1", question: "旧问题", source: "manual", created_at: 123 },
+      { id: "candidate-2", question: "新问题", source: "reasoning", created_at: 456 },
+    ]);
+
+    db.close();
+  });
+
   it("should be idempotent (safe to call twice)", () => {
     const dbPath = createTmpDb();
     const db = new Database(dbPath);
