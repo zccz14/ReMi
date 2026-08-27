@@ -1,0 +1,8 @@
+remi.ntnl.io {
+    encode zstd gzip
+    root * /opt/remi/current/web
+    try_files {path} /index.html
+    reverse_proxy /api/* 127.0.0.1:3000
+    reverse_proxy /healthz 127.0.0.1:3000
+    file_server
+}

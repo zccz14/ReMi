@@ -152,3 +152,4 @@ packages/web/dev-dist
 debug/
 
 lab.sh
+backend/target/
