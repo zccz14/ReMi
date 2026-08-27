@@ -1,0 +1,22 @@
+[Unit]
+Description=ReMi evidence-bounded inference service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remi
+Group=remi
+EnvironmentFile=/etc/remi/remi.env
+WorkingDirectory=/opt/remi/current
+ExecStart=/opt/remi/current/remi
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/remi
+
+[Install]
+WantedBy=multi-user.target

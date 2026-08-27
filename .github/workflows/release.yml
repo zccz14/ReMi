@@ -1,0 +1,47 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run build:web
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-gnu }
+      - run: cargo build --manifest-path backend/Cargo.toml --release --target x86_64-unknown-linux-gnu --locked
+      - run: |
+          mkdir -p package/remi/web
+          cp backend/target/x86_64-unknown-linux-gnu/release/remi package/remi/
+          cp -R packages/web/dist/. package/remi/web/
+          cp deploy/remi.service deploy/Caddyfile package/remi/
+          tar -C package -czf remi-x86_64-unknown-linux-gnu.tar.gz remi
+          sha256sum remi-x86_64-unknown-linux-gnu.tar.gz > remi-x86_64-unknown-linux-gnu.tar.gz.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            remi-x86_64-unknown-linux-gnu.tar.gz
+            remi-x86_64-unknown-linux-gnu.tar.gz.sha256
+  deploy:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+      - env:
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/send-deploy.sh "$EC2_INSTANCE_ID" "$GITHUB_REF_NAME"
