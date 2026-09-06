@@ -4,13 +4,16 @@ set -euo pipefail
 tag="${1:?release tag is required}"
 archive_url="${2:?archive URL is required}"
 checksum_url="${3:?checksum URL is required}"
-archive="remi-x86_64-unknown-linux-gnu.tar.gz"
+archive="remi-x86_64-unknown-linux-musl.tar.gz"
 caddy_version="2.11.4"
 caddy_archive="caddy_${caddy_version}_linux_amd64.tar.gz"
 caddy_sha512="8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
 release_dir="/opt/remi/releases/${tag}"
 temporary_dir="$(mktemp -d)"
 previous_release="$(readlink -f /opt/remi/current 2>/dev/null || true)"
+if [ ! -d "$previous_release" ]; then
+  previous_release=""
+fi
 
 cleanup() { rm -rf "$temporary_dir"; }
 trap cleanup EXIT

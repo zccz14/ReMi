@@ -34,8 +34,8 @@ asset_url() {
   printf '%s' "$location"
 }
 
-archive_url="$(asset_url remi-x86_64-unknown-linux-gnu.tar.gz)"
-checksum_url="$(asset_url remi-x86_64-unknown-linux-gnu.tar.gz.sha256)"
+archive_url="$(asset_url remi-x86_64-unknown-linux-musl.tar.gz)"
+checksum_url="$(asset_url remi-x86_64-unknown-linux-musl.tar.gz.sha256)"
 unset GITHUB_TOKEN github_token
 script_base64="$(base64 < deploy/deploy-release.sh | tr -d '\n')"
 printf -v quoted_tag '%q' "$tag"
