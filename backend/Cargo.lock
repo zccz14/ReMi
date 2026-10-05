@@ -67,9 +67,9 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auth-mini-axum"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40904ff022075fe3e6cd1389d6a9a8dc8d7e5e25745d8fe2b726685a89e4468f"
+checksum = "25d4310c199e8aa5390c6b7351dfec0af918fff191cf281b4c574e5e48afea23"
 dependencies = [
  "axum",
  "base64 0.23.1",
